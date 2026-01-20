@@ -1,0 +1,14 @@
+[package]
+name = "rsod"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rsod-outlier = { workspace = true }
+rsod-forecaster = { workspace = true }
+rsod-baseline = { workspace = true }
+rsod-storage = { workspace = true }
+rsod-utils = { workspace = true }
+
+[lints]
+workspace = true

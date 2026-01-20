@@ -1,0 +1,14 @@
+# 构建目录
+target/
+
+# IDE 相关
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 测试数据
+data/*.png
+bak

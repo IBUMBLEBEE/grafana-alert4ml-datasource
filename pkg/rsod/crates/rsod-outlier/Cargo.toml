@@ -1,0 +1,29 @@
+[package]
+name = "rsod-outlier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ndarray.workspace = true
+rand.workspace = true
+statrs.workspace = true
+augurs.workspace = true
+augurs-forecaster.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+approx.workspace = true
+extended-isolation-forest.workspace = true
+csv.workspace = true
+rustfft.workspace = true
+num-complex.workspace = true
+chrono.workspace = true
+stlrs.workspace = true
+itertools.workspace = true
+
+rsod-utils.workspace = true
+rsod-storage.workspace = true
+bincode.workspace = true
+
+[lints]
+workspace = true

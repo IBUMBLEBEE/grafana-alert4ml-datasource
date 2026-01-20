@@ -1,0 +1,15 @@
+[package]
+name = "rsod-forecaster"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rsod-utils.workspace = true
+serde.workspace = true
+perpetual.workspace = true
+rsod-storage.workspace = true
+chrono.workspace = true
+polars.workspace = true
+
+[lints]
+workspace = true

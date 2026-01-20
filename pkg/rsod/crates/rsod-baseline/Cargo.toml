@@ -1,0 +1,15 @@
+[package]
+name = "rsod-baseline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rsod-utils.workspace = true
+chrono.workspace = true
+polars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+arrow.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "datasource",
+  "name": "alert4ml",
+  "id": "ibumblebee-alert4ml-datasource",
+  "metrics": true,
+  "backend": true,
+  "annotations": true,
+  "alerting": true,
+  "logs": true,
+  "executable": "gpx_alert4ml",
+  "info": {
+    "description": "",
+    "author": {
+      "name": "IBUMBLEBEE"
+    },
+    "keywords": [
+      "datasource"
+    ],
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.4.0",
+    "plugins": []
+  }
+}
