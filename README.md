@@ -19,7 +19,7 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 1. [extended-isolation-forest](https://github.com/nmandery/extended-isolation-forest)
 2. [STL](https://github.com/ankane/stl-rust)
-3. [perpetual]https://github.com/perpetual-ml/perpetual
+3. [perpetual](https://github.com/perpetual-ml/perpetual)
 
 ## Getting started
 
