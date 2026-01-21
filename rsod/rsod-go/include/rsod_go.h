@@ -42,7 +42,7 @@ bool baseline_fit_predict(FFI_ArrowSchema *data_schema,
  * FFI 函数：初始化数据库
  * 供 Go 代码在启动时显式调用
  */
-bool rsod_storage_init(const char *path);
+bool rsod_storage_init(void);
 
 bool rsod_forecaster(FFI_ArrowSchema *data_schema,
                      FFI_ArrowArray *data_array,

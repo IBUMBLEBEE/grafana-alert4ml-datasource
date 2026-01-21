@@ -3,7 +3,6 @@ use arrow::datatypes::{DataType, Field};
 use arrow::ffi::{from_ffi, to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::path::PathBuf;
 
 use rsod_storage::init_db;
 use rsod_outlier::{outlier, OutlierOptions};
@@ -236,22 +235,11 @@ extern "C" fn baseline_fit_predict(
 /// FFI 函数：初始化数据库
 /// 供 Go 代码在启动时显式调用
 #[no_mangle]
-pub extern "C" fn rsod_storage_init(path: *const c_char) -> bool {
+pub extern "C" fn rsod_storage_init() -> bool {
     // 使用 catch_unwind 捕获可能的 panic，避免插件崩溃
     let result = std::panic::catch_unwind(|| {
-        if path.is_null() {
-            return false;
-        }
-        
-        let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        
-        let path_buf = PathBuf::from(path_str);
-        
         // 调用 init_db，它会处理所有初始化逻辑
-        match init_db(Some(path_buf)) {
+        match init_db() {
             Ok(_) => true,
             Err(e) => {
                 eprintln!("Failed to initialize database: {:?}", e);

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -41,13 +40,7 @@ var (
 // initRSODStorage lazily initializes RSOD storage on first use
 func initRSODStorage() error {
 	rsodStorageOnce.Do(func() {
-		pluginDir, err := GetPluginDir()
-		if err != nil {
-			rsodStorageErr = fmt.Errorf("failed to get plugin dir: %w", err)
-			return
-		}
-		dbPath := filepath.Join(pluginDir, constant.DefaultRsodDBPath)
-		success := rsod.RSODStorageInit(dbPath)
+		success := rsod.RSODStorageInit()
 		if !success {
 			rsodStorageErr = fmt.Errorf("failed to initialize RSOD storage")
 			return

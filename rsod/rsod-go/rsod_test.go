@@ -315,9 +315,6 @@ func TestBaselineFitPredictWithMonthlyTrend(t *testing.T) {
 		t.Fatalf("BaselineFitPredict failed: %v", err)
 	}
 	fmt.Printf("result: %+v\n", result)
-	// for idx, res := range result {
-	// 	fmt.Printf("index: %d, baseline: %.6f\n", idx, res)
-	// }
 }
 
 func TestRSODForecaster(t *testing.T) {

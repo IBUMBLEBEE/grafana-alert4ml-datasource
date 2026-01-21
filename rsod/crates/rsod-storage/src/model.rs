@@ -1,6 +1,4 @@
-use rusqlite::Connection;
 use serde::{Serialize, Deserialize};
-use crate::get_db_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
@@ -14,30 +12,71 @@ impl Model {
     }
 
     pub fn write(&self) -> Result<(), std::io::Error> {
-        // 确保数据库已初始化
-        crate::init_db(None).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        
-        let db = Connection::open(get_db_path()).unwrap();
-        let mut stmt = db.prepare("INSERT OR REPLACE INTO models (uuid, artifacts, updated_at) VALUES (?, ?, strftime('%s', 'now'))").unwrap();
-        stmt.execute(rusqlite::params![self.uuid, self.artifacts]).unwrap();
+        println!("Model::write called for uuid: {}", self.uuid);
+        crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let db = crate::get_db_connection();
+
+        let mut stmt = db
+            .prepare(
+                "INSERT OR REPLACE INTO models (uuid, artifacts, updated_at) \
+                 VALUES (?1, ?2, strftime('%s', 'now'))",
+            )
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Prepare insert statement failed: {}", e),
+                )
+            })?;
+
+        stmt.execute((&self.uuid, &self.artifacts))
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Execute insert failed: {}", e),
+                )
+            })?;
         Ok(())
     }
 
     pub fn read(&mut self) -> Result<(), std::io::Error> {
-        // 确保数据库已初始化
-        crate::init_db(None).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        
-        let db = Connection::open(get_db_path()).unwrap();
-        let mut stmt = db.prepare("SELECT uuid, artifacts FROM models WHERE uuid = ?").unwrap();
-        let rows = stmt.query_map([&self.uuid], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-        }).unwrap();
+        println!("Model::read called for uuid: {}", self.uuid);
+        crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let db = crate::get_db_connection();
+
+        let mut stmt = db
+            .prepare("SELECT uuid, artifacts FROM models WHERE uuid = ?")
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Prepare select statement failed: {}", e),
+                )
+            })?;
+
+        let rows = stmt
+            .query_map([&self.uuid], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Query map failed: {}", e),
+                )
+            })?;
+
         for row_result in rows {
-            let (uuid, artifacts) = row_result.unwrap();
+            let (uuid, artifacts) = row_result.map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Row processing failed: {}", e),
+                )
+            })?;
             self.uuid = uuid;
             self.artifacts = artifacts;
         }
-        Ok(())  
+
+        Ok(())
     }
 }
 
@@ -47,6 +86,8 @@ mod tests {
 
     #[test]
     fn it_works() {
+        crate::init_db().unwrap();
+
         let _model = Model::new("test".to_string(), vec![1, 2, 3]);
         _model.write().unwrap();
         let mut model = Model::new("test".to_string(), vec![]);

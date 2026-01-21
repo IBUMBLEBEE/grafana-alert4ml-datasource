@@ -55,3 +55,6 @@ build_target
 .vscode/
 *.csv
 *.zip
+*.csv
+*.sha1
+build/

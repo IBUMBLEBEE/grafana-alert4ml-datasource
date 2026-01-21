@@ -1,50 +1,59 @@
-<!-- This README file is going to be the one displayed on the Grafana.com website for your plugin. Uncomment and replace the content here before publishing.
+# Anomaly detection based on machine learning.
 
-Remove any remaining comments before publishing as these may be displayed on Grafana.com -->
+❗️❗️❗️ **POC Project**.
 
-# alert4ml
+Grafana supports a wide range of data sources, including Prometheus, MySQL, and even Datadog. There’s a good chance you can already visualize metrics from the systems you have set up. **Alert4ML** serves as the observability layer for SRE teams, automatically detects anomalies in time-series data based on collected data, thereby reducing the effort required by fixed-threshold methods and manual identification of abnormal system behavior.
 
-<!-- To help maximize the impact of your README and improve usability for users, we propose the following loose structure:
+## Architecture
 
-**BEFORE YOU BEGIN**
-- Ensure all links are absolute URLs so that they will work when the README is displayed within Grafana and Grafana.com
-- Be inspired ✨
-  - [grafana-polystat-panel](https://github.com/grafana/grafana-polystat-panel)
-  - [volkovlabs-variable-panel](https://github.com/volkovlabs/volkovlabs-variable-panel)
 
-**ADD SOME BADGES**
+![Architecture](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/arch.png)
 
-Badges convey useful information at a glance for users whether in the Catalog or viewing the source code. You can use the generator on [Shields.io](https://shields.io/badges/dynamic-json-badge) together with the Grafana.com API
-to create dynamic badges that update automatically when you publish a new version to the marketplace.
+## Technology Stack
 
-- For the URL parameter use `https://grafana.com/api/plugins/your-plugin-id`.
-- Example queries:
-  - Downloads: `$.downloads`
-  - Catalog Version: `$.version`
-  - Grafana Dependency: `$.grafanaDependency`
-  - Signature Type: `$.versionSignatureType`
-- Optionally, for the logo parameter use `grafana`.
+* Frontend: [TS](https://www.typescriptlang.org/) / [React](https://react.dev/)
+* Backend: [Go](https://go.dev/) / [CGO](https://pkg.go.dev/cmd/cgo)
+* Algorithm: [Rust](https://www.rust-lang.org/)
+* Data Transform: [Arrow Dataframe](https://arrow.apache.org/docs/index.html)
 
-Full example: ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?logo=grafana&query=$.version&url=https://grafana.com/api/plugins/grafana-polystat-panel&label=Marketplace&prefix=v&color=F47A20)
+## Algorithm
 
-Consider other [badges](https://shields.io/badges) as you feel appropriate for your project.
+1. [extended-isolation-forest](https://github.com/nmandery/extended-isolation-forest)
+2. [STL](https://github.com/ankane/stl-rust)
+3. [perpetual]https://github.com/perpetual-ml/perpetual
 
-## Overview / Introduction
-Provide one or more paragraphs as an introduction to your plugin to help users understand why they should use it.
+## Getting started
 
-Consider including screenshots:
-- in [plugin.json](https://grafana.com/developers/plugin-tools/reference/plugin-json#info) include them as relative links.
-- in the README ensure they are absolute URLs.
+You can download and install this grafana plugin using various options
 
-## Requirements
-List any requirements or dependencies they may need to run the plugin.
+* From [Grafana plugin catalog](https://grafana.com/grafana/plugins/ibumblebee-alerts4ml-datasource/)
+* From [Github release page](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases)
+* Using grafana cli
 
-## Getting Started
-Provide a quick start on how to configure and use the plugin.
+    ```shell
+    grafana-cli plugins install ibumblebee-alert4ml-datasource
+    ```
 
-## Documentation
-If your project has dedicated documentation available for users, provide links here. For help in following Grafana's style recommendations for technical documentation, refer to our [Writer's Toolkit](https://grafana.com/docs/writers-toolkit/).
+## Configuration
 
-## Contributing
-Do you want folks to contribute to the plugin or provide feedback through specific means? If so, tell them how!
--->
+1. Request a service account token. Home --> Administration --> Users and access --> Service accounts
+2. Enter the address and token to access the Grafana API. Home --> Connections --> Data sources --> ibumblebee-alert4ml-datasource
+
+This plugin relies on Grafana's Mixed data source mode.
+
+![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/demo.gif)
+
+### Development building and running
+
+TODO
+
+## Demo
+
+![outlier](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/outlier.png)
+![forcast](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/forcast.png)
+
+
+## Reference
+
+* https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/
+* https://docs.victoriametrics.com/anomaly-detection/

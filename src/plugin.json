@@ -10,7 +10,7 @@
   "logs": true,
   "executable": "gpx_alert4ml",
   "info": {
-    "description": "",
+    "description": "Anomaly detection based on machine learning.",
     "author": {
       "name": "IBUMBLEBEE"
     },
@@ -22,7 +22,16 @@
       "large": "img/logo.svg"
     },
     "links": [],
-    "screenshots": [],
+    "screenshots": [
+      {
+        "name": "Outlier Detection",
+        "path": "img/outlier.png"
+      },
+      {
+        "name": "Forecasting",
+        "path": "img/forcast.png"
+      }
+    ],
     "version": "%VERSION%",
     "updated": "%TODAY%"
   },
