@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"alert4ml/pkg/constant"
-	"alert4ml/pkg/plugin"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/plugin"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/datasource"
 )

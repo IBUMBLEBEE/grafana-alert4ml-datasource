@@ -18,7 +18,7 @@ serde_json = "1.0.140"
 
 [lib]
 name = "rsod_go"
-crate-type = ["cdylib", "rlib", "staticlib"]
+crate-type = ["staticlib"]
 
 [build-dependencies]
 cbindgen = "0.29.0"

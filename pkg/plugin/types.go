@@ -1,11 +1,12 @@
 package plugin
 
 import (
-	"alert4ml/pkg/constant"
 	"encoding/json"
 	"fmt"
 	"runtime"
 	"time"
+
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
 
 	"github.com/google/uuid"
 )

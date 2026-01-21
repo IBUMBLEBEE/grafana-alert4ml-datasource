@@ -11,10 +11,10 @@ import (
 
 	"github.com/tidwall/sjson"
 
-	"alert4ml/pkg/constant"
-	"alert4ml/pkg/models"
-	"alert4ml/pkg/sdk"
-	"alert4ml/rsod/rsod-go"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/models"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/sdk"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/rsod/rsod-go"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"

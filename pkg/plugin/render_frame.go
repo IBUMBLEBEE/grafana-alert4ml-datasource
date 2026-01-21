@@ -1,9 +1,10 @@
 package plugin
 
 import (
-	"alert4ml/pkg/constant"
 	"fmt"
 	"time"
+
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 	"github.com/grafana/grafana-plugin-sdk-go/data"

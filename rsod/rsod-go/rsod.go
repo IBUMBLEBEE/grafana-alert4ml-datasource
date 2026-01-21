@@ -4,10 +4,9 @@ package rsod
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/include
-#cgo linux LDFLAGS: -L${SRCDIR}/../target/x86_64-unknown-linux-gnu/release -lrsod_go -Wl,-rpath=${SRCDIR}/../target/x86_64-unknown-linux-gnu/release:/var/lib/grafana/plugins/ibumblebee-alert4ml-datasource:./data/plugins/ibumblebee-alert4ml-datasource
-#cgo darwin LDFLAGS: -L${SRCDIR}/../target/x86_64-unknown-linux-gnu/release -lrsod_go -Wl,-rpath=@loader_path/${SRCDIR}/../target/x86_64-unknown-linux-gnu/release:/var/lib/grafana/plugins/ibumblebee-alert4ml-datasource:./data/plugins/ibumblebee-alert4ml-datasource
-#cgo windows LDFLAGS: -L${SRCDIR}/../target/x86_64-unknown-linux-gnu/release -lrsod_go
-
+#cgo linux LDFLAGS: -L${SRCDIR}/../target/x86_64-unknown-linux-musl/release -lrsod_go
+#cgo darwin LDFLAGS: -L${SRCDIR}/../target/x86_64-apple-darwin/release -lrsod_go
+#cgo windows LDFLAGS: -L${SRCDIR}/../target/release -lrsod_go -lws2_32 -luserenv -lbcrypt
 
 #include "rsod_go.h"
 */
