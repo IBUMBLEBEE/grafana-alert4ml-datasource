@@ -200,7 +200,7 @@ func createTestPluginContext() backend.PluginContext {
 	return backend.PluginContext{
 		OrgID:         1,
 		PluginID:      "ibumblebee-alert4ml-datasource",
-		PluginVersion: "0.1.0",
+		PluginVersion: "0.1.1",
 		User: &backend.User{
 			Login: "grafana_scheduler",
 			Name:  "grafana_scheduler",
@@ -388,7 +388,7 @@ func TestQueryDataWithRealData(t *testing.T) {
 		PluginContext: backend.PluginContext{
 			OrgID:         1,
 			PluginID:      "ibumblebee-alert4ml-datasource",
-			PluginVersion: "0.1.0",
+			PluginVersion: "0.1.1",
 			User: &backend.User{
 				Login: "grafana_scheduler",
 				Name:  "grafana_scheduler",

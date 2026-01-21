@@ -3369,7 +3369,7 @@ dependencies = [
 
 [[package]]
 name = "rsod"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rsod-baseline",
  "rsod-forecaster",
@@ -3380,7 +3380,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-baseline"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arrow",
  "chrono",
@@ -3392,7 +3392,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-forecaster"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "perpetual",
@@ -3404,7 +3404,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-go"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arrow",
  "cbindgen",
@@ -3422,7 +3422,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-outlier"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "approx 0.5.1",
  "augurs",
@@ -3447,7 +3447,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -3455,7 +3455,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-utils"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "csv",

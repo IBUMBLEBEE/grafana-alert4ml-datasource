@@ -37,7 +37,7 @@ func (Build) Linux() error {
 		"GOARCH":      "amd64",
 	}, "go", "build", "-o", "dist/gpx_alert4ml_linux_amd64",
 		"-tags", "arrow_json_stdlib",
-		"-ldflags", "-w -s -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"pluginID\":\"ibumblebee-alert4ml-datasource\",\"version\":\"0.1.0\"}' -X 'main.pluginID=ibumblebee-alert4ml-datasource' -X 'main.version=0.1.0'",
+		"-ldflags", "-w -s -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"pluginID\":\"ibumblebee-alert4ml-datasource\",\"version\":\"0.1.1\"}' -X 'main.pluginID=ibumblebee-alert4ml-datasource' -X 'main.version=0.1.1'",
 		"./pkg")
 }
 
@@ -50,7 +50,7 @@ func (Build) Darwin() error {
 		"GOARCH":      "arm64",
 	}, "go", "build", "-o", "dist/gpx_alert4ml_darwin_arm64",
 		"-tags", "arrow_json_stdlib",
-		"-ldflags", "-w -s -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"pluginID\":\"ibumblebee-alert4ml-datasource\",\"version\":\"0.1.0\"}' -X 'main.pluginID=ibumblebee-alert4ml-datasource' -X 'main.version=0.1.0'",
+		"-ldflags", "-w -s -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"pluginID\":\"ibumblebee-alert4ml-datasource\",\"version\":\"0.1.1\"}' -X 'main.pluginID=ibumblebee-alert4ml-datasource' -X 'main.version=0.1.1'",
 		"./pkg")
 }
 
@@ -63,6 +63,6 @@ func (Build) Windows() error {
 		"GOARCH":      "amd64",
 	}, "go", "build", "-o", "dist/gpx_alert4ml_windows_amd64.exe",
 		"-tags", "arrow_json_stdlib",
-		"-ldflags", "-w -s -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"pluginID\":\"ibumblebee-alert4ml-datasource\",\"version\":\"0.1.0\"}' -X 'main.pluginID=ibumblebee-alert4ml-datasource' -X 'main.version=0.1.0'",
+		"-ldflags", "-w -s -X 'github.com/grafana/grafana-plugin-sdk-go/build.buildInfoJSON={\"pluginID\":\"ibumblebee-alert4ml-datasource\",\"version\":\"0.1.1\"}' -X 'main.pluginID=ibumblebee-alert4ml-datasource' -X 'main.version=0.1.1'",
 		"./pkg")
 }

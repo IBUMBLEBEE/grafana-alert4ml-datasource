@@ -6,12 +6,12 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-rsod-outlier = { path = "crates/rsod-outlier", version="0.1.0" }
-rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.0" }
-rsod-baseline = { path = "crates/rsod-baseline", version="0.1.0" }
-rsod-utils = { path = "crates/rsod-utils", version="0.1.0" }
-rsod-storage = { path = "crates/rsod-storage", version="0.1.0" }
-rsod-go = { path = "crates/rsod-go", version="0.1.0" }
+rsod-outlier = { path = "crates/rsod-outlier", version="0.1.1" }
+rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.1" }
+rsod-baseline = { path = "crates/rsod-baseline", version="0.1.1" }
+rsod-utils = { path = "crates/rsod-utils", version="0.1.1" }
+rsod-storage = { path = "crates/rsod-storage", version="0.1.1" }
+rsod-go = { path = "crates/rsod-go", version="0.1.1" }
 
 ndarray = "0.16.1"
 rand = "0.8"
