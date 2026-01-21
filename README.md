@@ -21,7 +21,7 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 You can download and install this grafana plugin using various options
 
 * From [Grafana plugin catalog](https://grafana.com/grafana/plugins/ibumblebee-alerts4ml-datasource/)
-* From [Github release page](https://github.com/IBUMBLEBEE/https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases-alert4ml-datasource/releases)
+* From [Github release page](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases)
 * Using grafana cli
 
     ```shell

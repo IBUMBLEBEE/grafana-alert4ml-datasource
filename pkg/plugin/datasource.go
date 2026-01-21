@@ -14,8 +14,8 @@ import (
 
 	"alert4ml/pkg/constant"
 	"alert4ml/pkg/models"
-	"alert4ml/pkg/rsod/rsod-go"
 	"alert4ml/pkg/sdk"
+	"alert4ml/rsod/rsod-go"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"

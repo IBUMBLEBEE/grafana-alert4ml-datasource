@@ -2,10 +2,10 @@ module alert4ml
 
 go 1.25.5
 
-replace alert4ml/pkg/rsod/rsod-go => ./pkg/rsod/rsod-go
+replace alert4ml/rsod/rsod-go => ./rsod/rsod-go
 
 require (
-	alert4ml/pkg/rsod/rsod-go v0.0.0-00010101000000-000000000000
+	alert4ml/rsod/rsod-go v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/grafana/grafana-plugin-sdk-go v0.285.0
 	github.com/magefile/mage v1.15.0

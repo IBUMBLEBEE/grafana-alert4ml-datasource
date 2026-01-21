@@ -1,4 +1,4 @@
-module alert4ml/pkg/rsod
+module alert4ml/rsod
 
 go 1.24.3
 
