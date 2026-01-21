@@ -7,7 +7,7 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 ## Architecture
 
 
-![Architecture](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/arch.png)
+![Architecture](docs/arch.png)
 
 ## Technology Stack
 
@@ -40,7 +40,7 @@ You can download and install this grafana plugin using various options
 
 This plugin relies on Grafana's Mixed data source mode.
 
-![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/demo.gif)
+![Configuration](docs/demo.gif)
 
 ### Development building and running
 
@@ -48,8 +48,8 @@ TODO
 
 ## Demo
 
-![outlier](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/outlier.png)
-![forcast](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/forcast.png)
+![outlier](docs/outlier.png)
+![forcast](docs/forcast.png)
 
 
 ## Reference
