@@ -219,7 +219,7 @@ func createTestPluginContext() backend.PluginContext {
 			BasicAuthUser:    "",
 			JSONData:         json.RawMessage(`{"url":"http://localhost:3000"}`),
 			DecryptedSecureJSONData: map[string]string{
-				"apiToken": "glsa_L7sYV7nP4pZ18gXsNeaIdlAtIQwg9AHs_3fd6e7c1",
+				"apiToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 			},
 			Updated:    updatedTime,
 			APIVersion: "",
@@ -401,7 +401,7 @@ func TestQueryDataWithRealData(t *testing.T) {
 				Name:     "ibumblebee-alert4ml-datasource",
 				JSONData: json.RawMessage(`{"url":"http://localhost:3000"}`),
 				DecryptedSecureJSONData: map[string]string{
-					"apiToken": "glsa_L7sYV7nP4pZ18gXsNeaIdlAtIQwg9AHs_3fd6e7c1",
+					"apiToken": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 				},
 			},
 		},
