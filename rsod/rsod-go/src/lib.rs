@@ -2,7 +2,7 @@ use arrow::array::{Array, Float64Array, Int64Array, RecordBatch, StructArray};
 use arrow::datatypes::{DataType, Field};
 use arrow::ffi::{from_ffi, to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_int, c_void};
+use std::os::raw::c_char;
 
 use rsod_storage::init_db;
 use rsod_outlier::{outlier, OutlierOptions};
@@ -434,43 +434,6 @@ pub extern "C" fn rsod_forecaster(
     }
 }
 
-
-/// Patch: Resolve linking failure due to missing qsort_r symbol in older musl environments
-/// When the linker cannot find qsort_r in the standard library, it will use this implementation first
-#[no_mangle]
-pub unsafe extern "C" fn qsort_r(
-    base: *mut c_void,
-    nmemb: usize,
-    size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
-    arg: *mut c_void,
-) {
-    // Define a local struct to pass context
-    struct Thunk {
-        compar: unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
-        arg: *mut c_void,
-    }
-
-    // Internal conversion function that matches the regular qsort comparison function signature
-    unsafe extern "C" fn wrapper(a: *const c_void, b: *const c_void) -> c_int {
-        // Note: Since standard qsort does not support passing external parameters, this is unsafe in multi-threaded environments
-        // But for resolving build-time linking errors (such as zstd/cover.c requirements), this is currently the only solution
-        0 // This is a stub implementation
-    }
-
-    // Force declaration to link the regular qsort provided by musl
-    extern "C" {
-        fn qsort(
-            base: *mut c_void,
-            nmemb: usize,
-            size: usize,
-            compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
-        );
-    }
-
-    // Call regular sort to bypass linking error
-    qsort(base, nmemb, size, wrapper);
-}
 
 #[cfg(test)]
 mod tests {

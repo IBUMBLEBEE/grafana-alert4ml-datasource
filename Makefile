@@ -1,9 +1,17 @@
 .PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up clean
 
-all: install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up
+all: pre-build install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up
+
+pre-build:
+	go install github.com/bufbuild/buf/cmd/buf@v1.64.0
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 install-frontend:
 	npm install
+
+generate-proto:
+	buf generate
 
 install-go-deps:
 	go mod download
