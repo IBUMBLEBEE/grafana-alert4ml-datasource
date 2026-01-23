@@ -18,6 +18,8 @@ rsod-storage = { workspace = true }
 rsod-utils = { workspace = true }
 arrow.workspace = true
 tokio-stream = "0.1.18"
+polars.workspace = true
+polars-arrow = "0.52.0"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"

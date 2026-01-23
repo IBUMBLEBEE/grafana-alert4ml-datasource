@@ -1,18 +1,20 @@
 use tonic::{transport::Server, Request, Response, Status};
 use arrow::ipc::reader::StreamReader;
-use arrow::array::{Float64Array, RecordBatch};
+use arrow::array::{Float64Array, RecordBatch, Int64Array, Array as ArrowArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
+use polars::prelude::*;
+use polars::prelude::DataType as PolarsDataType;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::path::Path;
 use tokio::net::UnixListener;
+use tokio::signal;
 use tokio_stream::wrappers::UnixListenerStream;
 use rsod_storage::init_db;
-use rsod_outlier::{outlier, OutlierOptions};
+use rsod_outlier::outlier;
 use rsod_baseline::{baseline_detect, BaselineOptions};
-use rsod_baseline::{TIMESTAMP_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
-use rsod_forecaster::{forecast, ForecasterOptions, PRED_COL};
+use rsod_forecaster::{forecast, ForecasterOptions};
 
 pub mod rsodsvc {
     tonic::include_proto!("rsod"); 
@@ -72,10 +74,16 @@ impl RsodService for RsodServiceImpl {
         let optssvc: rsodsvc::BaselineOptions = req.options.ok_or(Status::invalid_argument("Missing baseline options"))?;
         let opts = BaselineOptions {
             uuid: optssvc.uuid,
-            trend_type: optssvc.trend_type,
-            interval_minutes: optssvc.interval_mins,
-            allow_negative_bounds: optssvc.allow_negative_bounds,
-            std_dev_multiplier: optssvc.std_dev_multiplier,
+            trend_type: match optssvc.trend_type {
+                1 => rsod_baseline::TrendType::Daily,
+                2 => rsod_baseline::TrendType::Weekly,
+                3 => rsod_baseline::TrendType::Monthly,
+                _ => rsod_baseline::TrendType::Daily, // default
+            },
+            interval_minutes: Some(optssvc.interval_mins as u32),
+            confidence_level: Some(optssvc.confidence_level),
+            allow_negative_bounds: Some(optssvc.allow_negative_bounds),
+            std_dev_multiplier: Some(optssvc.std_dev_multiplier),
         };
         let baseline_result = match baseline_detect(&current_data_vec, &history_data_vec, &opts) {
             Ok(result) => result,
@@ -83,7 +91,7 @@ impl RsodService for RsodServiceImpl {
                 return Err(Status::internal("Failed to detect baseline"));
             }
         };
-        let result_data = match convert_to_arrow_ipc(baseline_result) {
+        let result_data = match convert_record_batch_to_arrow_ipc(baseline_result) {
             Ok(data) => data,
             Err(_) => {
                 return Err(Status::internal("Failed to convert baseline result to Arrow IPC format"));
@@ -94,15 +102,59 @@ impl RsodService for RsodServiceImpl {
 
     async fn forecast(&self, request: Request<ForecastRequest>) -> Result<Response<ForecastResponse>, Status> {
         let req = request.into_inner();
+
+        // Convert current data
+        let current_data_vec = match convert_to_points(req.current_data) {
+            Ok(data) => data,
+            Err(_) => {
+                return Err(Status::invalid_argument("Invalid current data format"));
+            }
+        };
+
+        // Convert history data
         let history_data_vec = match convert_to_points(req.history_data) {
             Ok(data) => data,
             Err(_) => {
-                return Err(Status::invalid_argument("Invalid input data format"));
+                return Err(Status::invalid_argument("Invalid history data format"));
             }
         };
+
         let optssvc: rsodsvc::ForecasterOptions = req.options.ok_or(Status::invalid_argument("Missing forecaster options"))?;
-        let opts = ForecasterOptions {...default()};
-        Ok(Response::new(ForecastResponse { result_frame: vec![], error_message: "".to_string() }))
+        let opts = ForecasterOptions {
+            model_name: optssvc.model_name,
+            periods: optssvc.periods.iter().map(|x| *x as usize).collect(),
+            uuid: optssvc.uuid,
+            budget: Some(optssvc.budget as f32),
+            num_threads: Some(optssvc.num_threads as usize),
+            n_lags: Some(optssvc.n_lags as usize),
+            std_dev_multiplier: Some(optssvc.std_dev_multiplier),
+            allow_negative_bounds: Some(optssvc.allow_negative_bounds),
+        };
+
+        let forecast_result = match forecast(&current_data_vec, &history_data_vec, &opts) {
+            Ok(result) => result,
+            Err(_) => {
+                return Err(Status::internal("Failed to perform forecast"));
+            }
+        };
+
+        // Convert DataFrame to Arrow RecordBatch
+        let result_data = match dataframe_to_recordbatch_forecast(forecast_result) {
+            Ok(data) => data,
+            Err(_) => {
+                return Err(Status::internal("Failed to convert forecast result to Arrow RecordBatch"));
+            }
+        };
+
+        // Convert RecordBatch to Arrow IPC bytes
+        let ipc_data = match convert_record_batch_to_arrow_ipc(result_data) {
+            Ok(data) => data,
+            Err(_) => {
+                return Err(Status::internal("Failed to convert forecast result to Arrow IPC format"));
+            }
+        };
+
+        Ok(Response::new(ForecastResponse { result_frame: ipc_data, error_message: "".to_string() }))
     }
 }
 
@@ -172,8 +224,74 @@ pub fn convert_to_arrow_ipc(outlier_result: Vec<f64>) -> Result<Vec<u8>, Box<dyn
     Ok(buffer)
 }
 
+pub fn convert_record_batch_to_arrow_ipc(batch: RecordBatch) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // 将 RecordBatch 序列化为 IPC 字节流 (Stream 格式)
+    let mut buffer = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, &batch.schema())?;
+        writer.write(&batch)?;
+        writer.finish()?; // 必须调用 finish 来写入末尾标记
+    }
+
+    Ok(buffer)
+}
+
+fn dataframe_to_recordbatch_forecast(mut df: DataFrame) -> Result<RecordBatch, Box<dyn std::error::Error>> {
+    // 1. 确保数据连续
+    let df = df.align_chunks();
+
+    // 2. 获取所有列名
+    let column_names = df.get_column_names();
+    let mut fields = Vec::new();
+    let mut arrays: Vec<Arc<dyn ArrowArray>> = Vec::new();
+
+    // 3. 逐列转换
+    for col_name in column_names {
+        let series = df.column(col_name)?;
+
+        // 根据列的数据类型进行转换（注意这里匹配的是 Polars 的 DataType）
+        let (field, array): (Field, Arc<dyn ArrowArray>) = match series.dtype() {
+            PolarsDataType::Float64 => {
+                let ca = series.f64()?;
+                let values: Vec<Option<f64>> = ca.into_iter().collect();
+                let arrow_array = Float64Array::from(values);
+                (
+                    Field::new(col_name.to_string(), DataType::Float64, true),
+                    Arc::new(arrow_array),
+                )
+            }
+            PolarsDataType::Int64 => {
+                let ca = series.i64()?;
+                let values: Vec<Option<i64>> = ca.into_iter().collect();
+                let arrow_array = Int64Array::from(values);
+                (
+                    Field::new(col_name.to_string(), DataType::Int64, true),
+                    Arc::new(arrow_array),
+                )
+            }
+            _ => {
+                return Err(
+                    format!("不支持的列类型: {:?} for column {}", series.dtype(), col_name).into()
+                );
+            }
+        };
+
+        fields.push(field);
+        arrays.push(array);
+    }
+
+    // 4. 构建 RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+    Ok(RecordBatch::try_new(schema, arrays)?)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_db().map_err(|e| {
+        let err_msg = format!("init sqlite faield: {}", e);
+        eprintln!("❌ {}", err_msg);
+        std::io::Error::new(std::io::ErrorKind::Other, err_msg)
+    })?;
     // Unix socket 路径
     let socket_path = "/tmp/rsod-service.sock";
     
@@ -188,11 +306,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let rsod_service = RsodServiceImpl::default();
 
-    println!("🚀 Rsod gRPC Server 正在启动，监听 Unix socket: {}", socket_path);
+    println!("🚀 Rsod gRPC Server starting, listen Unix socket: {}", socket_path);
 
     Server::builder()
         .add_service(RsodServiceServer::new(rsod_service))
-        .serve_with_incoming(uds_stream)
+        .serve_with_incoming_shutdown(
+            uds_stream,
+            async {
+                let _ = signal::ctrl_c().await;
+                println!("\nExit Rsod gRPC Server...");
+            },
+        )
         .await?;
 
     Ok(())

@@ -23,6 +23,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type TrendType int32
+
+const (
+	TrendType_TREND_TYPE_UNSPECIFIED TrendType = 0 // 对应 Rust 的 None 或默认状态
+	TrendType_TREND_TYPE_DAILY       TrendType = 1
+	TrendType_TREND_TYPE_WEEKLY      TrendType = 2
+	TrendType_TREND_TYPE_MONTHLY     TrendType = 3
+)
+
+// Enum value maps for TrendType.
+var (
+	TrendType_name = map[int32]string{
+		0: "TREND_TYPE_UNSPECIFIED",
+		1: "TREND_TYPE_DAILY",
+		2: "TREND_TYPE_WEEKLY",
+		3: "TREND_TYPE_MONTHLY",
+	}
+	TrendType_value = map[string]int32{
+		"TREND_TYPE_UNSPECIFIED": 0,
+		"TREND_TYPE_DAILY":       1,
+		"TREND_TYPE_WEEKLY":      2,
+		"TREND_TYPE_MONTHLY":     3,
+	}
+)
+
+func (x TrendType) Enum() *TrendType {
+	p := new(TrendType)
+	*p = x
+	return p
+}
+
+func (x TrendType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TrendType) Descriptor() protoreflect.EnumDescriptor {
+	return file_rsod_service_proto_enumTypes[0].Descriptor()
+}
+
+func (TrendType) Type() protoreflect.EnumType {
+	return &file_rsod_service_proto_enumTypes[0]
+}
+
+func (x TrendType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TrendType.Descriptor instead.
+func (TrendType) EnumDescriptor() ([]byte, []int) {
+	return file_rsod_service_proto_rawDescGZIP(), []int{0}
+}
+
 type HealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -510,7 +562,7 @@ func (x *OutlierOptions) GetUuid() string {
 // 基线检测选项
 type BaselineOptions struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	TrendType           string                 `protobuf:"bytes,1,opt,name=trend_type,json=trendType,proto3" json:"trend_type,omitempty"`                                  // 趋势类型 (daily/weekly/monthly)
+	TrendType           TrendType              `protobuf:"varint,1,opt,name=trend_type,json=trendType,proto3,enum=rsod.TrendType" json:"trend_type,omitempty"`             // 趋势类型 (daily/weekly/monthly)
 	IntervalMins        int32                  `protobuf:"varint,2,opt,name=interval_mins,json=intervalMins,proto3" json:"interval_mins,omitempty"`                        // 间隔分钟数
 	ConfidenceLevel     float64                `protobuf:"fixed64,3,opt,name=confidence_level,json=confidenceLevel,proto3" json:"confidence_level,omitempty"`              // 置信水平 (0.0-1.0)
 	AllowNegativeBounds bool                   `protobuf:"varint,4,opt,name=allow_negative_bounds,json=allowNegativeBounds,proto3" json:"allow_negative_bounds,omitempty"` // 允许负边界
@@ -550,11 +602,11 @@ func (*BaselineOptions) Descriptor() ([]byte, []int) {
 	return file_rsod_service_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *BaselineOptions) GetTrendType() string {
+func (x *BaselineOptions) GetTrendType() TrendType {
 	if x != nil {
 		return x.TrendType
 	}
-	return ""
+	return TrendType_TREND_TYPE_UNSPECIFIED
 }
 
 func (x *BaselineOptions) GetIntervalMins() int32 {
@@ -797,10 +849,10 @@ const file_rsod_service_proto_rawDesc = "" +
 	"\n" +
 	"model_name\x18\x01 \x01(\tR\tmodelName\x12\x18\n" +
 	"\aperiods\x18\x02 \x03(\rR\aperiods\x12\x12\n" +
-	"\x04uuid\x18\x03 \x01(\tR\x04uuid\"\xf6\x01\n" +
-	"\x0fBaselineOptions\x12\x1d\n" +
+	"\x04uuid\x18\x03 \x01(\tR\x04uuid\"\x87\x02\n" +
+	"\x0fBaselineOptions\x12.\n" +
 	"\n" +
-	"trend_type\x18\x01 \x01(\tR\ttrendType\x12#\n" +
+	"trend_type\x18\x01 \x01(\x0e2\x0f.rsod.TrendTypeR\ttrendType\x12#\n" +
 	"\rinterval_mins\x18\x02 \x01(\x05R\fintervalMins\x12)\n" +
 	"\x10confidence_level\x18\x03 \x01(\x01R\x0fconfidenceLevel\x122\n" +
 	"\x15allow_negative_bounds\x18\x04 \x01(\bR\x13allowNegativeBounds\x12,\n" +
@@ -824,7 +876,12 @@ const file_rsod_service_proto_rawDesc = "" +
 	"numThreads\x12\x15\n" +
 	"\x06n_lags\x18\x06 \x01(\x05R\x05nLags\x12,\n" +
 	"\x12std_dev_multiplier\x18\a \x01(\x01R\x10stdDevMultiplier\x122\n" +
-	"\x15allow_negative_bounds\x18\b \x01(\bR\x13allowNegativeBounds2\x97\x02\n" +
+	"\x15allow_negative_bounds\x18\b \x01(\bR\x13allowNegativeBounds*l\n" +
+	"\tTrendType\x12\x1a\n" +
+	"\x16TREND_TYPE_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10TREND_TYPE_DAILY\x10\x01\x12\x15\n" +
+	"\x11TREND_TYPE_WEEKLY\x10\x02\x12\x16\n" +
+	"\x12TREND_TYPE_MONTHLY\x10\x032\x97\x02\n" +
 	"\vRsodService\x12K\n" +
 	"\x0eDetectOutliers\x12\x1b.rsod.DetectOutliersRequest\x1a\x1c.rsod.DetectOutliersResponse\x12K\n" +
 	"\x0eDetectBaseline\x12\x1b.rsod.DetectBaselineRequest\x1a\x1c.rsod.DetectBaselineResponse\x129\n" +
@@ -843,38 +900,41 @@ func file_rsod_service_proto_rawDescGZIP() []byte {
 	return file_rsod_service_proto_rawDescData
 }
 
+var file_rsod_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_rsod_service_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_rsod_service_proto_goTypes = []any{
-	(*HealthRequest)(nil),          // 0: rsod.HealthRequest
-	(*DetectOutliersRequest)(nil),  // 1: rsod.DetectOutliersRequest
-	(*DetectOutliersResponse)(nil), // 2: rsod.DetectOutliersResponse
-	(*DetectBaselineRequest)(nil),  // 3: rsod.DetectBaselineRequest
-	(*DetectBaselineResponse)(nil), // 4: rsod.DetectBaselineResponse
-	(*ForecastRequest)(nil),        // 5: rsod.ForecastRequest
-	(*ForecastResponse)(nil),       // 6: rsod.ForecastResponse
-	(*HealthResponse)(nil),         // 7: rsod.HealthResponse
-	(*OutlierOptions)(nil),         // 8: rsod.OutlierOptions
-	(*BaselineOptions)(nil),        // 9: rsod.BaselineOptions
-	(*LLMOptions)(nil),             // 10: rsod.LLMOptions
-	(*ForecasterOptions)(nil),      // 11: rsod.ForecasterOptions
+	(TrendType)(0),                 // 0: rsod.TrendType
+	(*HealthRequest)(nil),          // 1: rsod.HealthRequest
+	(*DetectOutliersRequest)(nil),  // 2: rsod.DetectOutliersRequest
+	(*DetectOutliersResponse)(nil), // 3: rsod.DetectOutliersResponse
+	(*DetectBaselineRequest)(nil),  // 4: rsod.DetectBaselineRequest
+	(*DetectBaselineResponse)(nil), // 5: rsod.DetectBaselineResponse
+	(*ForecastRequest)(nil),        // 6: rsod.ForecastRequest
+	(*ForecastResponse)(nil),       // 7: rsod.ForecastResponse
+	(*HealthResponse)(nil),         // 8: rsod.HealthResponse
+	(*OutlierOptions)(nil),         // 9: rsod.OutlierOptions
+	(*BaselineOptions)(nil),        // 10: rsod.BaselineOptions
+	(*LLMOptions)(nil),             // 11: rsod.LLMOptions
+	(*ForecasterOptions)(nil),      // 12: rsod.ForecasterOptions
 }
 var file_rsod_service_proto_depIdxs = []int32{
-	8,  // 0: rsod.DetectOutliersRequest.options:type_name -> rsod.OutlierOptions
-	9,  // 1: rsod.DetectBaselineRequest.options:type_name -> rsod.BaselineOptions
-	11, // 2: rsod.ForecastRequest.options:type_name -> rsod.ForecasterOptions
-	1,  // 3: rsod.RsodService.DetectOutliers:input_type -> rsod.DetectOutliersRequest
-	3,  // 4: rsod.RsodService.DetectBaseline:input_type -> rsod.DetectBaselineRequest
-	5,  // 5: rsod.RsodService.Forecast:input_type -> rsod.ForecastRequest
-	0,  // 6: rsod.RsodService.Health:input_type -> rsod.HealthRequest
-	2,  // 7: rsod.RsodService.DetectOutliers:output_type -> rsod.DetectOutliersResponse
-	4,  // 8: rsod.RsodService.DetectBaseline:output_type -> rsod.DetectBaselineResponse
-	6,  // 9: rsod.RsodService.Forecast:output_type -> rsod.ForecastResponse
-	7,  // 10: rsod.RsodService.Health:output_type -> rsod.HealthResponse
-	7,  // [7:11] is the sub-list for method output_type
-	3,  // [3:7] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	9,  // 0: rsod.DetectOutliersRequest.options:type_name -> rsod.OutlierOptions
+	10, // 1: rsod.DetectBaselineRequest.options:type_name -> rsod.BaselineOptions
+	12, // 2: rsod.ForecastRequest.options:type_name -> rsod.ForecasterOptions
+	0,  // 3: rsod.BaselineOptions.trend_type:type_name -> rsod.TrendType
+	2,  // 4: rsod.RsodService.DetectOutliers:input_type -> rsod.DetectOutliersRequest
+	4,  // 5: rsod.RsodService.DetectBaseline:input_type -> rsod.DetectBaselineRequest
+	6,  // 6: rsod.RsodService.Forecast:input_type -> rsod.ForecastRequest
+	1,  // 7: rsod.RsodService.Health:input_type -> rsod.HealthRequest
+	3,  // 8: rsod.RsodService.DetectOutliers:output_type -> rsod.DetectOutliersResponse
+	5,  // 9: rsod.RsodService.DetectBaseline:output_type -> rsod.DetectBaselineResponse
+	7,  // 10: rsod.RsodService.Forecast:output_type -> rsod.ForecastResponse
+	8,  // 11: rsod.RsodService.Health:output_type -> rsod.HealthResponse
+	8,  // [8:12] is the sub-list for method output_type
+	4,  // [4:8] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_rsod_service_proto_init() }
@@ -887,13 +947,14 @@ func file_rsod_service_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rsod_service_proto_rawDesc), len(file_rsod_service_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_rsod_service_proto_goTypes,
 		DependencyIndexes: file_rsod_service_proto_depIdxs,
+		EnumInfos:         file_rsod_service_proto_enumTypes,
 		MessageInfos:      file_rsod_service_proto_msgTypes,
 	}.Build()
 	File_rsod_service_proto = out.File

@@ -4,6 +4,13 @@ package rsod;
 
 option go_package = "github.com/IBUMBLEBEE/grafana-alert4ml-datasource/proto/rsod";
 
+enum TrendType {
+    TREND_TYPE_UNSPECIFIED = 0; // 对应 Rust 的 None 或默认状态
+    TREND_TYPE_DAILY = 1;
+    TREND_TYPE_WEEKLY = 2;
+    TREND_TYPE_MONTHLY = 3;
+}
+
 // RSOD服务定义 - 异常检测服务
 service RsodService {
   rpc DetectOutliers(DetectOutliersRequest) returns (DetectOutliersResponse);
@@ -67,7 +74,7 @@ message OutlierOptions {
 
 // 基线检测选项
 message BaselineOptions {
-  string trend_type = 1; // 趋势类型 (daily/weekly/monthly)
+  TrendType trend_type = 1; // 趋势类型 (daily/weekly/monthly)
   int32 interval_mins = 2; // 间隔分钟数
   double confidence_level = 3; // 置信水平 (0.0-1.0)
   bool allow_negative_bounds = 4; // 允许负边界
