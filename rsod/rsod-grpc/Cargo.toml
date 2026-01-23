@@ -17,6 +17,7 @@ rsod-baseline = { workspace = true }
 rsod-storage = { workspace = true }
 rsod-utils = { workspace = true }
 arrow.workspace = true
+tokio-stream = "0.1.18"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
