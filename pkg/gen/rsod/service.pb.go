@@ -167,7 +167,7 @@ func (x *DetectOutliersRequest) GetOptions() *OutlierOptions {
 // 异常检测响应
 type DetectOutliersResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ResultData    []byte                 `protobuf:"bytes,1,opt,name=result_data,json=resultData,proto3" json:"result_data,omitempty"`       // Arrow IPC序列化的结果数据
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                     // Arrow IPC序列化的结果数据
 	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误信息
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -203,9 +203,9 @@ func (*DetectOutliersResponse) Descriptor() ([]byte, []int) {
 	return file_rsod_service_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *DetectOutliersResponse) GetResultData() []byte {
+func (x *DetectOutliersResponse) GetData() []byte {
 	if x != nil {
-		return x.ResultData
+		return x.Data
 	}
 	return nil
 }
@@ -281,7 +281,7 @@ func (x *DetectBaselineRequest) GetOptions() *BaselineOptions {
 // 基线检测响应
 type DetectBaselineResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ResultFrame   []byte                 `protobuf:"bytes,1,opt,name=result_frame,json=resultFrame,proto3" json:"result_frame,omitempty"`    // 结果DataFrame (Arrow IPC)
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                     // 结果DataFrame (Arrow IPC)
 	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误信息
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -317,9 +317,9 @@ func (*DetectBaselineResponse) Descriptor() ([]byte, []int) {
 	return file_rsod_service_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *DetectBaselineResponse) GetResultFrame() []byte {
+func (x *DetectBaselineResponse) GetData() []byte {
 	if x != nil {
-		return x.ResultFrame
+		return x.Data
 	}
 	return nil
 }
@@ -395,7 +395,7 @@ func (x *ForecastRequest) GetOptions() *ForecasterOptions {
 // 预测响应
 type ForecastResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ResultFrame   []byte                 `protobuf:"bytes,1,opt,name=result_frame,json=resultFrame,proto3" json:"result_frame,omitempty"`    // 预测结果DataFrame (Arrow IPC)
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                     // 预测结果DataFrame (Arrow IPC)
 	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误信息
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -431,9 +431,9 @@ func (*ForecastResponse) Descriptor() ([]byte, []int) {
 	return file_rsod_service_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *ForecastResponse) GetResultFrame() []byte {
+func (x *ForecastResponse) GetData() []byte {
 	if x != nil {
-		return x.ResultFrame
+		return x.Data
 	}
 	return nil
 }
@@ -823,24 +823,23 @@ const file_rsod_service_proto_rawDesc = "" +
 	"\x15DetectOutliersRequest\x12\x1d\n" +
 	"\n" +
 	"data_frame\x18\x01 \x01(\fR\tdataFrame\x12.\n" +
-	"\aoptions\x18\x02 \x01(\v2\x14.rsod.OutlierOptionsR\aoptions\"^\n" +
-	"\x16DetectOutliersResponse\x12\x1f\n" +
-	"\vresult_data\x18\x01 \x01(\fR\n" +
-	"resultData\x12#\n" +
+	"\aoptions\x18\x02 \x01(\v2\x14.rsod.OutlierOptionsR\aoptions\"Q\n" +
+	"\x16DetectOutliersResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12#\n" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\x8e\x01\n" +
 	"\x15DetectBaselineRequest\x12!\n" +
 	"\fcurrent_data\x18\x01 \x01(\fR\vcurrentData\x12!\n" +
 	"\fhistory_data\x18\x02 \x01(\fR\vhistoryData\x12/\n" +
-	"\aoptions\x18\x03 \x01(\v2\x15.rsod.BaselineOptionsR\aoptions\"`\n" +
-	"\x16DetectBaselineResponse\x12!\n" +
-	"\fresult_frame\x18\x01 \x01(\fR\vresultFrame\x12#\n" +
+	"\aoptions\x18\x03 \x01(\v2\x15.rsod.BaselineOptionsR\aoptions\"Q\n" +
+	"\x16DetectBaselineResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12#\n" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\x8a\x01\n" +
 	"\x0fForecastRequest\x12!\n" +
 	"\fcurrent_data\x18\x01 \x01(\fR\vcurrentData\x12!\n" +
 	"\fhistory_data\x18\x02 \x01(\fR\vhistoryData\x121\n" +
-	"\aoptions\x18\x03 \x01(\v2\x17.rsod.ForecasterOptionsR\aoptions\"Z\n" +
-	"\x10ForecastResponse\x12!\n" +
-	"\fresult_frame\x18\x01 \x01(\fR\vresultFrame\x12#\n" +
+	"\aoptions\x18\x03 \x01(\v2\x17.rsod.ForecasterOptionsR\aoptions\"K\n" +
+	"\x10ForecastResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12#\n" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"D\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12\x18\n" +

@@ -16,7 +16,7 @@ pub struct DetectOutliersRequest {
 pub struct DetectOutliersResponse {
     /// Arrow IPC序列化的结果数据
     #[prost(bytes = "vec", tag = "1")]
-    pub result_data: ::prost::alloc::vec::Vec<u8>,
+    pub data: ::prost::alloc::vec::Vec<u8>,
     /// 错误信息
     #[prost(string, tag = "3")]
     pub error_message: ::prost::alloc::string::String,
@@ -39,7 +39,7 @@ pub struct DetectBaselineRequest {
 pub struct DetectBaselineResponse {
     /// 结果DataFrame (Arrow IPC)
     #[prost(bytes = "vec", tag = "1")]
-    pub result_frame: ::prost::alloc::vec::Vec<u8>,
+    pub data: ::prost::alloc::vec::Vec<u8>,
     /// 错误信息
     #[prost(string, tag = "3")]
     pub error_message: ::prost::alloc::string::String,
@@ -62,7 +62,7 @@ pub struct ForecastRequest {
 pub struct ForecastResponse {
     /// 预测结果DataFrame (Arrow IPC)
     #[prost(bytes = "vec", tag = "1")]
-    pub result_frame: ::prost::alloc::vec::Vec<u8>,
+    pub data: ::prost::alloc::vec::Vec<u8>,
     /// 错误信息
     #[prost(string, tag = "3")]
     pub error_message: ::prost::alloc::string::String,

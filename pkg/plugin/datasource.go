@@ -1,13 +1,11 @@
 package plugin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
@@ -18,12 +16,9 @@ import (
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/models"
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/sdk"
 
-	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Make sure Datasource implements required interfaces. This is important to do
@@ -38,85 +33,15 @@ var (
 )
 
 var (
-	rsodGrpcOnce   sync.Once
-	rsodGrpcClient rsod.RsodServiceClient
-	rsodGrpcErr    error
+	rsodGrpcServerOnce sync.Once
+	rsodGrpcOnce       sync.Once
+	rsodGrpcClient     rsod.RsodServiceClient
+	rsodGrpcErr        error
 )
 
 func init() {
 	// Initialization code if needed
 	initRSODGrpcClient()
-}
-
-// initRSODGrpcClient lazily initializes gRPC client for RSOD service
-func initRSODGrpcClient() error {
-	// Ensure initialization grpc server
-	os.Executable()
-	rsodGrpcOnce.Do(func() {
-		// Connect to Unix Domain Socket
-		socketPath := "/tmp/rsod-service.sock"
-		conn, err := grpc.NewClient(
-			fmt.Sprintf("unix:%s", socketPath),
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
-		if err != nil {
-			rsodGrpcErr = fmt.Errorf("failed to connect to RSOD service: %w", err)
-			return
-		}
-
-		rsodGrpcClient = rsod.NewRsodServiceClient(conn)
-		rsodGrpcErr = nil
-	})
-	return rsodGrpcErr
-}
-
-// frameToArrowIPC converts a Grafana DataFrame to Arrow IPC bytes
-func frameToArrowIPC(frame *data.Frame) ([]byte, error) {
-	if frame == nil {
-		return nil, fmt.Errorf("frame is nil")
-	}
-
-	// Convert Grafana frame to Arrow table
-	table, err := data.FrameToArrowTable(frame)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert frame to arrow table: %w", err)
-	}
-
-	// Create IPC writer
-	var buf bytes.Buffer
-	writer := ipc.NewWriter(&buf, ipc.WithSchema(table.Schema()))
-
-	// Write table (simplified approach)
-	// Note: This is a placeholder - proper implementation would iterate through table chunks
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close writer: %w", err)
-	}
-
-	return buf.Bytes(), nil
-}
-
-// arrowIPCToFrame converts Arrow IPC bytes back to Grafana DataFrame
-func arrowIPCToFrame(dataBytes []byte) (*data.Frame, error) {
-	// TODO: Implement proper Arrow IPC to Frame conversion
-	// For now, return a placeholder frame
-	return &data.Frame{
-		Name:   "placeholder",
-		Fields: []*data.Field{},
-	}, nil
-}
-
-// stringToTrendType converts string trend type to gRPC enum
-func stringToTrendType(trendType string) rsod.TrendType {
-	switch trendType {
-	case "daily":
-		return rsod.TrendType_TREND_TYPE_DAILY
-	case "weekly":
-		return rsod.TrendType_TREND_TYPE_WEEKLY
-	case "monthly":
-		return rsod.TrendType_TREND_TYPE_MONTHLY
-	default:
-		return rsod.TrendType_TREND_TYPE_UNSPECIFIED
-	}
 }
 
 // NewDatasource creates a new datasource instance.
@@ -190,11 +115,6 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 				switch queryJson.DetectType {
 				case constant.DetectTypeOutlier:
-					// Initialize gRPC client
-					if err := initRSODGrpcClient(); err != nil {
-						return nil, fmt.Errorf("failed to initialize RSOD gRPC client: %w", err)
-					}
-
 					// 仅在 Outlier 模式下解析 Rsod 参数
 					rsodParams := hyperParams.(*RsodHyperParams)
 					periods, err := ParsePeriods(rsodParams.Periods, queryAlert4MLQueryBody.IntervalMs)
@@ -249,11 +169,6 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					newframes = append(newframes, newframe)
 
 				case constant.SupportDetectTypeBaseline:
-					// Initialize gRPC client
-					if err := initRSODGrpcClient(); err != nil {
-						return nil, fmt.Errorf("failed to initialize RSOD gRPC client: %w", err)
-					}
-
 					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
 					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
@@ -310,7 +225,7 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 					// Parse response (simplified - convert bytes back to DataFrame)
 					// For now, we'll use a placeholder implementation
-					resultBaselineDF, err := arrowIPCToFrame(resp.ResultFrame)
+					resultBaselineDF, err := arrowIPCToFrame(resp.Data)
 					if err != nil {
 						return nil, fmt.Errorf("failed to parse baseline result: %w", err)
 					}
@@ -319,11 +234,6 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					newframes = append(newframes, newframe)
 
 				case constant.DetectTypeForecast:
-					// Initialize gRPC client
-					if err := initRSODGrpcClient(); err != nil {
-						return nil, fmt.Errorf("failed to initialize RSOD gRPC client: %w", err)
-					}
-
 					periods, err := ParsePeriods(hyperParams.(*ForecastHyperParams).Periods, queryAlert4MLQueryBody.IntervalMs)
 					if err != nil {
 						return nil, err
@@ -390,7 +300,7 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 					// Parse response (simplified - convert bytes back to DataFrame)
 					// For now, we'll use a placeholder implementation
-					resultForecastDF, err := arrowIPCToFrame(resp.ResultFrame)
+					resultForecastDF, err := arrowIPCToFrame(resp.Data)
 					if err != nil {
 						return nil, fmt.Errorf("failed to parse forecast result: %w", err)
 					}

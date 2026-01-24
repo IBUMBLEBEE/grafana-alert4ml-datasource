@@ -29,15 +29,22 @@ func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
 
 			// 将时间戳转换为 time.Time
 			for i := range fieldLength {
-				var timestampMs int64
+				var timestampSec float64
 				val := field.At(i)
 
 				// 处理不同的时间戳类型
 				switch v := val.(type) {
 				case int64:
-					timestampMs = v
+					// 假设是秒级时间戳
+					timestampSec = float64(v)
 				case float64:
-					timestampMs = int64(v)
+					timestampSec = v
+				case *float64:
+					// 处理指针类型（nullable float64）
+					if v == nil {
+						continue
+					}
+					timestampSec = *v
 				case time.Time:
 					// 如果已经是 time.Time，直接使用
 					timeField.Set(i, v)
@@ -47,8 +54,14 @@ func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
 					continue
 				}
 
-				// 时间戳是毫秒，转换为秒并创建 time.Time
-				timeField.Set(i, time.Unix(timestampMs/1000, (timestampMs%1000)*1000000))
+				// 时间戳是秒（Unix 时间戳），直接转换为 time.Time
+				// 如果时间戳看起来像毫秒（大于 1e12），则除以 1000
+				if timestampSec > 1e12 {
+					// 可能是毫秒，转换为秒
+					timestampSec = timestampSec / 1000.0
+				}
+				// 转换为 time.Time（忽略小数部分，因为 Unix 时间戳通常是整数秒）
+				timeField.Set(i, time.Unix(int64(timestampSec), 0))
 			}
 
 			// 替换原字段
@@ -134,15 +147,22 @@ func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *d
 
 			// 将时间戳转换为 time.Time
 			for i := range fieldLength {
-				var timestampMs int64
+				var timestampSec float64
 				val := field.At(i)
 
 				// 处理不同的时间戳类型
 				switch v := val.(type) {
 				case int64:
-					timestampMs = v
+					// 假设是秒级时间戳
+					timestampSec = float64(v)
 				case float64:
-					timestampMs = int64(v)
+					timestampSec = v
+				case *float64:
+					// 处理指针类型（nullable float64）
+					if v == nil {
+						continue
+					}
+					timestampSec = *v
 				case time.Time:
 					// 如果已经是 time.Time，直接使用
 					timeField.Set(i, v)
@@ -152,8 +172,14 @@ func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *d
 					continue
 				}
 
-				// 时间戳是毫秒，转换为秒并创建 time.Time
-				timeField.Set(i, time.Unix(timestampMs, (timestampMs%1000)*1000000))
+				// 时间戳是秒（Unix 时间戳），直接转换为 time.Time
+				// 如果时间戳看起来像毫秒（大于 1e12），则除以 1000
+				if timestampSec > 1e12 {
+					// 可能是毫秒，转换为秒
+					timestampSec = timestampSec / 1000.0
+				}
+				// 转换为 time.Time（忽略小数部分，因为 Unix 时间戳通常是整数秒）
+				timeField.Set(i, time.Unix(int64(timestampSec), 0))
 			}
 
 			// 替换原字段
