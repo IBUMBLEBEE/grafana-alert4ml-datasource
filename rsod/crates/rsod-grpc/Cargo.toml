@@ -10,6 +10,7 @@ tonic = "0.14.2"
 tonic-prost = "0.14.2"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
+tokio-stream = "0.1.18"
 
 rsod-outlier = { workspace = true }
 rsod-forecaster = { workspace = true }
@@ -17,12 +18,15 @@ rsod-baseline = { workspace = true }
 rsod-storage = { workspace = true }
 rsod-utils = { workspace = true }
 arrow.workspace = true
-tokio-stream = "0.1.18"
 polars.workspace = true
-polars-arrow = "0.52.0"
+polars-arrow.workspace = true
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "gpx_alert4ml_rsod_server"
+path = "src/main.rs"
