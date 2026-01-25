@@ -30,8 +30,6 @@ const (
 // RsodServiceClient is the client API for RsodService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// RSOD服务定义 - 异常检测服务
 type RsodServiceClient interface {
 	DetectOutliers(ctx context.Context, in *DetectOutliersRequest, opts ...grpc.CallOption) (*DetectOutliersResponse, error)
 	DetectBaseline(ctx context.Context, in *DetectBaselineRequest, opts ...grpc.CallOption) (*DetectBaselineResponse, error)
@@ -90,8 +88,6 @@ func (c *rsodServiceClient) Health(ctx context.Context, in *HealthRequest, opts 
 // RsodServiceServer is the server API for RsodService service.
 // All implementations must embed UnimplementedRsodServiceServer
 // for forward compatibility.
-//
-// RSOD服务定义 - 异常检测服务
 type RsodServiceServer interface {
 	DetectOutliers(context.Context, *DetectOutliersRequest) (*DetectOutliersResponse, error)
 	DetectBaseline(context.Context, *DetectBaselineRequest) (*DetectBaselineResponse, error)

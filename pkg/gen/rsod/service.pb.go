@@ -26,7 +26,7 @@ const (
 type TrendType int32
 
 const (
-	TrendType_TREND_TYPE_UNSPECIFIED TrendType = 0 // 对应 Rust 的 None 或默认状态
+	TrendType_TREND_TYPE_UNSPECIFIED TrendType = 0
 	TrendType_TREND_TYPE_DAILY       TrendType = 1
 	TrendType_TREND_TYPE_WEEKLY      TrendType = 2
 	TrendType_TREND_TYPE_MONTHLY     TrendType = 3
@@ -111,11 +111,10 @@ func (*HealthRequest) Descriptor() ([]byte, []int) {
 	return file_rsod_service_proto_rawDescGZIP(), []int{0}
 }
 
-// 异常检测请求
 type DetectOutliersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	DataFrame     []byte                 `protobuf:"bytes,1,opt,name=data_frame,json=dataFrame,proto3" json:"data_frame,omitempty"` // Arrow IPC序列化的DataFrame
-	Options       *OutlierOptions        `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`                      // 检测选项
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	Options       *OutlierOptions        `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -150,9 +149,9 @@ func (*DetectOutliersRequest) Descriptor() ([]byte, []int) {
 	return file_rsod_service_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *DetectOutliersRequest) GetDataFrame() []byte {
+func (x *DetectOutliersRequest) GetData() []byte {
 	if x != nil {
-		return x.DataFrame
+		return x.Data
 	}
 	return nil
 }
@@ -164,11 +163,10 @@ func (x *DetectOutliersRequest) GetOptions() *OutlierOptions {
 	return nil
 }
 
-// 异常检测响应
 type DetectOutliersResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                     // Arrow IPC序列化的结果数据
-	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误信息
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -217,12 +215,11 @@ func (x *DetectOutliersResponse) GetErrorMessage() string {
 	return ""
 }
 
-// 基线检测请求
 type DetectBaselineRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	CurrentData   []byte                 `protobuf:"bytes,1,opt,name=current_data,json=currentData,proto3" json:"current_data,omitempty"` // 当前数据 (Arrow IPC)
-	HistoryData   []byte                 `protobuf:"bytes,2,opt,name=history_data,json=historyData,proto3" json:"history_data,omitempty"` // 历史数据 (Arrow IPC)
-	Options       *BaselineOptions       `protobuf:"bytes,3,opt,name=options,proto3" json:"options,omitempty"`                            // 检测选项
+	CurrentData   []byte                 `protobuf:"bytes,1,opt,name=current_data,json=currentData,proto3" json:"current_data,omitempty"`
+	HistoryData   []byte                 `protobuf:"bytes,2,opt,name=history_data,json=historyData,proto3" json:"history_data,omitempty"`
+	Options       *BaselineOptions       `protobuf:"bytes,3,opt,name=options,proto3" json:"options,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -278,11 +275,10 @@ func (x *DetectBaselineRequest) GetOptions() *BaselineOptions {
 	return nil
 }
 
-// 基线检测响应
 type DetectBaselineResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                     // 结果DataFrame (Arrow IPC)
-	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误信息
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -331,12 +327,11 @@ func (x *DetectBaselineResponse) GetErrorMessage() string {
 	return ""
 }
 
-// 预测请求
 type ForecastRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	CurrentData   []byte                 `protobuf:"bytes,1,opt,name=current_data,json=currentData,proto3" json:"current_data,omitempty"` // 当前数据 (Arrow IPC)
-	HistoryData   []byte                 `protobuf:"bytes,2,opt,name=history_data,json=historyData,proto3" json:"history_data,omitempty"` // 历史数据 (Arrow IPC)
-	Options       *ForecasterOptions     `protobuf:"bytes,3,opt,name=options,proto3" json:"options,omitempty"`                            // 预测选项
+	CurrentData   []byte                 `protobuf:"bytes,1,opt,name=current_data,json=currentData,proto3" json:"current_data,omitempty"`
+	HistoryData   []byte                 `protobuf:"bytes,2,opt,name=history_data,json=historyData,proto3" json:"history_data,omitempty"`
+	Options       *ForecasterOptions     `protobuf:"bytes,3,opt,name=options,proto3" json:"options,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -392,11 +387,10 @@ func (x *ForecastRequest) GetOptions() *ForecasterOptions {
 	return nil
 }
 
-// 预测响应
 type ForecastResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                     // 预测结果DataFrame (Arrow IPC)
-	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误信息
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -445,11 +439,10 @@ func (x *ForecastResponse) GetErrorMessage() string {
 	return ""
 }
 
-// 健康检查响应
 type HealthResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Healthy       bool                   `protobuf:"varint,1,opt,name=healthy,proto3" json:"healthy,omitempty"` // 服务是否健康
-	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`  // 服务版本
+	Healthy       bool                   `protobuf:"varint,1,opt,name=healthy,proto3" json:"healthy,omitempty"`
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -498,12 +491,11 @@ func (x *HealthResponse) GetVersion() string {
 	return ""
 }
 
-// 异常检测选项
 type OutlierOptions struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ModelName     string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"` // 模型名称
-	Periods       []uint32               `protobuf:"varint,2,rep,packed,name=periods,proto3" json:"periods,omitempty"`              // 周期列表
-	Uuid          string                 `protobuf:"bytes,3,opt,name=uuid,proto3" json:"uuid,omitempty"`                            // 唯一标识符
+	ModelName     string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`
+	Periods       []uint32               `protobuf:"varint,2,rep,packed,name=periods,proto3" json:"periods,omitempty"`
+	Uuid          string                 `protobuf:"bytes,3,opt,name=uuid,proto3" json:"uuid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -559,15 +551,14 @@ func (x *OutlierOptions) GetUuid() string {
 	return ""
 }
 
-// 基线检测选项
 type BaselineOptions struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	TrendType           TrendType              `protobuf:"varint,1,opt,name=trend_type,json=trendType,proto3,enum=rsod.TrendType" json:"trend_type,omitempty"`             // 趋势类型 (daily/weekly/monthly)
-	IntervalMins        int32                  `protobuf:"varint,2,opt,name=interval_mins,json=intervalMins,proto3" json:"interval_mins,omitempty"`                        // 间隔分钟数
-	ConfidenceLevel     float64                `protobuf:"fixed64,3,opt,name=confidence_level,json=confidenceLevel,proto3" json:"confidence_level,omitempty"`              // 置信水平 (0.0-1.0)
-	AllowNegativeBounds bool                   `protobuf:"varint,4,opt,name=allow_negative_bounds,json=allowNegativeBounds,proto3" json:"allow_negative_bounds,omitempty"` // 允许负边界
-	StdDevMultiplier    float64                `protobuf:"fixed64,5,opt,name=std_dev_multiplier,json=stdDevMultiplier,proto3" json:"std_dev_multiplier,omitempty"`         // 标准差倍数
-	Uuid                string                 `protobuf:"bytes,6,opt,name=uuid,proto3" json:"uuid,omitempty"`                                                             // 唯一标识符
+	TrendType           TrendType              `protobuf:"varint,1,opt,name=trend_type,json=trendType,proto3,enum=rsod.TrendType" json:"trend_type,omitempty"`
+	IntervalMins        int32                  `protobuf:"varint,2,opt,name=interval_mins,json=intervalMins,proto3" json:"interval_mins,omitempty"`
+	ConfidenceLevel     float64                `protobuf:"fixed64,3,opt,name=confidence_level,json=confidenceLevel,proto3" json:"confidence_level,omitempty"`
+	AllowNegativeBounds bool                   `protobuf:"varint,4,opt,name=allow_negative_bounds,json=allowNegativeBounds,proto3" json:"allow_negative_bounds,omitempty"`
+	StdDevMultiplier    float64                `protobuf:"fixed64,5,opt,name=std_dev_multiplier,json=stdDevMultiplier,proto3" json:"std_dev_multiplier,omitempty"`
+	Uuid                string                 `protobuf:"bytes,6,opt,name=uuid,proto3" json:"uuid,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -644,13 +635,12 @@ func (x *BaselineOptions) GetUuid() string {
 	return ""
 }
 
-// LLM检测选项 (预留)
 type LLMOptions struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ModelName     string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`  // 模型名称
-	Temperature   int32                  `protobuf:"varint,2,opt,name=temperature,proto3" json:"temperature,omitempty"`              // 温度参数
-	MaxTokens     int32                  `protobuf:"varint,3,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"` // 最大token数
-	Uuid          string                 `protobuf:"bytes,4,opt,name=uuid,proto3" json:"uuid,omitempty"`                             // 唯一标识符
+	ModelName     string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`
+	Temperature   int32                  `protobuf:"varint,2,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	MaxTokens     int32                  `protobuf:"varint,3,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	Uuid          string                 `protobuf:"bytes,4,opt,name=uuid,proto3" json:"uuid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -713,17 +703,16 @@ func (x *LLMOptions) GetUuid() string {
 	return ""
 }
 
-// 时间序列预测选项
 type ForecasterOptions struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	ModelName           string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`                                  // 模型名称
-	Periods             []uint32               `protobuf:"varint,2,rep,packed,name=periods,proto3" json:"periods,omitempty"`                                               // 周期列表
-	Uuid                string                 `protobuf:"bytes,3,opt,name=uuid,proto3" json:"uuid,omitempty"`                                                             // 唯一标识符
-	Budget              float64                `protobuf:"fixed64,4,opt,name=budget,proto3" json:"budget,omitempty"`                                                       // 预算参数
-	NumThreads          int32                  `protobuf:"varint,5,opt,name=num_threads,json=numThreads,proto3" json:"num_threads,omitempty"`                              // 线程数
-	NLags               int32                  `protobuf:"varint,6,opt,name=n_lags,json=nLags,proto3" json:"n_lags,omitempty"`                                             // 滞后特征数
-	StdDevMultiplier    float64                `protobuf:"fixed64,7,opt,name=std_dev_multiplier,json=stdDevMultiplier,proto3" json:"std_dev_multiplier,omitempty"`         // 标准差倍数
-	AllowNegativeBounds bool                   `protobuf:"varint,8,opt,name=allow_negative_bounds,json=allowNegativeBounds,proto3" json:"allow_negative_bounds,omitempty"` // 允许负边界
+	ModelName           string                 `protobuf:"bytes,1,opt,name=model_name,json=modelName,proto3" json:"model_name,omitempty"`
+	Periods             []uint32               `protobuf:"varint,2,rep,packed,name=periods,proto3" json:"periods,omitempty"`
+	Uuid                string                 `protobuf:"bytes,3,opt,name=uuid,proto3" json:"uuid,omitempty"`
+	Budget              float64                `protobuf:"fixed64,4,opt,name=budget,proto3" json:"budget,omitempty"`
+	NumThreads          int32                  `protobuf:"varint,5,opt,name=num_threads,json=numThreads,proto3" json:"num_threads,omitempty"`
+	NLags               int32                  `protobuf:"varint,6,opt,name=n_lags,json=nLags,proto3" json:"n_lags,omitempty"`
+	StdDevMultiplier    float64                `protobuf:"fixed64,7,opt,name=std_dev_multiplier,json=stdDevMultiplier,proto3" json:"std_dev_multiplier,omitempty"`
+	AllowNegativeBounds bool                   `protobuf:"varint,8,opt,name=allow_negative_bounds,json=allowNegativeBounds,proto3" json:"allow_negative_bounds,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -819,10 +808,9 @@ var File_rsod_service_proto protoreflect.FileDescriptor
 const file_rsod_service_proto_rawDesc = "" +
 	"\n" +
 	"\x12rsod/service.proto\x12\x04rsod\"\x0f\n" +
-	"\rHealthRequest\"f\n" +
-	"\x15DetectOutliersRequest\x12\x1d\n" +
-	"\n" +
-	"data_frame\x18\x01 \x01(\fR\tdataFrame\x12.\n" +
+	"\rHealthRequest\"[\n" +
+	"\x15DetectOutliersRequest\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12.\n" +
 	"\aoptions\x18\x02 \x01(\v2\x14.rsod.OutlierOptionsR\aoptions\"Q\n" +
 	"\x16DetectOutliersResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12#\n" +

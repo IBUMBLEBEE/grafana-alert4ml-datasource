@@ -137,7 +137,7 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 					// Create gRPC request
 					grpcReq := &rsod.DetectOutliersRequest{
-						DataFrame: dataBytes,
+						Data: dataBytes,
 						Options: &rsod.OutlierOptions{
 							ModelName: rsodParams.ModelName,
 							Periods:   make([]uint32, len(periods)),

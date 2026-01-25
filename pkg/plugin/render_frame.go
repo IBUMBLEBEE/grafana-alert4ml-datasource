@@ -10,8 +10,46 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
-func RenderFrame(df *data.Frame) *data.Frame {
-	return df
+// convertTimeField converts a field containing timestamps to a time.Time field
+func convertTimeField(field *data.Field) *data.Field {
+	fieldLength := field.Len()
+	timeField := data.NewField(constant.GF_FRAME_RESULT_NAME_TIME, field.Labels, make([]time.Time, fieldLength))
+	timeField.Config = &data.FieldConfig{DisplayName: constant.GF_FRAME_RESULT_NAME_TIME}
+
+	for i := range fieldLength {
+		var timestampSec float64
+		val := field.At(i)
+
+		switch v := val.(type) {
+		case int64:
+			timestampSec = float64(v)
+		case *int64:
+			if v == nil {
+				continue
+			}
+			timestampSec = float64(*v)
+		case float64:
+			timestampSec = v
+		case *float64:
+			if v == nil {
+				continue
+			}
+			timestampSec = *v
+		case time.Time:
+			timeField.Set(i, v)
+			continue
+		default:
+			log.DefaultLogger.Warn("Unexpected time field type", "type", fmt.Sprintf("%T", v), "value", v)
+			continue
+		}
+
+		if timestampSec > 1e12 {
+			timestampSec = timestampSec / 1000.0
+		}
+		timeField.Set(i, time.Unix(int64(timestampSec), 0))
+	}
+
+	return timeField
 }
 
 func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
@@ -20,52 +58,8 @@ func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
 	log.DefaultLogger.Info("df.Fields: ", df.Fields)
 	for idx, field := range df.Fields {
 		switch field.Name {
-		// 小写的time字段是为了兼容Rust端 polars的输出
 		case constant.GF_FRAME_RESULT_NAME_TIME, "time":
-			// 创建一个新的 time.Time 类型的字段
-			fieldLength := field.Len()
-			timeField := data.NewField(constant.GF_FRAME_RESULT_NAME_TIME, field.Labels, make([]time.Time, fieldLength))
-			timeField.Config = &data.FieldConfig{DisplayName: constant.GF_FRAME_RESULT_NAME_TIME}
-
-			// 将时间戳转换为 time.Time
-			for i := range fieldLength {
-				var timestampSec float64
-				val := field.At(i)
-
-				// 处理不同的时间戳类型
-				switch v := val.(type) {
-				case int64:
-					// 假设是秒级时间戳
-					timestampSec = float64(v)
-				case float64:
-					timestampSec = v
-				case *float64:
-					// 处理指针类型（nullable float64）
-					if v == nil {
-						continue
-					}
-					timestampSec = *v
-				case time.Time:
-					// 如果已经是 time.Time，直接使用
-					timeField.Set(i, v)
-					continue
-				default:
-					log.DefaultLogger.Warn("Unexpected time field type", "type", fmt.Sprintf("%T", v), "value", v)
-					continue
-				}
-
-				// 时间戳是秒（Unix 时间戳），直接转换为 time.Time
-				// 如果时间戳看起来像毫秒（大于 1e12），则除以 1000
-				if timestampSec > 1e12 {
-					// 可能是毫秒，转换为秒
-					timestampSec = timestampSec / 1000.0
-				}
-				// 转换为 time.Time（忽略小数部分，因为 Unix 时间戳通常是整数秒）
-				timeField.Set(i, time.Unix(int64(timestampSec), 0))
-			}
-
-			// 替换原字段
-			df.Fields[idx] = timeField
+			df.Fields[idx] = convertTimeField(field)
 		case constant.GF_FRAME_RESULT_NAME_BASELINE, "baseline":
 			field.Config = &data.FieldConfig{
 				DisplayName: fmt.Sprintf("%s-%s", refID, constant.GF_FRAME_RESULT_NAME_BASELINE),
@@ -140,50 +134,7 @@ func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *d
 	for idx, field := range df.Fields {
 		switch field.Name {
 		case constant.GF_FRAME_RESULT_NAME_TIME, "time":
-			// 创建一个新的 time.Time 类型的字段
-			fieldLength := field.Len()
-			timeField := data.NewField(constant.GF_FRAME_RESULT_NAME_TIME, field.Labels, make([]time.Time, fieldLength))
-			timeField.Config = &data.FieldConfig{DisplayName: constant.GF_FRAME_RESULT_NAME_TIME}
-
-			// 将时间戳转换为 time.Time
-			for i := range fieldLength {
-				var timestampSec float64
-				val := field.At(i)
-
-				// 处理不同的时间戳类型
-				switch v := val.(type) {
-				case int64:
-					// 假设是秒级时间戳
-					timestampSec = float64(v)
-				case float64:
-					timestampSec = v
-				case *float64:
-					// 处理指针类型（nullable float64）
-					if v == nil {
-						continue
-					}
-					timestampSec = *v
-				case time.Time:
-					// 如果已经是 time.Time，直接使用
-					timeField.Set(i, v)
-					continue
-				default:
-					log.DefaultLogger.Warn("Unexpected time field type", "type", fmt.Sprintf("%T", v), "value", v)
-					continue
-				}
-
-				// 时间戳是秒（Unix 时间戳），直接转换为 time.Time
-				// 如果时间戳看起来像毫秒（大于 1e12），则除以 1000
-				if timestampSec > 1e12 {
-					// 可能是毫秒，转换为秒
-					timestampSec = timestampSec / 1000.0
-				}
-				// 转换为 time.Time（忽略小数部分，因为 Unix 时间戳通常是整数秒）
-				timeField.Set(i, time.Unix(int64(timestampSec), 0))
-			}
-
-			// 替换原字段
-			df.Fields[idx] = timeField
+			df.Fields[idx] = convertTimeField(field)
 		case constant.GF_FRAME_RESULT_NAME_FORECAST, "pred":
 			field.Config = &data.FieldConfig{
 				DisplayName: fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_FORECAST),

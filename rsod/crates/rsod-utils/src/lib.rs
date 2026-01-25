@@ -24,10 +24,10 @@ pub fn read_csv_to_vec<P: AsRef<Path>>(path: P) -> Vec<[f64; 2]> {
 }
 
 
-/// 将Unix时间戳转换为RFC3339格式的时间字符串
+/// Convert Unix timestamp to RFC3339 format time string
 #[allow(dead_code)]
 fn format_timestamp(timestamp: f64) -> String {
-    // 将毫秒时间戳转换为秒
+    // Convert millisecond timestamp to seconds
     let seconds = (timestamp / 1000.0) as i64;
     let dt = Utc.timestamp_opt(seconds, 0).unwrap();
     dt.to_rfc3339()
@@ -44,23 +44,21 @@ pub fn flatten_data(input: Vec<[f64; 2]>) -> Vec<f64> {
     col0.extend(col1);
     col0
 }
-
-
-/// 根据置信水平（百分比）获取预测区间的乘数 c
+/// Get prediction interval multiplier c based on confidence level (percentage)
 /// 
-/// 基于正态分布假设，返回对应置信水平的 z-score 乘数
+/// Based on normal distribution assumption, returns z-score multiplier corresponding to the confidence level
 /// 
-/// 参数:
-/// - confidence_level: 置信水平（百分比），范围 50.0 到 99.0
+/// Arguments:
+/// - confidence_level: Confidence level (percentage), range 50.0 to 99.0
 /// 
-/// 返回:
-/// - 对应的乘数 c，用于计算预测区间：ŷ ± c * σ̂
+/// Returns:
+/// - Corresponding multiplier c, used to calculate prediction interval: ŷ ± c * σ̂
 #[allow(dead_code)]
 pub fn get_confidence_multiplier(confidence_level: f64) -> f64 {
-    // 根据文档中的表格，返回对应的乘数
-    // 使用线性插值处理中间值
+    // Return corresponding multiplier based on table in documentation
+    // Use linear interpolation for intermediate values
     match confidence_level {
-        x if x < 50.0 => 0.67, // 最小值
+        x if x < 50.0 => 0.67, // Minimum value
         x if x >= 50.0 && x < 55.0 => 0.67 + (x - 50.0) / 5.0 * (0.76 - 0.67),
         x if x >= 55.0 && x < 60.0 => 0.76 + (x - 55.0) / 5.0 * (0.84 - 0.76),
         x if x >= 60.0 && x < 65.0 => 0.84 + (x - 60.0) / 5.0 * (0.93 - 0.84),
@@ -74,7 +72,7 @@ pub fn get_confidence_multiplier(confidence_level: f64) -> f64 {
         x if x >= 96.0 && x < 97.0 => 2.05 + (x - 96.0) / 1.0 * (2.17 - 2.05),
         x if x >= 97.0 && x < 98.0 => 2.17 + (x - 97.0) / 1.0 * (2.33 - 2.17),
         x if x >= 98.0 && x < 99.0 => 2.33 + (x - 98.0) / 1.0 * (2.58 - 2.33),
-        x if x >= 99.0 => 2.58, // 最大值
-        _ => 1.96, // 默认 95%
+        x if x >= 99.0 => 2.58, // Maximum value
+        _ => 1.96, // Default 95%
     }
 }

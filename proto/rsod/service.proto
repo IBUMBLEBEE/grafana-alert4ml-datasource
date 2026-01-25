@@ -5,13 +5,12 @@ package rsod;
 option go_package = "github.com/IBUMBLEBEE/grafana-alert4ml-datasource/proto/rsod";
 
 enum TrendType {
-    TREND_TYPE_UNSPECIFIED = 0; // 对应 Rust 的 None 或默认状态
+    TREND_TYPE_UNSPECIFIED = 0;
     TREND_TYPE_DAILY = 1;
     TREND_TYPE_WEEKLY = 2;
     TREND_TYPE_MONTHLY = 3;
 }
 
-// RSOD服务定义 - 异常检测服务
 service RsodService {
   rpc DetectOutliers(DetectOutliersRequest) returns (DetectOutliersResponse);
   rpc DetectBaseline(DetectBaselineRequest) returns (DetectBaselineResponse);
@@ -21,83 +20,81 @@ service RsodService {
 
 message HealthRequest {}
 
-// 异常检测请求
 message DetectOutliersRequest {
-  bytes data_frame = 1; // Arrow IPC序列化的DataFrame
-  OutlierOptions options = 2; // 检测选项
+  bytes data = 1;
+  OutlierOptions options = 2;
 }
 
-// 异常检测响应
+
 message DetectOutliersResponse {
-  bytes data = 1; // Arrow IPC序列化的结果数据
-  string error_message = 3; // 错误信息
+  bytes data = 1;
+  string error_message = 3;
 }
 
-// 基线检测请求
 message DetectBaselineRequest {
-  bytes current_data = 1; // 当前数据 (Arrow IPC)
-  bytes history_data = 2; // 历史数据 (Arrow IPC)
-  BaselineOptions options = 3; // 检测选项
+  bytes current_data = 1;
+  bytes history_data = 2;
+  BaselineOptions options = 3;
 }
 
-// 基线检测响应
+
 message DetectBaselineResponse {
-  bytes data = 1; // 结果DataFrame (Arrow IPC)
-  string error_message = 3; // 错误信息
+  bytes data = 1;
+  string error_message = 3;
 }
 
-// 预测请求
+
 message ForecastRequest {
-  bytes current_data = 1; // 当前数据 (Arrow IPC)
-  bytes history_data = 2; // 历史数据 (Arrow IPC)
-  ForecasterOptions options = 3; // 预测选项
+  bytes current_data = 1;
+  bytes history_data = 2;
+  ForecasterOptions options = 3;
 }
 
-// 预测响应
+
 message ForecastResponse {
-  bytes data = 1; // 预测结果DataFrame (Arrow IPC)
-  string error_message = 3; // 错误信息
+  bytes data = 1;
+  string error_message = 3;
 }
 
-// 健康检查响应
+
 message HealthResponse {
-  bool healthy = 1; // 服务是否健康
-  string version = 2; // 服务版本
+  bool healthy = 1;
+  string version = 2;
 }
 
-// 异常检测选项
+
 message OutlierOptions {
-  string model_name = 1; // 模型名称
-  repeated uint32 periods = 2; // 周期列表
-  string uuid = 3; // 唯一标识符
+  string model_name = 1;
+  repeated uint32 periods = 2;
+  string uuid = 3;
 }
 
-// 基线检测选项
+
 message BaselineOptions {
-  TrendType trend_type = 1; // 趋势类型 (daily/weekly/monthly)
-  int32 interval_mins = 2; // 间隔分钟数
-  double confidence_level = 3; // 置信水平 (0.0-1.0)
-  bool allow_negative_bounds = 4; // 允许负边界
-  double std_dev_multiplier = 5; // 标准差倍数
-  string uuid = 6; // 唯一标识符
+  TrendType trend_type = 1;
+  int32 interval_mins = 2;
+  double confidence_level = 3;
+  bool allow_negative_bounds = 4;
+  double std_dev_multiplier = 5;
+  string uuid = 6;
 }
 
-// LLM检测选项 (预留)
+
 message LLMOptions {
-  string model_name = 1; // 模型名称
-  int32 temperature = 2; // 温度参数
-  int32 max_tokens = 3; // 最大token数
-  string uuid = 4; // 唯一标识符
+  string model_name = 1;
+  int32 temperature = 2;
+  int32 max_tokens = 3;
+  string uuid = 4;
 }
 
-// 时间序列预测选项
+
 message ForecasterOptions {
-  string model_name = 1; // 模型名称
-  repeated uint32 periods = 2; // 周期列表
-  string uuid = 3; // 唯一标识符
-  double budget = 4; // 预算参数
-  int32 num_threads = 5; // 线程数
-  int32 n_lags = 6; // 滞后特征数
-  double std_dev_multiplier = 7; // 标准差倍数
-  bool allow_negative_bounds = 8; // 允许负边界
+  string model_name = 1;
+  repeated uint32 periods = 2;
+  string uuid = 3;
+  double budget = 4;
+  int32 num_threads = 5;
+  int32 n_lags = 6;
+  double std_dev_multiplier = 7;
+  bool allow_negative_bounds = 8;
 }

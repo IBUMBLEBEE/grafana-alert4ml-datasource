@@ -103,9 +103,9 @@ pub fn auto_mstl(data: &[[f32; 2]], periods: &[usize]) -> AutoMSTLDecompositionR
         loop_count += 1;
     }
 
-    // new_periods 去重
+    // Remove duplicates from new_periods
     new_periods = new_periods.into_iter().unique().collect();
-    // 如果new_periods的值大于data的长度，则删除该值
+    // If a value in new_periods is greater than the data length, remove it
     new_periods.retain(|&p| p * 2 <= data.len());
 
     let auto_mstl_decom = AutoMSTLDecompositionResult {

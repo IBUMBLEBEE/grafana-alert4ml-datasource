@@ -1,17 +1,17 @@
-// 使用 https://crates.io/crates/augurs-forecaster transforms::LinearInterpolator 进行数据Nan填充
+// Use https://crates.io/crates/augurs-forecaster transforms::LinearInterpolator for NaN filling
 
 use augurs_forecaster::transforms::interpolate::*;
 
 #[allow(dead_code)]
-/// 使用线性插值填充时间序列中的NaN值
+/// Fill NaN values in time series using linear interpolation
 /// 
-/// # 参数
-/// * `data` - 包含NaN值的时间序列数据
+/// # Arguments
+/// * `data` - Time series data containing NaN values
 /// 
-/// # 返回值
-/// * 填充了NaN值的新时间序列
+/// # Returns
+/// * New time series with NaN values filled
 /// 
-/// # 示例
+/// # Examples
 /// ```
 /// use rsod_outlier::preprocessing::fill_nan;
 /// 
@@ -32,37 +32,37 @@ pub fn fill_nan(data: &[[f64; 2]]) -> Vec<[f64; 2]> {
 }
 
 #[allow(dead_code)]
-/// 检查数据中是否包含NaN值
+/// Check if data contains NaN values
 /// 
-/// # 参数
-/// * `data` - 要检查的数据
+/// # Arguments
+/// * `data` - Data to check
 /// 
-/// # 返回值
-/// * 如果包含NaN值返回true，否则返回false
+/// # Returns
+/// * Returns true if NaN values are present, false otherwise
 pub fn has_nan(data: &[f64]) -> bool {
     data.iter().any(|x| x.is_nan())
 }
 
 #[allow(dead_code)]
-/// 统计数据中NaN值的数量
+/// Count the number of NaN values in data
 /// 
-/// # 参数
-/// * `data` - 要统计的数据
+/// # Arguments
+/// * `data` - Data to count
 /// 
-/// # 返回值
-/// * NaN值的数量
+/// # Returns
+/// * Number of NaN values
 pub fn count_nan(data: &[f64]) -> usize {
     data.iter().filter(|x| x.is_nan()).count()
 }
 
 #[allow(dead_code)]
-/// 移除数据中的NaN值
+/// Remove NaN values from data
 /// 
-/// # 参数
-/// * `data` - 包含NaN值的数据
+/// # Arguments
+/// * `data` - Data containing NaN values
 /// 
-/// # 返回值
-/// * 移除NaN值后的数据
+/// # Returns
+/// * Data with NaN values removed
 pub fn remove_nan(data: Vec<f64>) -> Vec<f64> {
     data.into_iter().filter(|x| !x.is_nan()).collect()
 }
@@ -77,11 +77,11 @@ mod tests {
         let data = vec![[1.0, f64::NAN], [2.0, f64::NAN], [3.0, 2.0]];
         let filled = fill_nan(&data);
         
-        // 检查第一个和最后一个值保持不变
+        // Check that first and last values remain unchanged
         assert_eq!(filled[0][1], 1.0);
         assert_eq!(filled[2][1], 2.0);
         
-        // 检查中间的值被插值填充
+        // Check that middle values are filled by interpolation
         assert!(!filled[1][1].is_nan());
         assert!(!filled[2][1].is_nan());
         assert!(filled[1][1] > 1.0 && filled[1][1] < 2.0);
@@ -99,7 +99,7 @@ mod tests {
     fn test_fill_nan_all_nan() {
         let data = vec![[1.0, f64::NAN], [2.0, f64::NAN], [3.0, f64::NAN]];
         let filled = fill_nan(&data);
-        // 如果所有值都是NaN，插值后应该仍然是NaN
+        // If all values are NaN, they should remain NaN after interpolation
         assert_eq!(filled, data);
     }
 
@@ -107,7 +107,7 @@ mod tests {
     fn test_fill_nan_start_nan() {
         let data = vec![[1.0, f64::NAN], [2.0, f64::NAN], [3.0, 1.0], [4.0, 2.0]];
         let filled = fill_nan(&data);
-        // 开头的NaN值应该保持不变
+        // NaN values at the start should remain unchanged
         assert!(filled[0][1].is_nan());
         assert!(filled[1][1].is_nan());
         assert_eq!(filled[2][1], 1.0);
@@ -118,7 +118,7 @@ mod tests {
     fn test_fill_nan_end_nan() {
         let data = vec![[1.0, 1.0], [2.0, 2.0], [3.0, f64::NAN], [4.0, f64::NAN]];
         let filled = fill_nan(&data);
-        // 结尾的NaN值应该保持不变
+        // NaN values at the end should remain unchanged
         assert_eq!(filled[0][1], 1.0);
         assert_eq!(filled[1][1], 2.0);
         assert!(filled[2][1].is_nan());

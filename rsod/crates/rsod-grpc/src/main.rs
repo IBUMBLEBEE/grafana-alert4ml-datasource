@@ -1,27 +1,15 @@
 use tonic::{transport::Server, Request, Response, Status};
-use arrow::ipc::reader::{StreamReader, FileReader};
-use arrow::array::{Float64Array, RecordBatch, Int64Array, Array as ArrowArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::RecordBatch;
 use arrow::ipc::writer::StreamWriter;
-use polars::prelude::*;
-use polars::prelude::DataType as PolarsDataType;
-use std::io::Cursor;
-use std::sync::Arc;
 use std::path::Path;
 use std::env;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tokio_stream::wrappers::UnixListenerStream;
 use rsod_storage::init_db;
-use rsod_outlier::outlier;
-use rsod_baseline::{baseline_detect, BaselineOptions};
-use rsod_forecaster::{forecast, ForecasterOptions};
 
 mod rsod;
 use rsod as rsodsvc;
-
-mod forecast;
-use forecast::forecast_process;
 
 use rsodsvc::rsod_service_server::{RsodService, RsodServiceServer};
 use rsodsvc::{
@@ -34,6 +22,13 @@ use rsodsvc::{
     ForecastRequest,
     ForecastResponse
 };
+mod forecast;
+use forecast::forecast_process;
+mod baseline;
+use baseline::baseline_process;
+mod utils;
+mod outlier;
+use outlier::outlier_process;
 
 #[derive(Debug, Default)]
 pub struct RsodServiceImpl {}
@@ -45,11 +40,11 @@ impl RsodService for RsodServiceImpl {
     }
 
     async fn detect_outliers(&self, request: Request<DetectOutliersRequest>) -> Result<Response<DetectOutliersResponse>, Status> {
-        Ok(Response::new(DetectOutliersResponse { data: vec![], error_message: "".to_string() }))
+        outlier_process(request).await
     }
 
     async fn detect_baseline(&self, request: Request<DetectBaselineRequest>) -> Result<Response<DetectBaselineResponse>, Status> {
-        Ok(Response::new(DetectBaselineResponse { data: vec![], error_message: "".to_string() }))
+        baseline_process(request).await
     }
 
     async fn forecast(&self, request: Request<ForecastRequest>) -> Result<Response<ForecastResponse>, Status> {
@@ -66,50 +61,6 @@ pub fn convert_record_batch_to_arrow_ipc(batch: RecordBatch) -> Result<Vec<u8>, 
     }
 
     Ok(buffer)
-}
-
-fn dataframe_to_recordbatch_forecast(mut df: DataFrame) -> Result<RecordBatch, Box<dyn std::error::Error>> {
-    let df = df.align_chunks();
-
-    let column_names = df.get_column_names();
-    let mut fields = Vec::new();
-    let mut arrays: Vec<Arc<dyn ArrowArray>> = Vec::new();
-
-    for col_name in column_names {
-        let series = df.column(col_name)?;
-
-        let (field, array): (Field, Arc<dyn ArrowArray>) = match series.dtype() {
-            PolarsDataType::Float64 => {
-                let ca = series.f64()?;
-                let values: Vec<Option<f64>> = ca.into_iter().collect();
-                let arrow_array = Float64Array::from(values);
-                (
-                    Field::new(col_name.to_string(), DataType::Float64, true),
-                    Arc::new(arrow_array),
-                )
-            }
-            PolarsDataType::Int64 => {
-                let ca = series.i64()?;
-                let values: Vec<Option<i64>> = ca.into_iter().collect();
-                let arrow_array = Int64Array::from(values);
-                (
-                    Field::new(col_name.to_string(), DataType::Int64, true),
-                    Arc::new(arrow_array),
-                )
-            }
-            _ => {
-                return Err(
-                    format!("unsupport type: {:?} for column {}", series.dtype(), col_name).into()
-                );
-            }
-        };
-
-        fields.push(field);
-        arrays.push(array);
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-    Ok(RecordBatch::try_new(schema, arrays)?)
 }
 
 #[tokio::main]

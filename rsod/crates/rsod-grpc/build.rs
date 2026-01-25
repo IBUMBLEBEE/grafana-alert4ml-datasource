@@ -7,7 +7,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("warning: proto file not found: {:?}, skip compile", proto_file.clone());
         return Ok(());
     }
-    println!("cargo:warning=Compiling proto file: {:?}", proto_file.clone());
 
     tonic_prost_build::configure()
         .build_server(true)

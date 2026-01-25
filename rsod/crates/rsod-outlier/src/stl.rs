@@ -28,7 +28,7 @@ pub fn decompose(data: &[f32], periods: &mut Vec<usize>) -> DecompositionResult 
     if data.is_empty() {
         panic!("Input data cannot be empty");
     }
-    // 检查periods的值是否大于data的长度, 如果大于，则删除该值
+    // Check if any period value is greater than data length, if so, remove it
     if periods.iter().any(|&p| p * 2 > data.len()) {
         periods.retain(|&p| p * 2 <= data.len());
     }
@@ -65,7 +65,7 @@ pub fn decompose(data: &[f32], periods: &mut Vec<usize>) -> DecompositionResult 
     let mresult = Mstl::params()
         // .iterations(2)                   // number of iterations
         // .lambda(0.5)                     // lambda for Box-Cox transformation
-        .seasonal_lengths(&seasonal_lengths) // 使用传入的period作为seasonal_lengths
+        .seasonal_lengths(&seasonal_lengths) // Use the passed period as seasonal_lengths
         .stl_params(sltparams)
         .fit(data, periods) // STL params
         .expect("MSTL decomposition failed");
@@ -114,7 +114,7 @@ fn seasonal_strength(seasonal: &[f32], remainder: &[f32]) -> f64 {
     let var_sr = variance(s_plus_r.into_iter());
 
     if var_sr.abs() < 1e-8 {
-        0.0 // 防止除以零
+        0.0 // Prevent division by zero
     } else {
         1.0 - (var_r / var_sr)
     }
@@ -135,28 +135,28 @@ mod tests {
 
     #[test]
     fn test_decompose_with_csv_data() {
-        // 读取CSV数据
+        // Read CSV data
         let data: Vec<[f64; 2]> = read_csv_to_vec("data/data.csv");
 
-        // 提取时间序列数据
+        // Extract time series data
         let time_series: Vec<f32> = data
             .iter()
             .map(|x| x[1] as f32)
             .filter(|&x| !x.is_nan() && !x.is_infinite())
             .collect();
 
-        // 设置周期（日周期）
+        // Set period (daily period)
         let periods = [24];
 
-        // 执行分解
+        // Perform decomposition
         let result = decompose(&time_series, &mut periods.to_vec());
 
-        // 验证结果
+        // Verify results
         assert_eq!(result.trend.len(), time_series.len());
         assert_eq!(result.residual.len(), time_series.len());
         assert_ne!(result.periods.len(), 0);
 
-        // // 绘制分解结果
+        // // Plot decomposition results
         // let mut trend_data = Vec::new();
         // let mut seasonal_data = Vec::new();
         // let mut residual_data = Vec::new();
@@ -173,12 +173,12 @@ mod tests {
         // plot_time_series(&seasonal_data, "data/stl_seasonal.png");
         // plot_time_series(&residual_data, "data/stl_residual.png");
 
-        // // ==========================二次分解===========================================
+        // // ==========================Secondary Decomposition===========================================
 
-        // // 对result.residual进行季节分解
+        // // Perform seasonal decomposition on result.residual
         // let period = [168, 144, 296];
         // let residual_data: Vec<f32> = result.residual.iter()
-        //     .filter(|&&x| !x.is_nan() && !x.is_infinite() && x.abs() < 1e6)  // 过滤掉异常值
+        //     .filter(|&&x| !x.is_nan() && !x.is_infinite() && x.abs() < 1e6)  // Filter out outliers
         //     .map(|&x| x)
         //     .collect();
 
@@ -189,14 +189,14 @@ mod tests {
 
         // plot_time_series(&residual_data_plot, "data/stl_residual_residual.png");
 
-        // // 确保数据长度足够
+        // // Ensure data length is sufficient
         // if residual_data.len() < period[0] * 2 {
         //     return;
         // }
 
         // let result_residual2 = decompose(&residual_data, &period);
 
-        // // 绘制result_residual分解结果
+        // // Plot result_residual decomposition results
         // let mut trend_data = Vec::new();
         // let mut seasonal_data = Vec::new();
         // let mut residual_data = Vec::new();
@@ -210,18 +210,18 @@ mod tests {
         // plot_time_series(&seasonal_data, "data/stl_seasonal_residual.png");
         // plot_time_series(&residual_data, "data/stl_residual_residual.png");
 
-        // ==========================从csv中读取数据，进行二次分解===========================================
+        // ==========================Read data from CSV and perform secondary decomposition===========================================
         // let period = [168, 144, 296];
         // let residual_data_csv: Vec<f32> = read_csv_to_vec("data/stl_residual_seasonal2.csv").iter()
         //     .map(|x| x[1] as f32)
         //     .collect();
 
-        // // 对result.residual进行季节分解
+        // // Perform seasonal decomposition on result.residual
         // let period = [168, 144, 296];
         // let residual_data_csv: Vec<f32> = result
         //     .residual
         //     .iter()
-        //     .filter(|&&x| !x.is_nan() && !x.is_infinite() && x.abs() < 1e6) // 过滤掉异常值
+        //     .filter(|&&x| !x.is_nan() && !x.is_infinite() && x.abs() < 1e6) // Filter out outliers
         //     .map(|&x| x)
         //     .collect();
 
@@ -235,7 +235,7 @@ mod tests {
         //     residual_data_trend.push([i as f64, result_residual.trend[i] as f64]);
         // }
 
-        // // residual_data_residual 写入csv, 索引不写
+        // // Write residual_data_residual to CSV, without index
         // let mut file = File::create("data/stl_residual_residual3.csv").unwrap();
         // for i in 0..result.residual.len() {
         //     writeln!(file, "{},{}", i, result_residual.residual[i]).unwrap();
@@ -245,6 +245,6 @@ mod tests {
         // plot_time_series(&residual_data_seasonal, "data/stl_residual_seasonal3.png");
         // plot_time_series(&residual_data_trend, "data/stl_residual_trend3.png");
 
-        // 对result_residual.residual进行季节分解
+        // Perform seasonal decomposition on result_residual.residual
     }
 }

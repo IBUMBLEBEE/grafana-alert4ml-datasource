@@ -20,6 +20,8 @@ num-complex.workspace = true
 chrono.workspace = true
 stlrs.workspace = true
 itertools.workspace = true
+polars.workspace = true
+polars-arrow.workspace = true
 
 rsod-utils.workspace = true
 rsod-storage.workspace = true
