@@ -21,16 +21,6 @@ func initRSODGrpcClient() error {
 		// Check if gRPC server binary exists and is executable
 		serverBinaryPath := "gpx_alert4ml_rsod_server"
 		serverPath := filepath.Join(pluginDir, serverBinaryPath)
-		if _, err := os.Stat(serverPath); os.IsNotExist(err) {
-			log.DefaultLogger.Error("gRPC server binary not found", "path", serverPath)
-			os.Exit(1)
-		}
-
-		// Check if the file is executable
-		if info, err := os.Stat(serverPath); err != nil || info.Mode()&0111 == 0 {
-			log.DefaultLogger.Error("gRPC server binary is not executable", "path", serverPath)
-			os.Exit(1)
-		}
 
 		// Start gRPC server in a goroutine
 		go func() {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 (Released)
+
+bug fixes: not permitted to access the file system
+
 ## 0.1.3 (Released)
 
 upgrade package.json
