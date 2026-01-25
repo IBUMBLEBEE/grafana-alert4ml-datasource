@@ -52,7 +52,7 @@ impl PeriodDetector {
         let fft = planner.plan_fft_forward(n);
         let ifft = planner.plan_fft_inverse(n);
 
-        // 转为复数
+        // Convert to complex
         let mut buffer: Vec<Complex64> =
             residuals.iter().map(|&x| Complex64::new(x, 0.0)).collect();
         fft.process(&mut buffer);
@@ -64,7 +64,7 @@ impl PeriodDetector {
 
         ifft.process(&mut buffer);
 
-        // 归一化
+        // Normalize
         buffer.iter().map(|c| c.re / n as f64).collect()
     }
 

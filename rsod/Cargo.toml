@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/*",
-    "rsod-go"
+    "crates/*"
 ]
+default-members = ["crates/rsod-grpc"]  # 设置默认运行入口为 rsod-grpc
 resolver = "2"
 
 [workspace.dependencies]
@@ -11,7 +11,7 @@ rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.1" }
 rsod-baseline = { path = "crates/rsod-baseline", version="0.1.1" }
 rsod-utils = { path = "crates/rsod-utils", version="0.1.1" }
 rsod-storage = { path = "crates/rsod-storage", version="0.1.1" }
-rsod-go = { path = "crates/rsod-go", version="0.1.1" }
+rsod-grpc = { path = "crates/rsod-grpc", version="0.1.0" }
 
 ndarray = "0.16.1"
 rand = "0.8"
@@ -32,6 +32,7 @@ stlrs = "0.3.1"
 itertools = "0.14.0"
 polars = { version = "0.51.0", features = ["lazy"] }
 arrow = { version = "56.2.0", features = ["ffi"] }
+polars-arrow = "0.51.0"
 perpetual = "0.10.0"
 
 [workspace.lints.rust]

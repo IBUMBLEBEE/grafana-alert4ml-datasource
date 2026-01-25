@@ -2,21 +2,22 @@ module github.com/IBUMBLEBEE/grafana-alert4ml-datasource
 
 go 1.25.5
 
-replace github.com/IBUMBLEBEE/grafana-alert4ml-datasource/rsod/rsod-go => ./rsod/rsod-go
+replace github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/gen/rsod => ./pkg/gen/rsod
 
 require (
-	github.com/IBUMBLEBEE/grafana-alert4ml-datasource/rsod/rsod-go v0.0.0-00010101000000-000000000000
+	github.com/apache/arrow-go/v18 v18.5.0
 	github.com/google/uuid v1.6.0
-	github.com/grafana/grafana-plugin-sdk-go v0.285.0
+	github.com/grafana/grafana-plugin-sdk-go v0.286.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/xhit/go-str2duration/v2 v2.1.0
+	google.golang.org/grpc v1.78.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require github.com/tidwall/match v1.1.1 // indirect
 
 require (
 	github.com/BurntSushi/toml v1.5.0 // indirect
-	github.com/apache/arrow-go/v18 v18.5.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -91,7 +92,5 @@ require (
 	golang.org/x/tools v0.39.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20210630183607-d20f26d13c79 // indirect
-	google.golang.org/grpc v1.78.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/fsnotify/fsnotify.v1 v1.4.7 // indirect
 )

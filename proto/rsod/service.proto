@@ -1,0 +1,100 @@
+// proto/rsod_service.proto
+syntax = "proto3";
+package rsod;
+
+option go_package = "github.com/IBUMBLEBEE/grafana-alert4ml-datasource/proto/rsod";
+
+enum TrendType {
+    TREND_TYPE_UNSPECIFIED = 0;
+    TREND_TYPE_DAILY = 1;
+    TREND_TYPE_WEEKLY = 2;
+    TREND_TYPE_MONTHLY = 3;
+}
+
+service RsodService {
+  rpc DetectOutliers(DetectOutliersRequest) returns (DetectOutliersResponse);
+  rpc DetectBaseline(DetectBaselineRequest) returns (DetectBaselineResponse);
+  rpc Forecast(ForecastRequest) returns (ForecastResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+
+message DetectOutliersRequest {
+  bytes data = 1;
+  OutlierOptions options = 2;
+}
+
+
+message DetectOutliersResponse {
+  bytes data = 1;
+  string error_message = 3;
+}
+
+message DetectBaselineRequest {
+  bytes current_data = 1;
+  bytes history_data = 2;
+  BaselineOptions options = 3;
+}
+
+
+message DetectBaselineResponse {
+  bytes data = 1;
+  string error_message = 3;
+}
+
+
+message ForecastRequest {
+  bytes current_data = 1;
+  bytes history_data = 2;
+  ForecasterOptions options = 3;
+}
+
+
+message ForecastResponse {
+  bytes data = 1;
+  string error_message = 3;
+}
+
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+}
+
+
+message OutlierOptions {
+  string model_name = 1;
+  repeated uint32 periods = 2;
+  string uuid = 3;
+}
+
+
+message BaselineOptions {
+  TrendType trend_type = 1;
+  int32 interval_mins = 2;
+  double confidence_level = 3;
+  bool allow_negative_bounds = 4;
+  double std_dev_multiplier = 5;
+  string uuid = 6;
+}
+
+
+message LLMOptions {
+  string model_name = 1;
+  int32 temperature = 2;
+  int32 max_tokens = 3;
+  string uuid = 4;
+}
+
+
+message ForecasterOptions {
+  string model_name = 1;
+  repeated uint32 periods = 2;
+  string uuid = 3;
+  double budget = 4;
+  int32 num_threads = 5;
+  int32 n_lags = 6;
+  double std_dev_multiplier = 7;
+  bool allow_negative_bounds = 8;
+}

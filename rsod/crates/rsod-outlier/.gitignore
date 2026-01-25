@@ -1,14 +1,14 @@
-# 构建目录
+# Build directory
 target/
 
-# IDE 相关
+# IDE related
 .vscode/
 .idea/
 
-# 系统文件
+# System files
 .DS_Store
 Thumbs.db
 
-# 测试数据
+# Test data
 data/*.png
 bak

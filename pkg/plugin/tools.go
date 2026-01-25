@@ -1,32 +1,37 @@
 package plugin
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	str2duration "github.com/xhit/go-str2duration/v2"
 )
 
 func UniqueSlice[T comparable](s []T) []T {
-	seen := make(map[T]struct{}) // 空结构体节省内存
+	seen := make(map[T]struct{})
 	result := make([]T, 0, len(s))
 	for _, v := range s {
 		if _, exists := seen[v]; !exists {
-			seen[v] = struct{}{}       // 标记元素已存在
-			result = append(result, v) // 保留首次出现的元素
+			seen[v] = struct{}{}
+			result = append(result, v)
 		}
 	}
 	return result
 }
 
-// ParseDuration 将字符串转换为时间，支持 天，小时，分钟， 将天转换为小时
 func ParsePeriods(durations string, intervalMs int64) ([]uint, error) {
 	periods := make([]uint, 0)
 	for _, dStr := range strings.FieldsFunc(durations, func(r rune) bool { return r == ',' }) {
-		d, err := str2duration.ParseDuration(dStr) // 支持 天，小时，分钟
+		d, err := str2duration.ParseDuration(dStr)
 		if err != nil {
 			return nil, err
 		}
@@ -35,31 +40,17 @@ func ParsePeriods(durations string, intervalMs int64) ([]uint, error) {
 	return periods, nil
 }
 
-// GetRecalculateTimeRange 根据历史时间范围和查询时间范围计算重新计算的时间范围
-//
-// from 是查询时间范围的开始时间
-//
-// to 是查询时间范围的结束时间
-//
-// htr 是历史时间范围
-//
-// 返回值是从查询时间范围的开始时间加上历史时间范围的开始时间到查询时间范围的结束时间加上历史时间范围的结束时间
 func GetRecalculateTimeRange(from, to time.Time, htr HistoryTimeRange) (time.Time, time.Time) {
 	duration := htr.To - htr.From
 	return from.Add(time.Duration(duration) * time.Second), to
 }
 
-// GetHistoryTimeRange 计算历史查询窗口
-//
-// 约定：HistoryTimeRange 的 from/to 表示相对于当前查询窗口的秒级偏移量（非绝对时间）。
-// 例如 {from: 604800, to: 0} 表示历史窗口为 [current.from-7d, current.from-0s]
 func GetHistoryTimeRange(currentFrom time.Time, htr HistoryTimeRange) (time.Time, time.Time) {
 	duration := htr.To - htr.From
 	historyTo := currentFrom.Add(-time.Duration(duration) * time.Second)
 	return currentFrom, historyTo
 }
 
-// GetHistoryFrame 在给定的绝对时间范围 [from, to] 内过滤并返回新 frame
 func splitFrames(frame *data.Frame, currentFrom, currentTo time.Time, htr HistoryTimeRange) (currentFrame *data.Frame, historyFrame *data.Frame, err error) {
 	if frame == nil || len(frame.Fields) == 0 {
 		return nil, nil, errors.New("frame is nil or has no fields")
@@ -93,13 +84,9 @@ func splitFrameByTime(frame *data.Frame, from, to time.Time) (*data.Frame, error
 		return nil, err
 	}
 
-	// copyFrameProperties(filteredFrame, frame)
-
 	return filteredFrame, nil
 }
 
-// DebugFrameHead 打印 Frame 的前 n 行，类似 pandas head()
-// 如果 n <= 0，则打印所有行
 func DebugFrameHead(frame *data.Frame, n int) string {
 	if frame == nil {
 		return "Frame is nil\n"
@@ -118,7 +105,6 @@ func DebugFrameHead(frame *data.Frame, n int) string {
 		rowCount = n
 	}
 
-	// 打印表头
 	for i, field := range frame.Fields {
 		if i > 0 {
 			sb.WriteString(" | ")
@@ -129,7 +115,6 @@ func DebugFrameHead(frame *data.Frame, n int) string {
 	sb.WriteString(strings.Repeat("-", 80))
 	sb.WriteString("\n")
 
-	// 打印数据行
 	for row := 0; row < rowCount; row++ {
 		for col, field := range frame.Fields {
 			if col > 0 {
@@ -148,7 +133,6 @@ func DebugFrameHead(frame *data.Frame, n int) string {
 	return sb.String()
 }
 
-// DebugFrameInfo 打印 Frame 的详细信息，类似 pandas info()
 func DebugFrameInfo(frame *data.Frame) string {
 	if frame == nil {
 		return "Frame is nil\n"
@@ -181,7 +165,6 @@ func DebugFrameInfo(frame *data.Frame) string {
 	return sb.String()
 }
 
-// DebugFrame 打印 Frame 的完整调试信息（head + info）
 func DebugFrame(frame *data.Frame, headRows int) string {
 	var sb strings.Builder
 	sb.WriteString(DebugFrameInfo(frame))
@@ -190,7 +173,6 @@ func DebugFrame(frame *data.Frame, headRows int) string {
 	return sb.String()
 }
 
-// 辅助函数：获取字段类型名称
 func getFieldTypeName(field *data.Field) string {
 	if field == nil {
 		return "unknown"
@@ -198,7 +180,6 @@ func getFieldTypeName(field *data.Field) string {
 	return field.Type().String()
 }
 
-// 辅助函数：格式化字段值
 func formatFieldValue(field *data.Field, idx int) string {
 	if field == nil || idx >= field.Len() {
 		return "<nil>"
@@ -231,7 +212,6 @@ func formatFieldValue(field *data.Field, idx int) string {
 	}
 }
 
-// 辅助函数：统计非空值数量
 func countNonNull(field *data.Field) int {
 	if field == nil {
 		return 0
@@ -240,11 +220,9 @@ func countNonNull(field *data.Field) int {
 	for i := 0; i < field.Len(); i++ {
 		val := field.At(i)
 		if val != nil {
-			// 检查是否为 nullable float64
 			if f64, ok := val.(*float64); ok && f64 == nil {
 				continue
 			}
-			// 检查是否为 nullable time
 			if t, ok := val.(*time.Time); ok && t == nil {
 				continue
 			}
@@ -252,4 +230,74 @@ func countNonNull(field *data.Field) int {
 		}
 	}
 	return count
+}
+
+// frameToArrowIPC converts a Grafana DataFrame to Arrow IPC bytes
+func frameToArrowIPC(frame *data.Frame) ([]byte, error) {
+	if frame == nil {
+		return nil, fmt.Errorf("frame is nil")
+	}
+
+	// Convert Grafana frame to Arrow table
+	table, err := data.FrameToArrowTable(frame)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert frame to arrow table: %w", err)
+	}
+
+	tr := array.NewTableReader(table, -1)
+	defer tr.Release()
+
+	// Create IPC writer
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(table.Schema()))
+	for tr.Next() {
+		if err := w.Write(tr.RecordBatch()); err != nil {
+			return nil, err
+		}
+	}
+
+	// Write table (simplified approach)
+	// Note: This is a placeholder - proper implementation would iterate through table chunks
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// arrowIPCToFrame converts Arrow IPC bytes back to Grafana DataFrame
+func arrowIPCToFrame(dataBytes []byte) (*data.Frame, error) {
+	if len(dataBytes) == 0 {
+		return nil, fmt.Errorf("empty data bytes")
+	}
+
+	// Create a reader for Arrow IPC Stream format
+	reader, err := ipc.NewReader(bytes.NewReader(dataBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arrow IPC reader: %w", err)
+	}
+	defer reader.Release()
+
+	// Read the first record batch and convert it directly
+	// Most of the time there's only one batch, so we handle that case first
+	if !reader.Next() {
+		return nil, fmt.Errorf("no record batches in response")
+	}
+
+	batch := reader.RecordBatch()
+
+	frame, err := data.FromArrowRecord(batch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert record to frame: %w", err)
+	}
+	return frame, nil
+}
+
+func getGrafanaPluginDir() string {
+	// Use environment variable to get the Grafana plugin directory
+	gfPluginDir := os.Getenv("GF_PATHS_PLUGINS")
+	if gfPluginDir == "" {
+		gfPluginDir = "/var/lib/grafana/plugins"
+	}
+	return filepath.Join(gfPluginDir, constant.PluginDatasourceType)
 }

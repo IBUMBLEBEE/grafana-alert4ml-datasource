@@ -1,24 +1,24 @@
-// 实现 extended-isolation-forest 基于时间序列的孤立森林算法
-// 参考 https://github.com/nmandery/extended-isolation-forest
+// Implementation of extended-isolation-forest algorithm for time series
+// Reference: https://github.com/nmandery/extended-isolation-forest
 
 use extended_isolation_forest::{Forest, ForestOptions};
 use serde::{Serialize, Deserialize};
 use rsod_storage::model::Model;
 use std::io::{Error, ErrorKind};
 
-/// 保存 iForest 模型的数据结构
-/// 启用 serde feature 后，可以直接序列化 Forest 对象
+/// Data structure for saving iForest models
+/// With serde feature enabled, Forest objects can be directly serialized
 #[derive(Serialize, Deserialize)]
 pub struct SavedIForestModel {
-    /// 训练好的 Forest 模型（启用 serde feature 后支持直接序列化）
+    /// Trained Forest model (direct serialization supported with serde feature enabled)
     pub forest: Forest<f64, 4>,
-    /// 标准化参数：均值
+    /// Normalization parameter: mean
     pub mean: Vec<f64>,
-    /// 标准化参数：标准差
+    /// Normalization parameter: standard deviation
     pub std_dev: Vec<f64>,
 }
 
-// 手动实现 Debug（Forest 不支持 Debug，只打印基本信息）
+// Manual Debug implementation (Forest doesn't support Debug, only prints basic info)
 impl std::fmt::Debug for SavedIForestModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SavedIForestModel")
@@ -37,25 +37,25 @@ pub struct EIFOptions {
     pub extension_level: Option<usize>,
 }
 
-/// 训练 iForest 模型并返回异常分数
+/// Train iForest model and return anomaly scores
 /// 
-/// # 参数
-/// * `uuid` - 模型的唯一标识符，用于检查 SQLite 中是否已有保存的模型
-/// * `options` - Forest 训练选项（仅在需要训练新模型时使用）
-/// * `data` - 训练/预测数据
+/// # Arguments
+/// * `uuid` - Unique identifier for the model, used to check if a saved model exists in SQLite
+/// * `options` - Forest training options (only used when training a new model)
+/// * `data` - Training/prediction data
 /// 
-/// # 行为
-/// 1. 先检查 SQLite 中是否存在 uuid 对应的模型
-/// 2. 如果存在，直接加载模型并使用其进行异常检测
-/// 3. 如果不存在，训练新模型，保存到 SQLite，然后进行异常检测
+/// # Behavior
+/// 1. First check if a model with the uuid exists in SQLite
+/// 2. If it exists, load the model directly and use it for anomaly detection
+/// 3. If it doesn't exist, train a new model, save it to SQLite, then perform anomaly detection
 /// 
-/// # 返回
-/// 异常分数向量
+/// # Returns
+/// Vector of anomaly scores
 pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<Vec<f64>, Error> {
-    // 先尝试加载已保存的模型
+    // First try to load a saved model
     match load_iforest_model(uuid.clone()) {
         Ok(saved_model) => {
-            // 模型存在，使用保存的模型进行预测
+            // Model exists, use saved model for prediction
             let normalized_features =
                 normalize_features_with_params(data, &saved_model.mean, &saved_model.std_dev);
             
@@ -67,16 +67,16 @@ pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<V
             Ok(scores)
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            // 模型不存在，训练新模型
+            // Model doesn't exist, train a new model
             let (forest, normalized_features, mean, std_dev) = train_iforest(options.clone(), data);
             
-            // 计算异常分数
+            // Calculate anomaly scores
             let scores: Vec<f64> = normalized_features
                 .iter()
                 .map(|x| forest.score(x))
                 .collect();
             
-            // 保存模型到 SQLite
+            // Save model to SQLite
             let saved_model = SavedIForestModel {
                 forest,
                 mean,
@@ -84,7 +84,7 @@ pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<V
             };
             
             let serialized = bincode::serialize(&saved_model)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("序列化失败: {}", e)))?;
+                .map_err(|e| Error::new(ErrorKind::Other, format!("Serialization failed: {}", e)))?;
             
             let model = Model::new(uuid, serialized);
             model.write()?;
@@ -92,15 +92,15 @@ pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<V
             Ok(scores)
         }
         Err(e) => {
-            // 其他错误（如反序列化失败等），返回错误
+            // Other errors (such as deserialization failure), return error
             Err(e)
         }
     }
 }
 
-/// 训练 iForest 模型并返回 Forest、标准化后的特征和标准化参数
+/// Train iForest model and return Forest, normalized features, and normalization parameters
 /// 
-/// # 返回
+/// # Returns
 /// (Forest, normalized_features, mean, std_dev)
 pub fn train_iforest(
     mut options: EIFOptions,
@@ -108,13 +108,13 @@ pub fn train_iforest(
 ) -> (Forest<f64, 4>, Vec<[f64; 4]>, Vec<f64>, Vec<f64>) {
     let (normalized_features, mean, std_dev) = extract_and_normalize_features(data);
 
-    // 自动计算 sample_size：数据长度的 1/10，向下取整，最小值为 1
+    // Automatically calculate sample_size: 1/10 of data length, rounded down, minimum value is 1
     options.sample_size = options
         .sample_size
         .or_else(|| Some(((data.len() as f64 * 0.1).floor() as usize).max(1)))
         .map(|size| size.min(normalized_features.len()));
 
-    // 自动计算 extension_level
+    // Automatically calculate extension_level
     options.extension_level = options.extension_level.or_else(|| {
         if normalized_features.is_empty() {
             Some(0)
@@ -134,12 +134,12 @@ pub fn train_iforest(
     (forest, normalized_features, mean, std_dev)
 }
 
-/// 提取并标准化特征
+/// Extract and normalize features
 /// 
-/// # 返回
+/// # Returns
 /// (normalized_features, mean, std_dev)
 fn extract_and_normalize_features(data: &[[f64; 2]]) -> (Vec<[f64; 4]>, Vec<f64>, Vec<f64>) {
-    // 数据预处理：提取时间特征
+    // Data preprocessing: extract time features
     let values: Vec<f64> = data.iter().map(|x| x[1]).collect();
     let week_over_week = calc_week_over_week(&values, 6);
     let day_over_day = calc_day_over_day(&values, 6);
@@ -161,7 +161,7 @@ fn extract_and_normalize_features(data: &[[f64; 2]]) -> (Vec<[f64; 4]>, Vec<f64>
                 }
             })
             .collect(), // moving_avg
-        // 新特征
+        // New features
         (0..data.len())
             .map(|i| {
                 if i >= 6 {
@@ -188,12 +188,12 @@ fn extract_and_normalize_features(data: &[[f64; 2]]) -> (Vec<[f64; 4]>, Vec<f64>
             .collect(),
     ];
 
-    // 转置为 Vec<[f64; N]>
+    // Transpose to Vec<[f64; N]>
     let features: Vec<Vec<f64>> = (0..data.len())
         .map(|i| features.iter().map(|col| col[i]).collect())
         .collect();
 
-    // 数据标准化处理
+    // Data normalization
     let mean: Vec<f64> = (0..4)
         .map(|j| features.iter().map(|x| x[j]).sum::<f64>() / features.len() as f64)
         .collect();
@@ -221,17 +221,17 @@ fn extract_and_normalize_features(data: &[[f64; 2]]) -> (Vec<[f64; 4]>, Vec<f64>
     (normalized_features, mean, std_dev)
 }
 
-/// 保存 iForest 模型到 SQLite 数据库
+/// Save iForest model to SQLite database
 /// 
-/// # 参数
-/// * `uuid` - 模型的唯一标识符
-/// * `options` - Forest 训练选项
-/// * `data` - 训练数据
+/// # Arguments
+/// * `uuid` - Unique identifier for the model
+/// * `options` - Forest training options
+/// * `data` - Training data
 /// 
-/// # 返回
-/// 成功返回 `Ok(())`，失败返回 `Error`
+/// # Returns
+/// Returns `Ok(())` on success, `Error` on failure
 /// 
-/// # 示例
+/// # Examples
 /// ```no_run
 /// use rsod_outlier::ext_iforest::{save_iforest_model, EIFOptions};
 /// 
@@ -253,26 +253,26 @@ pub fn save_iforest_model(uuid: String, options: EIFOptions, data: &[[f64; 2]]) 
         std_dev,
     };
 
-    // 使用 bincode 序列化（二进制格式，比 JSON 更高效）
+    // Use bincode serialization (binary format, more efficient than JSON)
     let serialized = bincode::serialize(&saved_model)
-        .map_err(|e| Error::new(ErrorKind::Other, format!("序列化失败: {}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::Other, format!("Serialization failed: {}", e)))?;
 
-    // 保存到 SQLite 数据库
+    // Save to SQLite database
     let model = Model::new(uuid, serialized);
     model.write()?;
 
     Ok(())
 }
 
-/// 从 SQLite 数据库加载 iForest 模型
+/// Load iForest model from SQLite database
 /// 
-/// # 参数
-/// * `uuid` - 模型的唯一标识符
+/// # Arguments
+/// * `uuid` - Unique identifier for the model
 /// 
-/// # 返回
-/// 成功返回 `Ok(SavedIForestModel)`，失败返回 `Error`
+/// # Returns
+/// Returns `Ok(SavedIForestModel)` on success, `Error` on failure
 /// 
-/// # 示例
+/// # Examples
 /// ```no_run
 /// use rsod_outlier::ext_iforest::load_iforest_model;
 /// 
@@ -286,25 +286,25 @@ pub fn load_iforest_model(uuid: String) -> Result<SavedIForestModel, Error> {
     if model.artifacts.is_empty() {
         return Err(Error::new(
             ErrorKind::NotFound,
-            format!("模型 {} 不存在", uuid),
+            format!("Model {} does not exist", uuid),
         ));
     }
 
-    // 使用 bincode 反序列化
+    // Use bincode deserialization
     let saved_model: SavedIForestModel = bincode::deserialize(&model.artifacts)
-        .map_err(|e| Error::new(ErrorKind::InvalidData, format!("反序列化失败: {}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::InvalidData, format!("Deserialization failed: {}", e)))?;
 
     Ok(saved_model)
 }
 
-/// 使用保存的标准化参数对新数据进行标准化
+/// Normalize new data using saved normalization parameters
 fn normalize_features_with_params(
     data: &[[f64; 2]],
     mean: &[f64],
     std_dev: &[f64],
 ) -> Vec<[f64; 4]> {
     let (_features, _, _) = extract_and_normalize_features(data);
-    // 重新标准化，使用保存的参数
+    // Re-normalize using saved parameters
     let values: Vec<f64> = data.iter().map(|x| x[1]).collect();
     let week_over_week = calc_week_over_week(&values, 6);
     let day_over_day = calc_day_over_day(&values, 6);
@@ -356,16 +356,16 @@ fn normalize_features_with_params(
         .collect()
 }
 
-/// 使用已保存的模型进行预测
+/// Predict using a saved model
 /// 
-/// # 参数
-/// * `uuid` - 模型的唯一标识符
-/// * `data` - 待预测的数据
+/// # Arguments
+/// * `uuid` - Unique identifier for the model
+/// * `data` - Data to predict
 /// 
-/// # 返回
-/// 成功返回异常分数向量，失败返回 `Error`
+/// # Returns
+/// Returns vector of anomaly scores on success, `Error` on failure
 /// 
-/// # 示例
+/// # Examples
 /// ```no_run
 /// use rsod_outlier::ext_iforest::predict_with_saved_model;
 /// 
@@ -375,11 +375,11 @@ fn normalize_features_with_params(
 pub fn predict_with_saved_model(uuid: String, data: &[[f64; 2]]) -> Result<Vec<f64>, Error> {
     let saved_model = load_iforest_model(uuid)?;
 
-    // 使用保存的标准化参数对新数据进行标准化
+    // Normalize new data using saved normalization parameters
     let normalized_features =
         normalize_features_with_params(data, &saved_model.mean, &saved_model.std_dev);
 
-    // 使用保存的 Forest 进行预测
+    // Predict using saved Forest
     let scores: Vec<f64> = normalized_features
         .iter()
         .map(|x| saved_model.forest.score(x))
@@ -388,7 +388,7 @@ pub fn predict_with_saved_model(uuid: String, data: &[[f64; 2]]) -> Result<Vec<f
     Ok(scores)
 }
 
-// 周同比
+// Week-over-week comparison
 fn calc_week_over_week(data: &[f64], win: usize) -> Vec<f64> {
     let mut result = Vec::new();
     for i in win..data.len() {
@@ -397,7 +397,7 @@ fn calc_week_over_week(data: &[f64], win: usize) -> Vec<f64> {
     result
 }
 
-// 日环比
+// Day-over-day comparison
 fn calc_day_over_day(data: &[f64], win: usize) -> Vec<f64> {
     let mut result = Vec::new();
     for i in win..data.len() {
@@ -406,7 +406,7 @@ fn calc_day_over_day(data: &[f64], win: usize) -> Vec<f64> {
     result
 }
 
-// 移动平均
+// Moving average
 fn moving_average(data: &[f64], win: usize) -> Vec<f64> {
     let mut result = Vec::new();
     for i in win..=data.len() {
@@ -416,7 +416,7 @@ fn moving_average(data: &[f64], win: usize) -> Vec<f64> {
     result
 }
 
-// 标准差
+// Standard deviation
 fn moving_std(data: &[f64], win: usize) -> Vec<f64> {
     let mut result = Vec::new();
     for i in win..=data.len() {
@@ -440,32 +440,32 @@ mod tests {
         let mut data: Vec<[f64; 2]> = (0..500)
             .map(|i| {
                 let time = now - (i as f64 * 3600.0);
-                let value = (i as f64 * 0.1).sin() + rng.gen_range(-0.1..0.1); // 正弦波 + 随机噪声
+                let value = (i as f64 * 0.1).sin() + rng.gen_range(-0.1..0.1); // Sine wave + random noise
                 [time, value]
             })
             .collect();
 
-        // 插入异常值
-        data[0][1] = 0.0; // 第一个点异常
-        data[10][1] = 2.0; // 第10个点异常
-        data[11][1] = 1.5; // 第11个点异常
-        data[12][1] = 2.2; // 第12个点异常
-        data[13][1] = 0.9; // 第13个点异常
+        // Insert anomalies
+        data[0][1] = 0.0; // First point is anomalous
+        data[10][1] = 2.0; // 10th point is anomalous
+        data[11][1] = 1.5; // 11th point is anomalous
+        data[12][1] = 2.2; // 12th point is anomalous
+        data[13][1] = 0.9; // 13th point is anomalous
 
-        data[110][1] = 1.3; // 第110个点异常
-        data[111][1] = 9.0; // 第111个点异常
-        data[112][1] = 5.0; // 第112个点异常
-        data[113][1] = 4.0; // 第113个点异常
+        data[110][1] = 1.3; // 110th point is anomalous
+        data[111][1] = 9.0; // 111th point is anomalous
+        data[112][1] = 5.0; // 112th point is anomalous
+        data[113][1] = 4.0; // 113th point is anomalous
 
-        // // 在中间时间点插入异常值
-        // data[500][1] = 10.0; // 第500个点异常
-        // data[501][1] = 10.0; // 第501个点异常
-        // data[502][1] = 10.0; // 第502个点异常
+        // // Insert anomalies at middle time points
+        // data[500][1] = 10.0; // 500th point is anomalous
+        // data[501][1] = 10.0; // 501st point is anomalous
+        // data[502][1] = 10.0; // 502nd point is anomalous
 
-        // // 在末尾时间点插入异常值
-        // data[990][1] = 11.0; // 第990个点异常
-        // data[991][1] = 11.0; // 第991个点异常
-        // data[992][1] = 11.0; // 第992个点异常
+        // // Insert anomalies at end time points
+        // data[990][1] = 11.0; // 990th point is anomalous
+        // data[991][1] = 11.0; // 991st point is anomalous
+        // data[992][1] = 11.0; // 992nd point is anomalous
 
         let options = EIFOptions {
             n_trees: 500,
@@ -475,10 +475,10 @@ mod tests {
         };
         let scores = iforest("test-model-uuid".to_string(), options, &data).unwrap();
 
-        // 验证返回的分数数量与输入数据长度一致
+        // Verify that the number of returned scores matches the input data length
         assert_eq!(scores.len(), data.len());
 
-        // 验证分数在合理范围内（0到1之间）
+        // Verify scores are in a reasonable range (between 0 and 1)
         println!("index 0: {:?}", scores[0]);
         println!("index 11: {:?}", scores[11]);
         println!("index 12: {:?}", scores[12]);
@@ -492,7 +492,7 @@ mod tests {
         assert!(scores[11] > 0.5);
         assert!(scores[12] > 0.5);
         assert!(scores[13] > 0.5);
-        // 验证正常值的分数较低
+        // Verify that normal values have lower scores
         assert!(scores[0] < scores[13]);
     }
 }

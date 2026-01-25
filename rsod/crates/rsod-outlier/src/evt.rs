@@ -1,14 +1,14 @@
 use std::f64;
 
-/// 广义帕累托分布结构体
+/// Generalized Pareto Distribution structure
 pub struct GeneralizedPareto {
-    xm: f64,    // 阈值
-    sigma: f64, // 尺度参数
-    xi: f64,    // 形状参数
+    xm: f64,    // Threshold
+    sigma: f64, // Scale parameter
+    xi: f64,    // Shape parameter
 }
 
 impl GeneralizedPareto {
-    /// 计算累积分布函数值
+    /// Calculate cumulative distribution function value
     pub fn cdf(&self, x: f64) -> f64 {
         if self.sigma <= 0.0 {
             return 0.0;
@@ -20,16 +20,16 @@ impl GeneralizedPareto {
     }
 }
 
-/// EVT异常检测器
+/// EVT anomaly detector
 pub struct EVTAnomalyDetector {
-    threshold: f64,         // 阈值分位点
-    top_k: usize,           // 用于拟合GPD的极值数量
-    gpd: GeneralizedPareto, // 广义帕累托分布
-    fitted: bool,           // 是否已拟合
+    threshold: f64,         // Threshold quantile
+    top_k: usize,           // Number of extreme values used to fit GPD
+    gpd: GeneralizedPareto, // Generalized Pareto Distribution
+    fitted: bool,           // Whether it has been fitted
 }
 
 impl EVTAnomalyDetector {
-    /// 创建新的EVT检测器
+    /// Create a new EVT detector
     pub fn new(threshold: f64, top_k: usize) -> Self {
         Self {
             threshold,
@@ -43,11 +43,11 @@ impl EVTAnomalyDetector {
         }
     }
 
-    /// 用极值拟合GPD
+    /// Fit GPD using extreme values
     pub fn fit(&mut self, scores: &[f64]) {
         let n = scores.len();
 
-        // 自动计算top_k
+        // Automatically calculate top_k
         let mut top_k = self.top_k;
         if top_k == 0 {
             let ratio = 0.05;
@@ -56,23 +56,23 @@ impl EVTAnomalyDetector {
             top_k = top_k.max(min_top_k).min(n);
         }
 
-        // 档满足条件时，应该错误，终止执行
+        // When condition is met, should error and terminate execution
         if n < top_k {
             return;
         }
 
-        // 取top_k极大值
+        // Take top_k maximum values
         let mut sorted = scores.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let extremes = &sorted[n - top_k..];
 
-        // 以最小极值为阈值，计算超出部分
+        // Use minimum extreme value as threshold, calculate excesses
         let u = extremes[0];
         let excesses: Vec<f64> = extremes.iter().map(|&v| v - u).collect();
 
-        // 用样本均值法近似估计shape/scale
+        // Approximate estimation of shape/scale using sample mean method
         let mean = excesses.iter().sum::<f64>() / excesses.len() as f64;
-        let shape = 0.5 * (1.0 - (mean * mean) / (mean * mean)); // 近似，实际可用MLE
+        let shape = 0.5 * (1.0 - (mean * mean) / (mean * mean)); // Approximation, MLE can be used in practice
         let scale = mean * (1.0 + shape);
 
         self.gpd = GeneralizedPareto {
@@ -83,7 +83,7 @@ impl EVTAnomalyDetector {
         self.fitted = true;
     }
 
-    /// 计算每个分数的p-value，返回异常分数
+    /// Calculate p-value for each score, return anomaly scores
     pub fn predict(&self, scores: &[f64]) -> Vec<f64> {
         if !self.fitted {
             panic!("EVTAnomalyDetector: must fit before predict");
@@ -96,7 +96,7 @@ impl EVTAnomalyDetector {
                 if v <= u {
                     0.0
                 } else {
-                    // 计算右尾概率
+                    // Calculate right tail probability
                     let p = 1.0 - self.gpd.cdf(v - u);
                     if p < (1.0 - self.threshold) {
                         1.0

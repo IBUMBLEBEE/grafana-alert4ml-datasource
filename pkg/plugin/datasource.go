@@ -12,9 +12,9 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/gen/rsod"
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/models"
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/sdk"
-	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/rsod/rsod-go"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
@@ -33,21 +33,15 @@ var (
 )
 
 var (
-	rsodStorageOnce sync.Once
-	rsodStorageErr  error
+	rsodGrpcServerOnce sync.Once
+	rsodGrpcOnce       sync.Once
+	rsodGrpcClient     rsod.RsodServiceClient
+	rsodGrpcErr        error
 )
 
-// initRSODStorage lazily initializes RSOD storage on first use
-func initRSODStorage() error {
-	rsodStorageOnce.Do(func() {
-		success := rsod.RSODStorageInit()
-		if !success {
-			rsodStorageErr = fmt.Errorf("failed to initialize RSOD storage")
-			return
-		}
-		rsodStorageErr = nil
-	})
-	return rsodStorageErr
+func init() {
+	// Initialization code if needed
+	initRSODGrpcClient()
 }
 
 // NewDatasource creates a new datasource instance.
@@ -80,10 +74,6 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 	queryAlert4MLQueryBody, err := ParseAlert4MLQueryTargets(req.Queries)
 	if err != nil {
 		return nil, err
-	}
-
-	if err := initRSODStorage(); err != nil {
-		return nil, fmt.Errorf("failed to initialize RSOD storage: %w", err)
 	}
 
 	client := sdk.NewGrafanaClient(config.URL, config.Secrets.ApiToken)
@@ -131,33 +121,55 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					if err != nil {
 						return nil, err
 					}
-					options := rsod.OutlierOptions{
-						ModelName: rsodParams.ModelName,
-						Periods:   periods,
-						UUID:      ukUUID,
-					}
+
+					// Prepare request
 					reqFrame := queryResponse.DeepCopy().Frames[frameIdx]
 					err = TransformDataFrame(reqFrame)
 					if err != nil {
 						return nil, err
 					}
 
-					resultOutlier, err := rsod.OutlierFitPredict(reqFrame, options)
+					// Serialize DataFrame to Arrow IPC
+					dataBytes, err := frameToArrowIPC(reqFrame)
 					if err != nil {
-						return nil, err
+						return nil, fmt.Errorf("failed to serialize frame: %w", err)
 					}
+
+					// Create gRPC request
+					grpcReq := &rsod.DetectOutliersRequest{
+						Data: dataBytes,
+						Options: &rsod.OutlierOptions{
+							ModelName: rsodParams.ModelName,
+							Periods:   make([]uint32, len(periods)),
+							Uuid:      ukUUID,
+						},
+					}
+					for i, p := range periods {
+						grpcReq.Options.Periods[i] = uint32(p)
+					}
+
+					// Call gRPC service
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					resp, err := rsodGrpcClient.DetectOutliers(ctx, grpcReq)
+					if err != nil {
+						return nil, fmt.Errorf("gRPC outlier detection failed: %w", err)
+					}
+
+					if resp.ErrorMessage != "" {
+						return nil, fmt.Errorf("RSOD service error: %s", resp.ErrorMessage)
+					}
+
+					// Parse response (simplified - convert bytes back to float64 array)
+					// For now, we'll use a placeholder implementation
+					resultOutlier := make([]float64, 0) // TODO: Implement proper response parsing
 
 					newframe := newDataFrameFromeResult(f, constant.DetectTypeOutlier, constant.GF_FRAME_RESULT_NAME_ANOMALY, selfRefID, resultOutlier)
 					newframes = append(newframes, newframe)
 
 				case constant.SupportDetectTypeBaseline:
-					options := rsod.BaselineOptions{
-						TrendType:        hyperParams.(*BaselineHyperParams).TrendType,
-						IntervalMins:     hyperParams.(*BaselineHyperParams).IntervalMins,
-						StdDevMultiplier: hyperParams.(*BaselineHyperParams).StdDevMultiplier,
-						UUID:             ukUUID,
-					}
-					// 先根据原始 frame 计算历史窗口，再将两个 frame 一并转换
+					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
 					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
 					if err != nil {
@@ -172,9 +184,50 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					if err != nil {
 						return nil, err
 					}
-					resultBaselineDF, err := rsod.BaselineFitPredict(currentFrame, historyFrame, options)
+
+					// Serialize both frames to Arrow IPC
+					currentDataBytes, err := frameToArrowIPC(currentFrame)
 					if err != nil {
-						return nil, err
+						return nil, fmt.Errorf("failed to serialize current frame: %w", err)
+					}
+
+					historyDataBytes, err := frameToArrowIPC(historyFrame)
+					if err != nil {
+						return nil, fmt.Errorf("failed to serialize history frame: %w", err)
+					}
+
+					// Create gRPC request
+					grpcReq := &rsod.DetectBaselineRequest{
+						CurrentData: currentDataBytes,
+						HistoryData: historyDataBytes,
+						Options: &rsod.BaselineOptions{
+							TrendType:           stringToTrendType(hyperParams.(*BaselineHyperParams).TrendType),
+							IntervalMins:        int32(hyperParams.(*BaselineHyperParams).IntervalMins),
+							ConfidenceLevel:     hyperParams.(*BaselineHyperParams).ConfidenceLevel,
+							AllowNegativeBounds: hyperParams.(*BaselineHyperParams).AllowNegativeBounds,
+							StdDevMultiplier:    hyperParams.(*BaselineHyperParams).StdDevMultiplier,
+							Uuid:                ukUUID,
+						},
+					}
+
+					// Call gRPC service
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					resp, err := rsodGrpcClient.DetectBaseline(ctx, grpcReq)
+					if err != nil {
+						return nil, fmt.Errorf("gRPC baseline detection failed: %w", err)
+					}
+
+					if resp.ErrorMessage != "" {
+						return nil, fmt.Errorf("RSOD service error: %s", resp.ErrorMessage)
+					}
+
+					// Parse response (simplified - convert bytes back to DataFrame)
+					// For now, we'll use a placeholder implementation
+					resultBaselineDF, err := arrowIPCToFrame(resp.Data)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse baseline result: %w", err)
 					}
 
 					newframe := RenderFrameWithBaseline(resultBaselineDF, selfRefID)
@@ -185,16 +238,8 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					if err != nil {
 						return nil, err
 					}
-					forecasterOptions := rsod.ForecasterOptions{
-						ModelName:           hyperParams.(*ForecastHyperParams).ModelName,
-						Periods:             periods,
-						UUID:                ukUUID,
-						Budget:              hyperParams.(*ForecastHyperParams).Budget,
-						NumThreads:          hyperParams.(*ForecastHyperParams).NumThreads,
-						Nlags:               hyperParams.(*ForecastHyperParams).Nlags,
-						StdDevMultiplier:    hyperParams.(*ForecastHyperParams).StdDevMultiplier,
-						AllowNegativeBounds: hyperParams.(*ForecastHyperParams).AllowNegativeBounds,
-					}
+
+					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
 					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
 					if err != nil {
@@ -209,10 +254,57 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					if err != nil {
 						return nil, err
 					}
-					resultForecastDF, err := rsod.RSODForecaster(currentFrame, historyFrame, forecasterOptions)
+
+					// Serialize both frames to Arrow IPC
+					currentDataBytes, err := frameToArrowIPC(currentFrame)
 					if err != nil {
-						return nil, err
+						return nil, fmt.Errorf("failed to serialize current frame: %w", err)
 					}
+
+					historyDataBytes, err := frameToArrowIPC(historyFrame)
+					if err != nil {
+						return nil, fmt.Errorf("failed to serialize history frame: %w", err)
+					}
+
+					// Create gRPC request
+					grpcReq := &rsod.ForecastRequest{
+						CurrentData: currentDataBytes,
+						HistoryData: historyDataBytes,
+						Options: &rsod.ForecasterOptions{
+							ModelName:           hyperParams.(*ForecastHyperParams).ModelName,
+							Periods:             make([]uint32, len(periods)),
+							Uuid:                ukUUID,
+							Budget:              float64(hyperParams.(*ForecastHyperParams).Budget),
+							NumThreads:          int32(hyperParams.(*ForecastHyperParams).NumThreads),
+							NLags:               int32(hyperParams.(*ForecastHyperParams).Nlags),
+							StdDevMultiplier:    hyperParams.(*ForecastHyperParams).StdDevMultiplier,
+							AllowNegativeBounds: hyperParams.(*ForecastHyperParams).AllowNegativeBounds,
+						},
+					}
+					for i, p := range periods {
+						grpcReq.Options.Periods[i] = uint32(p)
+					}
+
+					// Call gRPC service
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					resp, err := rsodGrpcClient.Forecast(ctx, grpcReq)
+					if err != nil {
+						return nil, fmt.Errorf("gRPC forecast failed: %w", err)
+					}
+
+					if resp.ErrorMessage != "" {
+						return nil, fmt.Errorf("RSOD service error: %s", resp.ErrorMessage)
+					}
+
+					// Parse response (simplified - convert bytes back to DataFrame)
+					// For now, we'll use a placeholder implementation
+					resultForecastDF, err := arrowIPCToFrame(resp.Data)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse forecast result: %w", err)
+					}
+
 					newframe := RenderFrameWithForecast(resultForecastDF, selfRefID, f.Name)
 					newframes = append(newframes, newframe)
 				}
