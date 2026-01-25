@@ -1,6 +1,6 @@
 .PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up clean
 
-all: pre-build install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up
+all: pre-build install-frontend install-go-deps generate-proto build-rs build-go build-ts copy-so docker-up
 
 pre-build:
 	go install github.com/bufbuild/buf/cmd/buf@v1.64.0
