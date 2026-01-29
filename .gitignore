@@ -47,7 +47,6 @@ ci/
 
 target
 examples
-.github
 *.so
 build_target
 *.local

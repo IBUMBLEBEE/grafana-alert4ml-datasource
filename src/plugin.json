@@ -15,7 +15,12 @@
       "name": "IBUMBLEBEE"
     },
     "keywords": [
-      "datasource"
+      "datasource",
+      "alert4ml",
+      "anomaly detection",
+      "machine learning",
+      "forecasting",
+      "alertmanager"
     ],
     "logos": {
       "small": "img/logo.svg",

@@ -1,0 +1,32 @@
+name: Semantic Auto Tagging
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 关键：授予 Action 推送 Tag 的权限
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取所有历史记录以计算版本号
+
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # 默认会根据 commit 信息自动计算：fix->patch, feat->minor, BREAKING CHANGE->major
+          
+      - name: Create a GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
