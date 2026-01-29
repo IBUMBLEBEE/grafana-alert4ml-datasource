@@ -7,14 +7,14 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 ## Architecture
 
 
-![Architecture](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/arch.png)
+![Architecture](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/src/img/arch.png)
 
 ## Technology Stack
 
 * Frontend: [TS](https://www.typescriptlang.org/) / [React](https://react.dev/)
 * Backend: [Go](https://go.dev/) / [CGO](https://pkg.go.dev/cmd/cgo)
 * Algorithm: [Rust](https://www.rust-lang.org/)
-* Data Transform: [Arrow Dataframe](https://arrow.apache.org/docs/index.html)
+* Data Transform: [Arrow Dataframe](https://arrow.apache.org/src/img/index.html)
 
 ## Algorithm
 
@@ -41,7 +41,7 @@ You can download and install this grafana plugin using various options
 
 This plugin relies on Grafana's Mixed data source mode.
 
-![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/demo.gif)
+![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/src/img/demo.gif)
 
 ### Development building and running
 
@@ -49,11 +49,11 @@ TODO
 
 ## Demo
 
-![outlier](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/outlier.png)
-![forcast](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/docs/forcast.png)
+![outlier](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/src/img/outlier.png)
+![forcast](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/tree/main/src/img/forcast.png)
 
 
 ## Reference
 
-* https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/
-* https://docs.victoriametrics.com/anomaly-detection/
+* https://grafana.com/src/img/grafana-cloud/machine-learning/dynamic-alerting/forecasting/
+* https://src/img.victoriametrics.com/anomaly-detection/
