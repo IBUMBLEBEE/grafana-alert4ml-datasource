@@ -1,6 +1,5 @@
-# filepath: .github/workflows/actions/rust-builder/rust.yml
-name: 'Rust Plugin Builder'
-description: 'Compiles Rust backend for the plugin'
+name: "Grafana Build Plugin"
+description: "Builds a Grafana plugin"
 
 on:
   push:
