@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,10 +26,20 @@ func initRSODGrpcClient() error {
 		// Start gRPC server in a goroutine
 		go func() {
 			log.DefaultLogger.Info("Starting gRPC server", "path", serverPath)
-			cmd := exec.Command(serverPath)
+			var cmd *exec.Cmd
+			cmd = exec.Command(serverPath)
 			if err := cmd.Start(); err != nil {
 				log.DefaultLogger.Error("Failed to start gRPC server", "error", err)
-				os.Exit(1)
+				if errors.Is(err, os.ErrNotExist) {
+					serverPath = filepath.Join("../../dist", serverBinaryPath)
+					cmd = exec.Command(serverPath)
+					if err := cmd.Start(); err != nil {
+						log.DefaultLogger.Error("Failed to start gRPC server from dist", "error", err)
+						os.Exit(1)
+					}
+				} else {
+					os.Exit(1)
+				}
 			}
 
 			log.DefaultLogger.Info(">>> RUST SERVER STARTED WITH PID: ", cmd.Process.Pid)
