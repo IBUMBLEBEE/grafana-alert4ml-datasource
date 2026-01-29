@@ -1,0 +1,29 @@
+name: 'Rust Plugin Builder'
+description: 'Compiles Rust backend for the plugin'
+inputs:
+  target:
+    description: 'Compilation target'
+    default: 'x86_64-unknown-linux-gnu'
+    options:
+      - 'x86_64-unknown-linux-gnu'
+      - 'aarch64-unknown-linux-gnu'
+      - 'aarch64-apple-darwin'
+      - 'x86_64-pc-windows-gnu'
+      - 'aarch64-pc-windows-gnu'
+  binary_name:
+    description: 'Binary name'
+    default: 'gpx_alert4ml_rsod_server'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Rust Backend
+      shell: bash
+      run: |
+        mkdir -p ./dist
+        cd rsod/
+        RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{ inputs.target }}
+        cp target/${{ inputs.target }}/release/${{ inputs.binary_name }} ../dist/
