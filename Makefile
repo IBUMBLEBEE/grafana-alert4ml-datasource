@@ -1,6 +1,6 @@
-.PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up clean
+.PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-bin docker-up clean
 
-all: pre-build install-frontend install-go-deps generate-proto build-rs build-go build-ts copy-so docker-up
+all: pre-build install-frontend install-go-deps generate-proto build-rs build-go build-ts copy-bin docker-up
 
 pre-build:
 	go install github.com/bufbuild/buf/cmd/buf@v1.64.0
@@ -25,9 +25,9 @@ build-go:
 build-ts:
 	npm run build
 
-copy-so:
+copy-bin:
 	mkdir -p dist/
-	cp -f pkg/rsod/target/x86_64-unknown-linux-gnu/release/lib*.so dist/
+	cp -f rsod/target/$(TARGETS)/release/$(BINARY_NAME) dist/
 
 docker-up:
 	docker compose up -d
