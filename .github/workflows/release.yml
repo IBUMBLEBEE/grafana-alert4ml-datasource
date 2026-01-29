@@ -24,11 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Rust Builder
-        uses: ./.github/actions/rust-builder
-        with:
-          target: ${{ matrix.target }}
-
       - uses: grafana/plugin-actions/build-plugin@main
         with:
           # refer to https://grafana.com/developers/plugin-tools/publish-a-plugin/sign-a-plugin#generate-an-access-policy-token to generate it
@@ -39,6 +34,11 @@ jobs:
           use_changelog_generator: true
           go-version: '1.25'
           node-version: '22'
+      
+      - name: Run Rust Builder
+        uses: ./.github/actions/rust-builder
+        with:
+          target: ${{ matrix.target }}
   
       - name: Package Plugin
         uses: grafana/plugin-actions/package-plugin@main
