@@ -1,6 +1,6 @@
 module github.com/IBUMBLEBEE/grafana-alert4ml-datasource
 
-go 1.21
+go 1.25.5
 
 replace github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/gen/rsod => ./pkg/gen/rsod
 

@@ -37,6 +37,8 @@ jobs:
           # creates a signed build provenance attestation to verify the authenticity of the plugin build
           attestation: true
           use_changelog_generator: true
+          go-version: '1.25'
+          node-version: '22'
   
       - name: Package Plugin
         uses: grafana/plugin-actions/package-plugin@main
