@@ -6,12 +6,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/gen/rsod"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+)
+
+var (
+	rsodGrpcServerOnce sync.Once
+	rsodGrpcOnce       sync.Once
+	rsodGrpcClient     rsod.RsodServiceClient
+	rsodGrpcErr        error
 )
 
 // initRSODGrpcClient lazily initializes gRPC client for RSOD service

@@ -31,7 +31,7 @@ runs:
     - name: Build Rust Backend
       shell: bash
       run: |
-        mkdir -p ./dist
+        mkdir -p ./rust_dist
         cd rsod/
         RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{ inputs.target }}
-        cp target/${{ inputs.target }}/release/${{ inputs.binary_name }} ../dist/
+        cp target/${{ inputs.target }}/release/${{ inputs.binary_name }} ../rust_dist/

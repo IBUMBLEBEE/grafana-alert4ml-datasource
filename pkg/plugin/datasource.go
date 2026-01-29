@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/tidwall/sjson"
@@ -32,18 +31,6 @@ var (
 	_ instancemgmt.InstanceDisposer = (*Datasource)(nil)
 )
 
-var (
-	rsodGrpcServerOnce sync.Once
-	rsodGrpcOnce       sync.Once
-	rsodGrpcClient     rsod.RsodServiceClient
-	rsodGrpcErr        error
-)
-
-func init() {
-	// Initialization code if needed
-	initRSODGrpcClient()
-}
-
 // NewDatasource creates a new datasource instance.
 func NewDatasource(_ context.Context, _ backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
 	return &Datasource{}, nil
@@ -65,6 +52,11 @@ func (d *Datasource) Dispose() {
 // The QueryDataResponse contains a map of RefID to the response for each query, and each response
 // contains Frames ([]*Frame).
 func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	err := initRSODGrpcClient()
+	if err != nil {
+		return nil, err
+	}
+
 	// 加载插件配置
 	config, err := models.LoadPluginSettings(*req.PluginContext.DataSourceInstanceSettings)
 	if err != nil {
