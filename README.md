@@ -54,5 +54,5 @@ TODO
 
 ## Reference
 
-* https://grafana.com/src/img/grafana-cloud/machine-learning/dynamic-alerting/forecasting/
-* https://src/img.victoriametrics.com/anomaly-detection/
+* https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/
+* https://docs.victoriametrics.com/anomaly-detection/
