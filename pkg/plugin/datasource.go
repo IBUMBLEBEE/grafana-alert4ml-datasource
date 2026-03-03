@@ -11,8 +11,8 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
-	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/gen/rsod"
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/models"
+	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/rsod"
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/sdk"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -52,11 +52,6 @@ func (d *Datasource) Dispose() {
 // The QueryDataResponse contains a map of RefID to the response for each query, and each response
 // contains Frames ([]*Frame).
 func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
-	err := initRSODGrpcClient()
-	if err != nil {
-		return nil, err
-	}
-
 	// 加载插件配置
 	config, err := models.LoadPluginSettings(*req.PluginContext.DataSourceInstanceSettings)
 	if err != nil {
