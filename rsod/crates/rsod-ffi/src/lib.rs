@@ -1,6 +1,7 @@
-use arrow::array::{Array, Float64Array, Int64Array, RecordBatch, StructArray};
+use arrow::array::{Array, Float64Array, Int64Array, StructArray};
 use arrow::datatypes::{DataType, Field};
 use arrow::ffi::{from_ffi, to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
+use polars::frame::DataFrame;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -56,6 +57,8 @@ pub extern "C" fn outlier_fit_predict(
         }
     };
 
+
+
     // 获取col1，与 outlier_result 合并创建新的 StructArray
     let new_col_ts = struct_array
         .column(0)
@@ -63,7 +66,18 @@ pub extern "C" fn outlier_fit_predict(
         .downcast_ref::<Float64Array>()
         .unwrap()
         .clone();
-    let new_col_outlier = Float64Array::from(outlier_result);
+
+    // 如果 outlier_result 是 polars::DataFrame，取 "value" 列并转换为 Arrow Float64Array
+    let new_col_outlier = {
+        // 假设 outlier_result 是 polars::prelude::DataFrame
+        let series = outlier_result
+            .column("value")
+            .expect("missing column 'value'");
+        let ca = series.f64().expect("column 'value' is not f64");
+        // ca.into_iter() -> Iterator<Item = Option<f64>>
+        Float64Array::from_iter(ca.into_iter())
+    };
+
     let new_struct = StructArray::from(vec![
         (
             std::sync::Arc::new(Field::new("time", DataType::Float64, false)),
@@ -157,37 +171,45 @@ extern "C" fn baseline_fit_predict(
     let opts: BaselineOptions =
         serde_json::from_str(options_json.to_str().unwrap()).expect("JSON parsing failed");
 
-    let baseline_result: RecordBatch = baseline_detect(&data_vec, &history_data_vec , &opts).unwrap();
+    let baseline_df: DataFrame = baseline_detect(&data_vec, &history_data_vec , &opts).unwrap();
 
-    let timestamps = baseline_result.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
-    let timestamps_values: Vec<i64> = (0..timestamps.len())
-        .map(|i| timestamps.value(i))
+    // 从 Polars DataFrame 中提取各列数据
+    let timestamps_series = baseline_df.column(TIMESTAMP_COL).expect("missing timestamp column");
+    let baseline_series = baseline_df.column(BASELINE_VALUE_COL).expect("missing baseline column");
+    let lower_bound_series = baseline_df.column(LOWER_BOUND_COL).expect("missing lower_bound column");
+    let upper_bound_series = baseline_df.column(UPPER_BOUND_COL).expect("missing upper_bound column");
+    let anomaly_series = baseline_df.column(ANOMALY_COL).expect("missing anomaly column");
+
+    // 从 Polars Series 提取数据
+    let timestamps_values: Vec<i64> = timestamps_series
+        .i64()
+        .expect("timestamp column is not i64")
+        .into_iter()
+        .map(|opt| opt.unwrap_or(0))
         .collect();
-    // 获取所有列：baseline_value (列1), lower_bound (列2), upper_bound (列3), anomaly (列4)
-    let baseline_array = baseline_result.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-    let lower_bound_array = baseline_result.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
-    let upper_bound_array = baseline_result.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
-    let anomaly_array = baseline_result.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
-    // 提取数据
-    let baseline_values: Vec<Option<f64>> = (0..baseline_array.len())
-        .map(|i| if baseline_array.is_null(i) { None } else { Some(baseline_array.value(i)) })
+    
+    let baseline_values: Vec<Option<f64>> = baseline_series
+        .f64()
+        .expect("baseline column is not f64")
+        .into_iter()
         .collect();
-    let lower_bound_values: Vec<Option<f64>> = (0..lower_bound_array.len())
-        .map(|i| if lower_bound_array.is_null(i) { None } else { Some(lower_bound_array.value(i)) })
+    
+    let lower_bound_values: Vec<Option<f64>> = lower_bound_series
+        .f64()
+        .expect("lower_bound column is not f64")
+        .into_iter()
         .collect();
-    let upper_bound_values: Vec<Option<f64>> = (0..upper_bound_array.len())
-        .map(|i| if upper_bound_array.is_null(i) { None } else { Some(upper_bound_array.value(i)) })
+    
+    let upper_bound_values: Vec<Option<f64>> = upper_bound_series
+        .f64()
+        .expect("upper_bound column is not f64")
+        .into_iter()
         .collect();
-    let anomaly_values: Vec<Option<f64>> = (0..anomaly_array.len())
-        .map(|i| {
-            if anomaly_array.is_null(i) {
-                None
-            } else {
-                let val = anomaly_array.value(i);
-                // NaN 值会被正确传递，兼容 Golang math.NaN
-                Some(val)
-            }
-        })
+    
+    let anomaly_values: Vec<Option<f64>> = anomaly_series
+        .f64()
+        .expect("anomaly column is not f64")
+        .into_iter()
         .collect();
     
     // 创建数组
@@ -434,6 +456,11 @@ pub extern "C" fn rsod_forecaster(
     }
 }
 
+pub extern "C" fn export_dataframe_to_go() -> bool {
+    // 初始化数据库
+    rsod_storage_init()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,7 +543,7 @@ mod tests {
 
         let options: BaselineOptions = BaselineOptions {
             trend_type: TrendType::Daily,
-            interval_minutes: Some(60),
+            interval_mins: Some(60),
             confidence_level: Some(95.0),
             allow_negative_bounds: Some(false),
             std_dev_multiplier: None,

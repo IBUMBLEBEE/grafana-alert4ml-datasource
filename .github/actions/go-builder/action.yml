@@ -1,5 +1,5 @@
-name: 'Rust Plugin Builder'
-description: 'Compiles Rust backend for the plugin'
+name: 'GO Plugin Builder'
+description: 'Compiles Go backend for the plugin'
 inputs:
   target:
     description: 'Compilation target'
@@ -21,14 +21,17 @@ runs:
         sudo apt-get update
         sudo apt-get install -y pkg-config
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Build Rust Backend
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25'
+    
+    - name: Download Go dependencies
       shell: bash
       run: |
-        mkdir -p ./dist
-        cd rsod/
-        cargo install cross --git https://github.com/cross-rs/cross
-        cross build --release --target ${{ inputs.target }}
-        cp target/${{ inputs.target }}/release/lib*.so ../dist/
+        go install github.com/magefile/mage@latest
+        go mod download
+    
+    - name: Build Go Backend
+      shell: bash
+      run: mage -v build:linux
