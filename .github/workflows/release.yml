@@ -23,22 +23,23 @@ jobs:
           # - 'aarch64-pc-windows-gnu'
     steps:
       - uses: actions/checkout@v4
-
-      - uses: grafana/plugin-actions/build-plugin@main
-        with:
-          # refer to https://grafana.com/developers/plugin-tools/publish-a-plugin/sign-a-plugin#generate-an-access-policy-token to generate it
-          # save the value in your repository secrets
-          policy_token: ${{ secrets.GRAFANA_ACCESS_POLICY_TOKEN }}
-          # creates a signed build provenance attestation to verify the authenticity of the plugin build
-          attestation: true
-          use_changelog_generator: true
-          go-version: '1.25'
-          node-version: '22'
       
       - name: Run Rust Builder
         uses: ./.github/actions/rust-builder
         with:
           target: ${{ matrix.target }}
+      
+      - name: Run Go Builder
+        uses: ./.github/actions/go-builder
+        with:
+          target: ${{ matrix.target }}
   
-      - name: Package Plugin
-        uses: grafana/plugin-actions/package-plugin@main
+      - name: Run Node.js Builder
+        uses: ./.github/actions/js-builder
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ibumblebee-alert4ml-datasource-0.1.4.linux_amd64.zip
+          path: dist/
+          retention-days: 5

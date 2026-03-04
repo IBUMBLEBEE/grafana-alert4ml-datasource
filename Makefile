@@ -1,23 +1,18 @@
-.PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-bin docker-up clean
+.PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up clean
 
-all: pre-build install-frontend install-go-deps generate-proto build-rs build-go build-ts copy-bin docker-up
+# Compilation targets
+TARGETS ?= x86_64-unknown-linux-gnu
 
-pre-build:
-	go install github.com/bufbuild/buf/cmd/buf@v1.64.0
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+all: install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up
 
 install-frontend:
 	npm install
-
-generate-proto:
-	buf generate
 
 install-go-deps:
 	go mod download
 
 build-rs:
-	cd pkg/rsod && cross build --release --target x86_64-unknown-linux-gnu
+	cd pkg/rsod && cross build --release --target $(TARGETS)
 
 build-go:
 	mage -v build:linux
@@ -25,9 +20,9 @@ build-go:
 build-ts:
 	npm run build
 
-copy-bin:
+copy-so:
 	mkdir -p dist/
-	cp -f rsod/target/$(TARGETS)/release/$(BINARY_NAME) dist/
+	cp -f rsod/target/$(TARGETS)/release/lib*.so dist/
 
 docker-up:
 	docker compose up -d

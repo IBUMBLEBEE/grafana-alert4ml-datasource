@@ -2,7 +2,6 @@
 members = [
     "crates/*"
 ]
-default-members = ["crates/rsod-grpc"]  # 设置默认运行入口为 rsod-grpc
 resolver = "2"
 
 [workspace.dependencies]
@@ -11,7 +10,7 @@ rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.2" }
 rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }
 rsod-utils = { path = "crates/rsod-utils", version="0.1.2" }
 rsod-storage = { path = "crates/rsod-storage", version="0.1.2" }
-rsod-grpc = { path = "crates/rsod-grpc", version="0.1.2" }
+rsod-ffi = { path = "crates/rsod-storage", version="0.1.1" }
 
 ndarray = "0.16.1"
 rand = "0.8"
