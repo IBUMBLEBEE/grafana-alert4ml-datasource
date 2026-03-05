@@ -78,17 +78,20 @@ jobs:
           fi
 
       - name: Archive as ZIP
+        shell: bash
         run: |
-          cd dist
-          zip -r ../${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip .
-          cd ..
-      
+          # Rename dist to plugin directory for cleaner archive structure
+          mv dist ${{ env.PLUGIN_NAME }}
+          
+          # Create ZIP with plugin directory as root
+          zip -r ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip ${{ env.PLUGIN_NAME }}/
+
       - name: Archive as TAR.GZ
+        shell: bash
         run: |
-          cd dist
-          tar -czf ../${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz .
-          cd ..
-      
+          # Create TAR.GZ with plugin directory as root
+          tar -czf ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz ${{ env.PLUGIN_NAME }}/
+
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
