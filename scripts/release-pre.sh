@@ -23,6 +23,12 @@ if [ -f package.json ]; then
   echo "✓ Updated package.json"
 fi
 
+# Overwrote src/README.md with ./README.md
+if [ -f README.md ]; then
+  cp README.md src/README.md
+  echo "✓ Overwrote src/README.md with README.md"
+fi
+
 echo "Version update complete! New version: $VERSION"
 echo ""
 echo "Next steps:"

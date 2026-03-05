@@ -48,7 +48,7 @@ export function ConfigEditor(props: Props) {
     <Card>
       <Card.Heading>Grafana Connection</Card.Heading>
       <Card.Description>
-      <InlineField label="URL" labelWidth={14} interactive tooltip={'Json field returned to frontend'}>
+      <InlineField label="URL" labelWidth={14} interactive tooltip={'Grafana URL'}>
           <Input
             id="config-editor-url"
             onChange={onPathChange}
@@ -57,7 +57,7 @@ export function ConfigEditor(props: Props) {
             width={40}
           />
         </InlineField>
-        <InlineField label="API Token" labelWidth={14} interactive tooltip={'Secure json field (backend only)'}>
+        <InlineField label="API Token" labelWidth={14} interactive tooltip={'Secure json field for API token'}>
           <SecretInput
             required
             id="config-editor-api-token"
