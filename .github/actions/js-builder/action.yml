@@ -4,12 +4,6 @@ description: 'Compiles Node.js frontend for the plugin'
 runs:
   using: "composite"
   steps:
-    - name: Install dependencies
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config
-
     - name: Use Node.js 22
       uses: actions/setup-node@v4
       with:

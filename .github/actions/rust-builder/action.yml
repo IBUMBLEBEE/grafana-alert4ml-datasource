@@ -1,34 +1,64 @@
 name: 'Rust Plugin Builder'
 description: 'Compiles Rust backend for the plugin'
+
 inputs:
   target:
     description: 'Compilation target'
     default: 'x86_64-unknown-linux-gnu'
-    options:
-      - 'x86_64-unknown-linux-gnu'
-      - 'aarch64-unknown-linux-gnu'
-      - 'aarch64-apple-darwin'
-      - 'x86_64-pc-windows-gnu'
-      - 'aarch64-pc-windows-gnu'
-    required: false
+    required: true
 
 runs:
   using: "composite"
   steps:
-    - name: Install dependencies
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config
-
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
     - name: Build Rust Backend
       shell: bash
       run: |
-        mkdir -p ./dist
+        mkdir -p ./dist-rs
         cd rsod/
         cargo install cross --git https://github.com/cross-rs/cross
+        
+        # Build rsod crate which produces the shared library
+        echo "Building rsod for target: ${{ inputs.target }}"
         cross build --release --target ${{ inputs.target }}
-        cp target/${{ inputs.target }}/release/lib*.so ../dist/
+        
+        # Copy library files based on target platform
+        TARGET_DIR="target/${{ inputs.target }}/release"
+        
+        # Debug: list what was built
+        echo "=== Build artifacts in $TARGET_DIR ==="
+        ls -lh "$TARGET_DIR" | grep -E '\.(so|dll|dylib)' | head -20 || echo "Looking for library files..."
+        echo "=== Checking for library files ==="
+        find "$TARGET_DIR" -maxdepth 1 -type f \( -name "librsod*" -o -name "rsod*.so" -o -name "rsod*.dll" -o -name "librsod*.dylib" \) -exec ls -lh {} \;
+        
+        # Copy based on platform
+        case "${{ inputs.target }}" in
+          *linux*)
+            echo "Copying .so files for Linux..."
+            cp "$TARGET_DIR"/librsod*.so ../dist-rs/ 2>/dev/null && echo "✓ Copied .so files" || echo "⚠ No .so files found"
+            ;;
+          *windows*)
+            echo "Copying .dll files for Windows..."
+            cp "$TARGET_DIR"/*.dll ../dist-rs/ 2>/dev/null && echo "✓ Copied .dll files" || echo "⚠ No .dll files found"
+            ;;
+          *darwin*)
+            echo "Copying .dylib files for macOS..."
+            cp "$TARGET_DIR"/librsod*.dylib ../dist-rs/ 2>/dev/null && echo "✓ Copied .dylib files" || echo "⚠ No .dylib files found"
+            ;;
+          *)
+            echo "Unknown target platform, attempting generic copy..."
+            find "$TARGET_DIR" -maxdepth 1 -type f \( -name "librsod*" -o -name "rsod*.dll" \) -exec cp {} ../dist-rs/ \; && echo "✓ Copied files" || echo "⚠ No library files found"
+            ;;
+        esac
+        
+        # Verify dist-rs directory contents
+        echo "=== Verifying dist-rs directory ==="
+        if [ -d ../dist-rs ] && [ "$(ls -A ../dist-rs 2>/dev/null | wc -l)" -gt 0 ]; then
+          ls -lh ../dist-rs/
+          echo "✓ Build artifacts copied successfully"
+        else
+          echo "⚠ Warning: dist-rs directory is empty or missing"
+          exit 1
+        fi

@@ -13,6 +13,8 @@ jobs:
       contents: write
       attestations: write
     runs-on: ubuntu-latest
+    env:
+      PLUGIN_NAME: ibumblebee-alert4ml-datasource
     strategy:
       matrix:
         target:
@@ -22,6 +24,12 @@ jobs:
           # - 'x86_64-pc-windows-gnu'
           # - 'aarch64-pc-windows-gnu'
     steps:
+      - name: Install dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config zip tar
+        
       - uses: actions/checkout@v4
       
       - name: Map Rust Target to OS-Arch
@@ -43,23 +51,42 @@ jobs:
       - name: Run Node.js Builder
         uses: ./.github/actions/js-builder
 
-      # - name: Upload Build Artifact
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: ibumblebee-alert4ml-datasource-0.1.4.linux_amd64
-      #     path: dist/
-      #     retention-days: 5
+      - name: Merge Rust Build Artifacts
+        shell: bash
+        run: |
+          # Ensure dist directory exists and contains Go/JS builds
+          if [ ! -d dist ]; then
+            echo "Error: dist directory not created by Go/JS builders"
+            exit 1
+          fi
+          
+          # Copy Rust artifacts to dist (library files)
+          if [ -d dist-rs ] && [ "$(ls -A dist-rs 2>/dev/null | wc -l)" -gt 0 ]; then
+            echo "Copying Rust build artifacts to dist..."
+            cp -f dist-rs/* dist/ 2>/dev/null && echo "✓ Merged Rust artifacts" || echo "✓ No Rust artifacts to merge"
+          else
+            echo "⚠ Warning: No Rust artifacts found in dist-rs"
+          fi
+          
+          # Verify final dist contents
+          echo "=== Final dist directory contents ==="
+          ls -lh dist/
+          file_count=$(ls -1 dist | wc -l)
+          echo "Total files: $file_count"
+          if [ "$file_count" -lt 3 ]; then
+            echo "⚠ Warning: dist directory seems incomplete"
+          fi
 
       - name: Archive as ZIP
         run: |
           cd dist
-          zip -r ../ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip .
+          zip -r ../${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip .
           cd ..
       
       - name: Archive as TAR.GZ
         run: |
           cd dist
-          tar -czf ../ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz .
+          tar -czf ../${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz .
           cd ..
       
       - name: Release
@@ -67,5 +94,5 @@ jobs:
         if: github.ref_type == 'tag'
         with:
           files: |
-            ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip
-            ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz
+            ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip
+            ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz

@@ -1,26 +1,15 @@
 name: 'GO Plugin Builder'
 description: 'Compiles Go backend for the plugin'
+
 inputs:
   target:
     description: 'Compilation target'
     default: 'x86_64-unknown-linux-gnu'
-    options:
-      - 'x86_64-unknown-linux-gnu'
-      - 'aarch64-unknown-linux-gnu'
-      - 'aarch64-apple-darwin'
-      - 'x86_64-pc-windows-gnu'
-      - 'aarch64-pc-windows-gnu'
-    required: false
+    required: true
 
 runs:
   using: "composite"
   steps:
-    - name: Install dependencies
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y pkg-config
-
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
