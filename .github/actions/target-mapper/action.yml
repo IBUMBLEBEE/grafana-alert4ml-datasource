@@ -1,0 +1,43 @@
+name: 'Target Mapper'
+description: 'Maps Rust target triple to readable OS-Arch format'
+
+inputs:
+  target:
+    description: 'Rust compilation target'
+    required: true
+
+outputs:
+  os_arch:
+    description: 'Mapped OS-Arch format (e.g., linux-amd64)'
+    value: ${{ steps.map.outputs.os_arch }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Map Target
+      id: map
+      shell: bash
+      run: |
+        case "${{ inputs.target }}" in
+          x86_64-unknown-linux-gnu)
+            echo "os_arch=linux-amd64" >> $GITHUB_OUTPUT
+            ;;
+          aarch64-unknown-linux-gnu)
+            echo "os_arch=linux-arm64" >> $GITHUB_OUTPUT
+            ;;
+          aarch64-apple-darwin)
+            echo "os_arch=macos-arm64" >> $GITHUB_OUTPUT
+            ;;
+          x86_64-apple-darwin)
+            echo "os_arch=macos-amd64" >> $GITHUB_OUTPUT
+            ;;
+          x86_64-pc-windows-gnu)
+            echo "os_arch=windows-amd64" >> $GITHUB_OUTPUT
+            ;;
+          aarch64-pc-windows-gnu)
+            echo "os_arch=windows-arm64" >> $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "os_arch=${{ inputs.target }}" >> $GITHUB_OUTPUT
+            ;;
+        esac

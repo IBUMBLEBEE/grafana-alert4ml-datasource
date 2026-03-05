@@ -24,6 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Map Rust Target to OS-Arch
+        id: target-map
+        uses: ./.github/actions/target-mapper
+        with:
+          target: ${{ matrix.target }}
+      
       - name: Run Rust Builder
         uses: ./.github/actions/rust-builder
         with:
@@ -37,9 +43,29 @@ jobs:
       - name: Run Node.js Builder
         uses: ./.github/actions/js-builder
 
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+      # - name: Upload Build Artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ibumblebee-alert4ml-datasource-0.1.4.linux_amd64
+      #     path: dist/
+      #     retention-days: 5
+
+      - name: Archive as ZIP
+        run: |
+          cd dist
+          zip -r ../ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip .
+          cd ..
+      
+      - name: Archive as TAR.GZ
+        run: |
+          cd dist
+          tar -czf ../ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz .
+          cd ..
+      
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
         with:
-          name: ibumblebee-alert4ml-datasource-0.1.4.linux_amd64.zip
-          path: dist/
-          retention-days: 5
+          files: |
+            ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip
+            ibumblebee-alert4ml-datasource-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz
