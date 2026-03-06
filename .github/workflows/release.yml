@@ -76,10 +76,6 @@ jobs:
           if [ "$file_count" -lt 3 ]; then
             echo "⚠ Warning: dist directory seems incomplete"
           fi
-      - name: copy README.md to dist
-        shell: bash
-        run: |
-          cp -f README.md dist/README.md
 
       - name: Archive as ZIP
         shell: bash
