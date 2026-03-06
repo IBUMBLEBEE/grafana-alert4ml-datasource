@@ -4,13 +4,13 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 ## Architecture
 
-![Architecture](src/img/arch.png)
+![Architecture](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/arch.png)
 
 ## Technology Stack
 
 * Frontend: [TS](https://www.typescriptlang.org/) / [React](https://react.dev/)
 * Backend: [Go](https://go.dev/) / [CGO](https://pkg.go.dev/cmd/cgo) / [Rust](https://www.rust-lang.org/)
-* Data Transform: [Arrow Dataframe](https://arrow.apache.org/src/img/index.html)
+* Data Transform: [Arrow Dataframe](https://arrow.apache.org/docs/index.html)
 
 ## Algorithm
 
@@ -51,7 +51,7 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 This plugin relies on Grafana's Mixed data source mode.
 
-![Configuration](src/img/demo.gif)
+![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/demo.gif)
 
 ### Development building and running
 
@@ -63,8 +63,8 @@ make
 
 ## Demo
 
-![outlier](src/img/outlier.png)
-![forcast](src/img/forcast.png)
+![outlier](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/outlier.png)
+![forcast](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/forcast.png)
 
 ## Reference
 

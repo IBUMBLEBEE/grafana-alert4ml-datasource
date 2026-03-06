@@ -9,6 +9,11 @@ runs:
       with:
         node-version: 22.x
     
+    - name: copy README.md to dist
+      shell: bash
+      run: |
+        cp -f README.md src/README.md
+    
     - name: Build Node.js Frontend
       shell: bash
       run: |
