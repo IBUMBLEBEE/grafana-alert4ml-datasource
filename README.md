@@ -4,7 +4,6 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 ## Architecture
 
-
 ![Architecture](src/img/arch.png)
 
 ## Technology Stack

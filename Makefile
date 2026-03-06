@@ -1,9 +1,9 @@
-.PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up clean
+.PHONY: all install-frontend install-go-deps build-rs build-go build-ts copy-deps docker-up clean
 
 # Compilation targets
 TARGETS ?= x86_64-unknown-linux-gnu
 
-all: install-frontend install-go-deps build-rs build-go build-ts copy-so docker-up
+all: install-frontend install-go-deps build-rs build-go build-ts copy-deps docker-up
 
 install-frontend:
 	npm install
@@ -20,8 +20,9 @@ build-go:
 build-ts:
 	npm run build
 
-copy-so:
+copy-deps:
 	mkdir -p dist/
+	cp -f README.md dist/README.md
 	cp -f rsod/target/$(TARGETS)/release/lib*.so dist/
 
 docker-up:
