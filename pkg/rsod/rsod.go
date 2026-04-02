@@ -324,8 +324,10 @@ func WriteArrowRecordToCSV(record arrow.Record, filename string) error {
 	return nil
 }
 
-func RSODStorageInit() bool {
-	success := C.rsod_storage_init()
+func RSODStorageInit(trialMode bool, pgDSN string) bool {
+	cPgDSN := C.CString(pgDSN)
+	defer C.free(unsafe.Pointer(cPgDSN))
+	success := C.rsod_storage_init(C.bool(trialMode), cPgDSN)
 	if success {
 		return true
 	}

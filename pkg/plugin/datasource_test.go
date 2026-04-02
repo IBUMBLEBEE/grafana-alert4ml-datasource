@@ -3,6 +3,10 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -497,3 +501,171 @@ func BenchmarkLargeDatasetQuery(b *testing.B) {
 // 		t.Logf("Missing data query successful, duration: %v", duration)
 // 	}
 // }
+
+func TestCheckHealth(t *testing.T) {
+	tests := []struct {
+		name           string
+		pluginContext  func(serverURL string) backend.PluginContext
+		serverHandler  http.HandlerFunc
+		expectStatus   backend.HealthStatus
+		expectContains string
+	}{
+		{
+			name: "invalid JSON settings returns error",
+			pluginContext: func(_ string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData: json.RawMessage(`{invalid`),
+					},
+				}
+			},
+			serverHandler:  nil,
+			expectStatus:   backend.HealthStatusError,
+			expectContains: "Unable to load settings",
+		},
+		{
+			name: "missing API token returns error",
+			pluginContext: func(_ string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(`{"url":"http://localhost:3000"}`),
+						DecryptedSecureJSONData: map[string]string{},
+					},
+				}
+			},
+			serverHandler:  nil,
+			expectStatus:   backend.HealthStatusError,
+			expectContains: "API Token is missing",
+		},
+		{
+			name: "Grafana health check fails",
+			pluginContext: func(serverURL string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(fmt.Sprintf(`{"url":"%s"}`, serverURL)),
+						DecryptedSecureJSONData: map[string]string{"apiToken": "test-token"},
+					},
+				}
+			},
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			expectStatus:   backend.HealthStatusError,
+			expectContains: "401",
+		},
+		{
+			name: "non-trial mode without PG config returns error",
+			pluginContext: func(serverURL string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(fmt.Sprintf(`{"url":"%s"}`, serverURL)),
+						DecryptedSecureJSONData: map[string]string{"apiToken": "test-token"},
+					},
+				}
+			},
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"message":"Logged in"}`))
+			},
+			expectStatus:   backend.HealthStatusError,
+			expectContains: "PostgreSQL configuration is incomplete",
+		},
+		{
+			name: "non-trial mode with partial PG config returns error",
+			pluginContext: func(serverURL string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(fmt.Sprintf(`{"url":"%s","pgHost":"127.0.0.1"}`, serverURL)),
+						DecryptedSecureJSONData: map[string]string{"apiToken": "test-token"},
+					},
+				}
+			},
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"message":"Logged in"}`))
+			},
+			expectStatus:   backend.HealthStatusError,
+			expectContains: "PostgreSQL configuration is incomplete",
+		},
+		{
+			name: "Grafana OK but PG health fails",
+			pluginContext: func(serverURL string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(fmt.Sprintf(`{"url":"%s","pgHost":"127.0.0.1","pgPort":1,"pgDatabase":"nodb","pgUser":"nouser"}`, serverURL)),
+						DecryptedSecureJSONData: map[string]string{"apiToken": "test-token", "pgPassword": "nopass"},
+					},
+				}
+			},
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"message":"Logged in"}`))
+			},
+			expectStatus:   backend.HealthStatusError,
+			expectContains: "PostgreSQL",
+		},
+		{
+			name: "trial mode skips PG check and returns success",
+			pluginContext: func(serverURL string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(fmt.Sprintf(`{"url":"%s","trialMode":true}`, serverURL)),
+						DecryptedSecureJSONData: map[string]string{"apiToken": "test-token"},
+					},
+				}
+			},
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"message":"Logged in"}`))
+			},
+			expectStatus:   backend.HealthStatusOk,
+			expectContains: "trial mode",
+		},
+		{
+			name: "trial mode with pgHost still skips PG check",
+			pluginContext: func(serverURL string) backend.PluginContext {
+				return backend.PluginContext{
+					DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
+						JSONData:                json.RawMessage(fmt.Sprintf(`{"url":"%s","trialMode":true,"pgHost":"127.0.0.1","pgPort":1,"pgDatabase":"nodb","pgUser":"nouser"}`, serverURL)),
+						DecryptedSecureJSONData: map[string]string{"apiToken": "test-token", "pgPassword": "nopass"},
+					},
+				}
+			},
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"message":"Logged in"}`))
+			},
+			expectStatus:   backend.HealthStatusOk,
+			expectContains: "trial mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var serverURL string
+			if tt.serverHandler != nil {
+				server := httptest.NewServer(tt.serverHandler)
+				defer server.Close()
+				serverURL = server.URL
+			}
+
+			ds := &Datasource{}
+			req := &backend.CheckHealthRequest{
+				PluginContext: tt.pluginContext(serverURL),
+			}
+
+			result, err := ds.CheckHealth(context.Background(), req)
+			if err != nil {
+				t.Fatalf("CheckHealth returned unexpected error: %v", err)
+			}
+
+			if result.Status != tt.expectStatus {
+				t.Errorf("expected status %v, got %v", tt.expectStatus, result.Status)
+			}
+
+			if !strings.Contains(result.Message, tt.expectContains) {
+				t.Errorf("expected message to contain %q, got %q", tt.expectContains, result.Message)
+			}
+		})
+	}
+}

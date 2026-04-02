@@ -5,7 +5,7 @@ use polars::frame::DataFrame;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-use rsod_storage::init_db;
+use rsod_storage::init_db_with_config;
 use rsod_outlier::{outlier, OutlierOptions};
 use rsod_baseline::baseline_detect;
 use rsod_baseline::BaselineOptions;
@@ -256,12 +256,22 @@ extern "C" fn baseline_fit_predict(
 
 /// FFI 函数：初始化数据库
 /// 供 Go 代码在启动时显式调用
+/// - `trial_mode = true`: 使用 SQLite 内存数据库（试用模式）
+/// - `trial_mode = false`: 使用 PostgreSQL（生产模式，需要有效的 pg_dsn）
 #[no_mangle]
-pub extern "C" fn rsod_storage_init() -> bool {
+pub extern "C" fn rsod_storage_init(trial_mode: bool, pg_dsn: *const c_char) -> bool {
     // 使用 catch_unwind 捕获可能的 panic，避免插件崩溃
     let result = std::panic::catch_unwind(|| {
-        // 调用 init_db，它会处理所有初始化逻辑
-        match init_db() {
+        let dsn = if pg_dsn.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(pg_dsn) }
+                .to_str()
+                .unwrap_or("")
+                .to_string()
+        };
+
+        match init_db_with_config(trial_mode, &dsn) {
             Ok(_) => true,
             Err(e) => {
                 eprintln!("Failed to initialize database: {:?}", e);
@@ -457,8 +467,8 @@ pub extern "C" fn rsod_forecaster(
 }
 
 pub extern "C" fn export_dataframe_to_go() -> bool {
-    // 初始化数据库
-    rsod_storage_init()
+    // 初始化数据库（默认试用模式）
+    rsod_storage_init(true, std::ptr::null())
 }
 
 #[cfg(test)]

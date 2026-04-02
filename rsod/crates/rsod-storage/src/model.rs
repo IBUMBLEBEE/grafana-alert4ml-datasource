@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use crate::db::{DbBackend, get_backend};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
@@ -15,7 +16,28 @@ impl Model {
         println!("Model::write called for uuid: {}", self.uuid);
         crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-        let db = crate::get_db_connection();
+        let backend = get_backend();
+        match backend {
+            DbBackend::Sqlite(mutex) => self.write_sqlite(mutex),
+            DbBackend::Postgres(mutex) => self.write_postgres(mutex),
+        }
+    }
+
+    pub fn read(&mut self) -> Result<(), std::io::Error> {
+        println!("Model::read called for uuid: {}", self.uuid);
+        crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let backend = get_backend();
+        match backend {
+            DbBackend::Sqlite(mutex) => self.read_sqlite(mutex),
+            DbBackend::Postgres(mutex) => self.read_postgres(mutex),
+        }
+    }
+
+    fn write_sqlite(&self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> Result<(), std::io::Error> {
+        let db = mutex.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock SQLite database")
+        })?;
 
         let mut stmt = db
             .prepare(
@@ -39,11 +61,31 @@ impl Model {
         Ok(())
     }
 
-    pub fn read(&mut self) -> Result<(), std::io::Error> {
-        println!("Model::read called for uuid: {}", self.uuid);
-        crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fn write_postgres(&self, mutex: &std::sync::Mutex<postgres::Client>) -> Result<(), std::io::Error> {
+        let mut client = mutex.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock PostgreSQL client")
+        })?;
 
-        let db = crate::get_db_connection();
+        client
+            .execute(
+                "INSERT INTO models (uuid, artifacts, updated_at) \
+                 VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::BIGINT) \
+                 ON CONFLICT (uuid) DO UPDATE SET artifacts = $2, updated_at = EXTRACT(EPOCH FROM NOW())::BIGINT",
+                &[&self.uuid, &self.artifacts],
+            )
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("PostgreSQL insert failed: {}", e),
+                )
+            })?;
+        Ok(())
+    }
+
+    fn read_sqlite(&mut self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> Result<(), std::io::Error> {
+        let db = mutex.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock SQLite database")
+        })?;
 
         let mut stmt = db
             .prepare("SELECT uuid, artifacts FROM models WHERE uuid = ?")
@@ -78,6 +120,31 @@ impl Model {
 
         Ok(())
     }
+
+    fn read_postgres(&mut self, mutex: &std::sync::Mutex<postgres::Client>) -> Result<(), std::io::Error> {
+        let mut client = mutex.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock PostgreSQL client")
+        })?;
+
+        let rows = client
+            .query(
+                "SELECT uuid, artifacts FROM models WHERE uuid = $1",
+                &[&self.uuid],
+            )
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("PostgreSQL query failed: {}", e),
+                )
+            })?;
+
+        for row in rows {
+            self.uuid = row.get(0);
+            self.artifacts = row.get(1);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -86,7 +153,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        crate::init_db().unwrap();
+        crate::init_db_with_config(true, "").unwrap();
 
         let _model = Model::new("test".to_string(), vec![1, 2, 3]);
         _model.write().unwrap();

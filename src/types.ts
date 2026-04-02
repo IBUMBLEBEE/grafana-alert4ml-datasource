@@ -176,10 +176,18 @@ export interface DataSourceResponse {
  */
 export interface Alert4MLDataSourceOptions extends DataSourceJsonData {
   url?: string;
+  trialMode?: boolean;
+  pgHost?: string;
+  pgPort?: number;
+  pgDatabase?: string;
+  pgUser?: string;
+  pgSSLMode?: string;
 }
 
 export const DEFAULT_URL: Partial<Alert4MLDataSourceOptions> = {
   url: 'http://localhost:3000',
+  trialMode: false,
+  pgSSLMode: 'disable',
 };
 
 /**
@@ -187,4 +195,8 @@ export const DEFAULT_URL: Partial<Alert4MLDataSourceOptions> = {
  */
 export interface Alert4MLSecureJsonData {
   apiToken?: string;
+}
+
+export interface Alert4MLPgSecureJsonData {
+  pgPassword?: string;
 }

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 serde.workspace = true
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+postgres = "0.19"
 
 [lints]
 workspace = true

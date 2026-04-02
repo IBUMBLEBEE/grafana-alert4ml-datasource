@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -18,6 +19,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	_ "github.com/lib/pq"
 )
 
 // Make sure Datasource implements required interfaces. This is important to do
@@ -256,6 +258,28 @@ func (d *Datasource) CheckHealth(_ context.Context, req *backend.CheckHealthRequ
 		}, nil
 	}
 
+	if config.TrialMode {
+		return &backend.CheckHealthResult{
+			Status:  backend.HealthStatusOk,
+			Message: "Data source is working (trial mode, using SQLite in-memory storage)",
+		}, nil
+	}
+
+	if config.PgHost == "" || config.PgDatabase == "" || config.PgUser == "" {
+		return &backend.CheckHealthResult{
+			Status:  backend.HealthStatusError,
+			Message: "PostgreSQL configuration is incomplete: host, database and user are required",
+		}, nil
+	}
+
+	err = d.CheckPgHealth(config)
+	if err != nil {
+		return &backend.CheckHealthResult{
+			Status:  backend.HealthStatusError,
+			Message: fmt.Sprintf("PostgreSQL: %s", err.Error()),
+		}, nil
+	}
+
 	return &backend.CheckHealthResult{
 		Status:  backend.HealthStatusOk,
 		Message: "Data source is working",
@@ -270,6 +294,22 @@ func (d *Datasource) CheckGrafanaHealth(config *models.PluginSettings) error {
 	}
 	client := sdk.NewGrafanaClient(config.URL, config.Secrets.ApiToken)
 	return client.LoginPing()
+}
+
+func (d *Datasource) CheckPgHealth(config *models.PluginSettings) error {
+	db, err := sql.Open("postgres", config.PgDSN())
+	if err != nil {
+		return fmt.Errorf("failed to open PostgreSQL connection: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("failed to ping PostgreSQL: %w", err)
+	}
+	return nil
 }
 
 // ParseQuery 解析查询参数
