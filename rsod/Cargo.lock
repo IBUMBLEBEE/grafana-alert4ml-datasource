@@ -3419,6 +3419,7 @@ name = "rsod"
 version = "0.1.2"
 dependencies = [
  "rsod-baseline",
+ "rsod-core",
  "rsod-forecaster",
  "rsod-outlier",
  "rsod-storage",
@@ -3432,9 +3433,18 @@ dependencies = [
  "arrow",
  "chrono",
  "polars",
+ "rsod-core",
  "rsod-utils",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rsod-core"
+version = "0.1.2"
+dependencies = [
+ "serde",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -3446,9 +3456,8 @@ dependencies = [
  "chrono",
  "csv",
  "libc",
- "polars",
- "polars-arrow",
  "rsod-baseline",
+ "rsod-core",
  "rsod-forecaster",
  "rsod-outlier",
  "rsod-storage",
@@ -3463,7 +3472,7 @@ version = "0.1.2"
 dependencies = [
  "chrono",
  "perpetual",
- "polars",
+ "rsod-core",
  "rsod-storage",
  "rsod-utils",
  "serde",
@@ -3483,10 +3492,9 @@ dependencies = [
  "itertools",
  "ndarray 0.16.1",
  "num-complex",
- "polars",
- "polars-arrow",
  "rand 0.8.5",
  "rayon",
+ "rsod-core",
  "rsod-storage",
  "rsod-utils",
  "rustfft",
@@ -3501,6 +3509,7 @@ name = "rsod-storage"
 version = "0.1.2"
 dependencies = [
  "postgres",
+ "rsod-core",
  "rusqlite",
  "serde",
 ]

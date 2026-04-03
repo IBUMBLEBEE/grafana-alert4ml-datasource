@@ -1,15 +1,12 @@
 use polars::prelude::*;
 use polars::datatypes::DataType;
+use rsod_core::{DetectionResult, TimeSeriesInput};
 use serde::{Serialize, Deserialize};
 use std::error::Error;
 
-// Set input data column names
-pub const TIMESTAMP_COL: &str = "time";
-pub const METRIC_VALUE_COL: &str = "value";
-pub const BASELINE_VALUE_COL: &str = "baseline";
-pub const LOWER_BOUND_COL: &str = "lower_bound";
-pub const UPPER_BOUND_COL: &str = "upper_bound";
-pub const ANOMALY_COL: &str = "anomaly";
+// Re-export shared column constants from rsod-core
+pub use rsod_core::{TIMESTAMP_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
+pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,13 +105,64 @@ impl Default for BaselineOptions {
 }
 
 
-pub fn baseline_detect(data: &[[f64; 2]], history_data: &[[f64; 2]], options: &BaselineOptions) -> Result<DataFrame, Box<dyn Error>> {
-    // Convert array to DataFrame
-    let df = array_to_dataframe(data);
-    let history_df = array_to_dataframe(history_data);
+pub fn baseline_detect(data: TimeSeriesInput<'_>, history_data: TimeSeriesInput<'_>, options: &BaselineOptions) -> Result<DetectionResult, Box<dyn Error>> {
+    // Convert TimeSeriesInput to internal Polars DataFrames
+    let df = input_to_dataframe(&data);
+    let history_df = input_to_dataframe(&history_data);
     
-    let result = calculate_dynamic_baseline(df, history_df, options)?;
-    Ok(result)
+    let result_df = calculate_dynamic_baseline(df, history_df, options)?;
+    Ok(dataframe_to_result(&result_df)?)
+}
+
+/// Convert TimeSeriesInput to Polars DataFrame (internal bridge).
+fn input_to_dataframe(input: &TimeSeriesInput<'_>) -> DataFrame {
+    let timestamps: Vec<i64> = input.timestamps.iter().map(|&t| (t * 1000.0) as i64).collect();
+    let values: Vec<f64> = input.values.to_vec();
+    DataFrame::new(vec![
+        Series::new(TIMESTAMP_COL.into(), timestamps).into(),
+        Series::new(METRIC_VALUE_COL.into(), values).into(),
+    ]).unwrap()
+}
+
+/// Convert a baseline result DataFrame to DetectionResult (internal bridge).
+fn dataframe_to_result(df: &DataFrame) -> Result<DetectionResult, Box<dyn Error>> {
+    let timestamps: Vec<i64> = df.column(TIMESTAMP_COL)?
+        .i64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(0))
+        .collect();
+
+    let values: Vec<f64> = df.column(BASELINE_VALUE_COL)?
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(f64::NAN))
+        .collect();
+
+    let anomalies: Vec<f64> = df.column(ANOMALY_COL)?
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(f64::NAN))
+        .collect();
+
+    let lower_bound: Vec<f64> = df.column(LOWER_BOUND_COL)?
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(f64::NAN))
+        .collect();
+
+    let upper_bound: Vec<f64> = df.column(UPPER_BOUND_COL)?
+        .f64()?
+        .into_iter()
+        .map(|opt| opt.unwrap_or(f64::NAN))
+        .collect();
+
+    Ok(DetectionResult {
+        timestamps,
+        values,
+        anomalies,
+        upper_bound: Some(upper_bound),
+        lower_bound: Some(lower_bound),
+    })
 }
 
 /// Calculate baseline values and standard deviation for Polars DataFrame using AppDynamics dynamic baseline logic.
@@ -376,6 +424,7 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
     Ok(result)
 }
 
+#[allow(dead_code)]
 fn array_to_dataframe(data: &[[f64; 2]]) -> DataFrame {
     let mut timestamps = Vec::new();
     let mut values = Vec::new();
@@ -666,15 +715,16 @@ mod tests {
 
     // ========== baseline function tests ==========
     
+    /// Helper: load CSV and create OwnedTimeSeries
+    fn load_csv_as_owned(csv_path: &str) -> rsod_core::OwnedTimeSeries {
+        let data: Vec<[f64; 2]> = read_csv_to_vec(csv_path);
+        rsod_core::OwnedTimeSeries::from_pairs(&data)
+    }
+    
     #[test]
     fn test_baseline_function_daily() {
-        // Use CSV files from data directory
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        // Convert to format required by baseline function
-        let data = dataframe_to_array(&df);
-        let history_data = dataframe_to_array(&history_df);
+        let owned = load_csv_as_owned("data/error_rate.csv");
+        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
         
         let options = BaselineOptions {
             trend_type: TrendType::Daily,
@@ -685,41 +735,20 @@ mod tests {
             uuid: "".to_string(),
         };
         
-        let result_df = match baseline_detect(&data, &history_data, &options) {
-            Ok(data) => {
-                data
-            },
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
-            }
+        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("{}", e); return; }
         };
-        assert!(!result_df.is_empty());
-        
-        // Verify result contains necessary columns
-        assert!(result_df.column(TIMESTAMP_COL).is_ok());
-        assert!(result_df.column(BASELINE_VALUE_COL).is_ok());
-        
-        // Verify result is not empty
-        assert!(result_df.height() > 0);
-        
-        // Print first few rows of data
-        if result_df.height() > 0 {
-            println!("First 5 rows of baseline function result:");
-            let first_five = result_df.head(Some(5));
-            println!("{:?}", first_five);
-        }
+        assert!(!result.timestamps.is_empty());
+        assert!(!result.values.is_empty());
+        assert!(result.timestamps.len() > 0);
+        println!("Baseline daily result count: {}", result.timestamps.len());
     }
     
     #[test]
     fn test_baseline_function_weekly() {
-        // Use CSV files from data directory
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        // Convert to format required by baseline function
-        let data = dataframe_to_array(&df);
-        let history_data = dataframe_to_array(&history_df);
+        let owned = load_csv_as_owned("data/error_rate.csv");
+        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
         
         let options = BaselineOptions {
             trend_type: TrendType::Weekly,
@@ -730,34 +759,18 @@ mod tests {
             uuid: "".to_string(),
         };
         
-        let result_df = match baseline_detect(&data, &history_data, &options) {
-            Ok(data) => {
-                data
-            },
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
-            }
+        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("{}", e); return; }
         };
-        assert!(!result_df.is_empty());
-        
-        // Verify result contains necessary columns
-        assert!(result_df.column(TIMESTAMP_COL).is_ok());
-        assert!(result_df.column(BASELINE_VALUE_COL).is_ok());
-        
-        // Verify result is not empty
-        assert!(result_df.height() > 0);
+        assert!(!result.timestamps.is_empty());
+        assert!(!result.values.is_empty());
     }
     
     #[test]
     fn test_baseline_function_monthly() {
-        // Use CSV files from data directory
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        // Convert to format required by baseline function
-        let data = dataframe_to_array(&df);
-        let history_data = dataframe_to_array(&history_df);
+        let owned = load_csv_as_owned("data/error_rate.csv");
+        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
         
         let options = BaselineOptions {
             trend_type: TrendType::Monthly,
@@ -768,35 +781,19 @@ mod tests {
             uuid: "".to_string(),
         };
         
-        let result_df = match baseline_detect(&data, &history_data, &options) {
-            Ok(data) => {
-                data
-            },
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
-            }
+        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("{}", e); return; }
         };
-        assert!(!result_df.is_empty());
-        
-        // Verify result contains necessary columns
-        assert!(result_df.column(TIMESTAMP_COL).is_ok());
-        assert!(result_df.column(BASELINE_VALUE_COL).is_ok());
-        
-        // Verify result is not empty
-        assert!(result_df.height() > 0);
-        println!("Baseline function monthly result: {:?}", result_df.head(Some(5)));
+        assert!(!result.timestamps.is_empty());
+        assert!(!result.values.is_empty());
+        println!("Baseline monthly result count: {}", result.timestamps.len());
     }
     
     #[test]
     fn test_baseline_function_none() {
-        // Use CSV files from data directory
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        // Convert to format required by baseline function
-        let data = dataframe_to_array(&df);
-        let history_data = dataframe_to_array(&history_df);
+        let owned = load_csv_as_owned("data/error_rate.csv");
+        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
         
         let options = BaselineOptions {
             trend_type: TrendType::None,
@@ -807,45 +804,21 @@ mod tests {
             uuid: "".to_string(),
         };
         
-        let result_df = match baseline_detect(&data, &history_data, &options) {
-            Ok(data) => {
-                data
-            },
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
-            }
+        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("{}", e); return; }
         };
-        assert!(!result_df.is_empty());
-        
-        // Verify result contains necessary columns
-        assert!(result_df.column(TIMESTAMP_COL).is_ok());
-        assert!(result_df.column(BASELINE_VALUE_COL).is_ok());
-        
-        // Verify result is not empty
-        assert!(result_df.height() > 0);
+        assert!(!result.timestamps.is_empty());
         
         // For None type, baseline_value should be NaN
-        let baseline_values = result_df.column(BASELINE_VALUE_COL).unwrap();
-        if let Ok(f64_series) = baseline_values.f64() {
-            // Check if NaN values are present
-            let has_nan = f64_series.iter().any(|v| v.map_or(false, |x| x.is_nan()));
-            assert!(has_nan, "None trend type should have NaN baseline values");
-        }
-        
-        // Print first few rows of data
-        if result_df.height() > 0 {
-            println!("First 5 rows of baseline function none result:");
-            let first_five = result_df.head(Some(5));
-            println!("{:?}", first_five);
-        }
+        let has_nan = result.values.iter().any(|v| v.is_nan());
+        assert!(has_nan, "None trend type should have NaN baseline values");
     }
     
     #[test]
     fn test_baseline_function_empty_data() {
-        // Test case with empty data
-        let data: Vec<[f64; 2]> = vec![];
-        let history_data: Vec<[f64; 2]> = vec![];
+        use rsod_core::TimeSeriesInput;
+        let empty_input = TimeSeriesInput::new(&[], &[]);
         
         let options = BaselineOptions {
             trend_type: TrendType::Daily,
@@ -857,21 +830,21 @@ mod tests {
         };
         
         // For empty data, function should return an error
-        let result = baseline_detect(&data, &history_data, &options);
-        
-        // Verify function returns error (because empty data causes error)
+        let result = baseline_detect(empty_input, empty_input, &options);
         assert!(result.is_err(), "Empty data should cause the function to return an error");
     }
     
     #[test]
     fn test_baseline_function_single_data_point() {
-        // Test case with single data point - use first few data points from CSV file
         let df = create_test_dataframe("data/error_rate.csv");
         let history_df = create_test_dataframe("data/error_rate_history.csv");
         
         // Only take first few data points for testing
         let data = dataframe_to_array(&df).into_iter().take(3).collect::<Vec<_>>();
         let history_data = dataframe_to_array(&history_df).into_iter().take(3).collect::<Vec<_>>();
+        
+        let owned = rsod_core::OwnedTimeSeries::from_pairs(&data);
+        let owned_hist = rsod_core::OwnedTimeSeries::from_pairs(&history_data);
         
         let options = BaselineOptions {
             trend_type: TrendType::Daily,
@@ -882,23 +855,12 @@ mod tests {
             uuid: "".to_string(),
         };
         
-        let result_df = match baseline_detect(&data, &history_data, &options) {
-            Ok(data) => {
-                data
-            },
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
-            }
+        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("{}", e); return; }
         };
-        assert!(!result_df.is_empty());
-        
-        // Verify result contains necessary columns
-        assert!(result_df.column(TIMESTAMP_COL).is_ok());
-        assert!(result_df.column(BASELINE_VALUE_COL).is_ok());
-        
-        // Verify result is not empty
-        assert!(result_df.height() > 0);
+        assert!(!result.timestamps.is_empty());
+        assert!(!result.values.is_empty());
     }
 
 }

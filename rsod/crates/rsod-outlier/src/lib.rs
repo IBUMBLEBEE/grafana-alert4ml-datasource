@@ -14,12 +14,12 @@ pub use ext_iforest::{
     iforest, load_iforest_model, predict_with_saved_model, save_iforest_model, EIFOptions,
     SavedIForestModel,
 };
+use rsod_core::{DetectionResult, TimeSeriesInput};
 use serde::{Deserialize, Serialize};
-use polars::prelude::*;
 use std::error::Error;
 
-pub const TIMESTAMP_COL: &str = "time";
-pub const METRIC_VALUE_COL: &str = "value";
+pub use rsod_core::TIMESTAMP_COL;
+pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutlierOptions {
@@ -38,14 +38,20 @@ pub struct OutlierOptions {
 /// * `uuid` - Unique identifier for the model, used for saving and loading models
 ///
 /// Returns outlier scores (0 or 1), where 1 indicates an outlier
-pub fn outlier(data: &[[f64; 2]], periods: &[usize], uuid: &str) -> Result<DataFrame, Box<dyn Error>> {
-    if data.is_empty() {
-        return Err(format!("data is empty").into());
+pub fn outlier(input: TimeSeriesInput<'_>, periods: &[usize], uuid: &str) -> Result<DetectionResult, Box<dyn Error>> {
+    if input.is_empty() {
+        return Err("data is empty".into());
     }
 
-    // let data_filled = fill_nan(data);
-    let time_cols: Vec<i64> = data.iter().map(|x| x[0] as i64).collect();
-    let data_filled_f32: Vec<[f32; 2]> = data.iter().map(|x| [x[0] as f32, x[1] as f32]).collect();
+    // Reconstruct AoS for internal modules that still require it
+    let data: Vec<[f64; 2]> = input.timestamps.iter().zip(input.values.iter())
+        .map(|(&t, &v)| [t, v])
+        .collect();
+
+    let time_cols: Vec<i64> = input.timestamps.iter().map(|&x| x as i64).collect();
+    let data_filled_f32: Vec<[f32; 2]> = input.timestamps.iter().zip(input.values.iter())
+        .map(|(&t, &v)| [t as f32, v as f32])
+        .collect();
 
     // let pvalue = adf(data_filled);
     // if pvalue < STATIONARY_P_VALUE {
@@ -103,40 +109,26 @@ pub fn outlier(data: &[[f64; 2]], periods: &[usize], uuid: &str) -> Result<DataF
         for cp in changepoints {
             outlier_result[cp as usize] = 1.0;
         }
-        let df = match DataFrame::new(vec![
-            Series::new(TIMESTAMP_COL.into(), time_cols).into(),
-            Series::new(METRIC_VALUE_COL.into(), outlier_result).into(),
-        ]) {
-            Ok(df) => {
-                df
-            },
-            Err(e) => {
-                return Err(e.into());
-            },
-        };
-        return Ok(df);
+        return Ok(DetectionResult {
+            timestamps: time_cols,
+            values: input.values.to_vec(),
+            anomalies: outlier_result,
+            upper_bound: None,
+            lower_bound: None,
+        });
     } else {
         // No periodicity, data stationarity is unknown
-        let result = match ensemble_detect(data, uuid) {
-            Ok(v) => {
-                v
-            },
-            Err(e) => {
-                return Err(e.into());
-            }
+        let result = match ensemble_detect(&data, uuid) {
+            Ok(v) => v,
+            Err(e) => return Err(e.into()),
         };
-        let df = match DataFrame::new(vec![
-            Series::new(TIMESTAMP_COL.into(), time_cols).into(),
-            Series::new(METRIC_VALUE_COL.into(), result).into(),
-        ]) {
-            Ok(df) => {
-                df
-            },
-            Err(e) => {
-                return Err(e.into());
-            },
-        };
-        return Ok(df);
+        return Ok(DetectionResult {
+            timestamps: time_cols,
+            values: input.values.to_vec(),
+            anomalies: result,
+            upper_bound: None,
+            lower_bound: None,
+        });
     }
 }
 
@@ -225,6 +217,7 @@ pub fn outlier_threshold(x: &[[f64; 2]], scores: &[f64]) -> Result<Vec<f64>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsod_core::OwnedTimeSeries;
     use rsod_utils::read_csv_to_vec;
 
     #[test]
@@ -232,32 +225,17 @@ mod tests {
         let data: Vec<[f64; 2]> = read_csv_to_vec("data/data.csv");
         let periods: Vec<usize> = vec![];
 
-        let result = outlier(&data, &periods, "test-outlier-uuid").unwrap();
-        assert!(!result.is_empty());
-        
-        // Extract anomaly score column
-        let value_series = result.column("value")
-            .expect("Failed to get 'value' column");
-        
-        // Convert Series to Vec<f64> to access values
-        let res_vec: Vec<f64> = value_series.f64()
-            .expect("Failed to convert 'value' column to f64")
-            .into_iter()
-            .map(|opt| opt.unwrap_or(0.0))
-            .collect();
-        
+        let owned = OwnedTimeSeries::from_pairs(&data);
+        let result = outlier(owned.as_input(), &periods, "test-outlier-uuid").unwrap();
+        assert!(!result.anomalies.is_empty());
+
+        let res_vec = &result.anomalies;
         println!("Outlier scores: {:?}", res_vec);
-        
+
         // Check if there are any outliers (values greater than 0.5)
         let has_outlier = res_vec.iter().any(|&v| v > 0.5);
         assert!(has_outlier, "Expected at least one outlier score > 0.5");
-        
-        // Build outlier data for subsequent analysis
-        let mut outlier_data = Vec::new();
-        for i in 0..res_vec.len() {
-            outlier_data.push([i as f64, res_vec[i]]);
-        }
-        
+
         // Check if the outlier score at index 13 is 1.0
         if res_vec.len() > 13 {
             assert_eq!(res_vec[13], 1.0, "Expected outlier score at index 13 to be 1.0");

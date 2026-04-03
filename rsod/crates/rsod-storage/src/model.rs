@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use rsod_core::{ModelStorage, RsodError};
 use crate::db::{DbBackend, get_backend};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +148,60 @@ impl Model {
     }
 }
 
+/// Global storage backend that delegates to the initialized database.
+///
+/// Uses the same global `DbBackend` as `Model::read` / `Model::write`.
+/// Implements `rsod_core::ModelStorage` so that other crates can
+/// depend only on the trait, not on concrete storage details.
+#[derive(Debug, Clone, Copy)]
+pub struct GlobalStorage;
+
+impl GlobalStorage {
+    pub fn new() -> Self {
+        GlobalStorage
+    }
+}
+
+impl ModelStorage for GlobalStorage {
+    fn save(&self, uuid: &str, artifacts: &[u8]) -> rsod_core::Result<()> {
+        let model = Model::new(uuid.to_string(), artifacts.to_vec());
+        model.write().map_err(|e| RsodError::Storage(e.to_string()))
+    }
+
+    fn load(&self, uuid: &str) -> rsod_core::Result<Option<Vec<u8>>> {
+        let mut model = Model::new(uuid.to_string(), vec![]);
+        model.read().map_err(|e| RsodError::Storage(e.to_string()))?;
+        if model.artifacts.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(model.artifacts))
+        }
+    }
+
+    fn delete(&self, uuid: &str) -> rsod_core::Result<()> {
+        crate::init_db().map_err(|e| RsodError::Storage(e))?;
+        let backend = get_backend();
+        match backend {
+            DbBackend::Sqlite(mutex) => {
+                let db = mutex.lock().map_err(|_| {
+                    RsodError::Storage("Failed to lock SQLite database".into())
+                })?;
+                db.execute("DELETE FROM models WHERE uuid = ?1", [uuid])
+                    .map_err(|e| RsodError::Storage(format!("SQLite delete failed: {}", e)))?;
+            }
+            DbBackend::Postgres(mutex) => {
+                let mut client = mutex.lock().map_err(|_| {
+                    RsodError::Storage("Failed to lock PostgreSQL client".into())
+                })?;
+                client
+                    .execute("DELETE FROM models WHERE uuid = $1", &[&uuid])
+                    .map_err(|e| RsodError::Storage(format!("PostgreSQL delete failed: {}", e)))?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +216,30 @@ mod tests {
         model.read().unwrap();
         assert_eq!(model.uuid, "test");
         assert_eq!(model.artifacts, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_global_storage_trait() {
+        crate::init_db_with_config(true, "").unwrap();
+        let storage = GlobalStorage::new();
+
+        // save
+        storage.save("trait-test", &[10, 20, 30]).unwrap();
+
+        // exists
+        assert!(storage.exists("trait-test").unwrap());
+        assert!(!storage.exists("non-existent").unwrap());
+
+        // load
+        let artifacts = storage.load("trait-test").unwrap();
+        assert_eq!(artifacts, Some(vec![10, 20, 30]));
+
+        // load non-existent
+        let none = storage.load("non-existent").unwrap();
+        assert!(none.is_none());
+
+        // delete
+        storage.delete("trait-test").unwrap();
+        assert!(!storage.exists("trait-test").unwrap());
     }
 }

@@ -1,0 +1,11 @@
+[package]
+name = "rsod-core"
+version = "0.1.2"
+edition = "2021"
+
+[dependencies]
+serde.workspace = true
+thiserror = "2"
+
+[lints]
+workspace = true

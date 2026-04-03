@@ -5,15 +5,11 @@ use std::error::Error;
 use std::io::Write;
 use std::fs;
 use rsod_storage::model::Model;
-use polars::prelude::*;
+use rsod_core::{DetectionResult, TimeSeriesInput};
 use chrono::{DateTime, Datelike, Timelike};
 
-pub const TIMESTAMP_COL: &str = "time";
-pub const VALUE_COL: &str = "value";
-pub const PRED_COL: &str = "pred";
-pub const LOWER_BOUND_COL: &str = "lower_bound";
-pub const UPPER_BOUND_COL: &str = "upper_bound";
-pub const ANOMALY_COL: &str = "anomaly";
+// Re-export shared column constants from rsod-core
+pub use rsod_core::{TIMESTAMP_COL, VALUE_COL, PRED_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForecasterOptions {
@@ -254,104 +250,55 @@ fn moving_std(data: &[f64], window_size: usize) -> Vec<f64> {
     result
 }
 
-fn extract_features(data: &[[f64; 2]], periods: &[usize]) -> Result<(DataFrame, Vec<f64>, usize), Box<dyn Error>> {
+fn extract_features(timestamps: &[f64], values: &[f64], periods: &[usize]) -> (Vec<f64>, Vec<f64>, usize) {
     // Extract time features and statistical features from time series historical data
     // Changed to directly predict absolute values instead of differences, so the model can better learn the relationship between time features and values
     // Ensure data and history_data use the same time feature extraction method (both use extract_time_features function)
     
-    // Extract all values for calculating statistical features and lag features
-    let values: Vec<f64> = data.iter().map(|x| x[1]).collect();
-    
-    // Calculate moving average and moving standard deviation
-    let window_size = 5;
-    let moving_avg = moving_average(&values, window_size);
-    let moving_std_dev = moving_std(&values, window_size);
-    
-    let n_samples = data.len();
+    let n_samples = timestamps.len();
     let n_time_features = 8; // Number of time features: 4 normalized features + 4 periodic features
     let n_stat_features = 2; // Number of statistical features: moving average + moving standard deviation
     let n_lag_features = periods.len(); // Number of lag features: dynamically determined based on periods
     let n_features = n_time_features + n_stat_features + n_lag_features;
+
+    // Calculate moving average and moving standard deviation
+    let window_size = 5;
+    let moving_avg = moving_average(values, window_size);
+    let moving_std_dev = moving_std(values, window_size);
+
     let mut targets = Vec::with_capacity(n_samples);
 
-    // Prepare feature column data
-    let mut hour_norm = Vec::with_capacity(n_samples);
-    let mut day_of_week_norm = Vec::with_capacity(n_samples);
-    let mut day_of_month_norm = Vec::with_capacity(n_samples);
-    let mut month_norm = Vec::with_capacity(n_samples);
-    let mut hour_sin = Vec::with_capacity(n_samples);
-    let mut hour_cos = Vec::with_capacity(n_samples);
-    let mut week_sin = Vec::with_capacity(n_samples);
-    let mut week_cos = Vec::with_capacity(n_samples);
-    let mut moving_avg_col = Vec::with_capacity(n_samples);
-    let mut moving_std_col = Vec::with_capacity(n_samples);
-    
-    // Create lag feature columns for each period
-    let mut lag_cols: Vec<Vec<f64>> = periods.iter().map(|_| Vec::with_capacity(n_samples)).collect();
+    // Build feature columns (column-major order for Matrix)
+    let mut columns: Vec<Vec<f64>> = (0..n_features)
+        .map(|_| Vec::with_capacity(n_samples))
+        .collect();
 
-    for i in 0..data.len() {
-        let curr_value = data[i][1];
-        let timestamp = data[i][0];
-        
-        // Time features: extract from current timestamp
-        let time_features = extract_time_features(timestamp);
-        
-        // Extract individual time features
-        hour_norm.push(time_features[0]);
-        day_of_week_norm.push(time_features[1]);
-        day_of_month_norm.push(time_features[2]);
-        month_norm.push(time_features[3]);
-        hour_sin.push(time_features[4]);
-        hour_cos.push(time_features[5]);
-        week_sin.push(time_features[6]);
-        week_cos.push(time_features[7]);
-        
-        // Statistical features: moving average and moving standard deviation
-        // Now moving_avg and moving_std_dev have the same length as data.len(), directly use index i
-        moving_avg_col.push(moving_avg[i]);
-        moving_std_col.push(moving_std_dev[i]);
-        
-        // Lag features: extract based on periods
-        for (lag_idx, &period) in periods.iter().enumerate() {
-            if i >= period {
-                // If index is large enough, use value from period time points ago
-                lag_cols[lag_idx].push(values[i - period]);
-            } else {
-                // If index is insufficient, use first available value (value at index 0) as padding
-                lag_cols[lag_idx].push(values[0]);
-            }
+    for i in 0..n_samples {
+        let time_features = extract_time_features(timestamps[i]);
+
+        // Time features (8 columns)
+        for j in 0..8 {
+            columns[j].push(time_features[j]);
         }
-        
+
+        // Statistical features (2 columns)
+        columns[8].push(moving_avg[i]);
+        columns[9].push(moving_std_dev[i]);
+
+        // Lag features
+        for (lag_idx, &period) in periods.iter().enumerate() {
+            let lag_val = if i >= period { values[i - period] } else { values[0] };
+            columns[10 + lag_idx].push(lag_val);
+        }
+
         // Target value is current absolute value (not difference)
-        targets.push(curr_value);
+        targets.push(values[i]);
     }
 
-    // Build DataFrame columns
-    let mut df_columns: Vec<Column> = vec![
-        Series::new("hour_norm".into(), hour_norm).into(),
-        Series::new("day_of_week_norm".into(), day_of_week_norm).into(),
-        Series::new("day_of_month_norm".into(), day_of_month_norm).into(),
-        Series::new("month_norm".into(), month_norm).into(),
-        Series::new("hour_sin".into(), hour_sin).into(),
-        Series::new("hour_cos".into(), hour_cos).into(),
-        Series::new("week_sin".into(), week_sin).into(),
-        Series::new("week_cos".into(), week_cos).into(),
-        Series::new("moving_avg".into(), moving_avg_col).into(),
-        Series::new("moving_std".into(), moving_std_col).into(),
-    ];
-    
-    // Add lag feature columns
-    for (lag_idx, &period) in periods.iter().enumerate() {
-        let col_name = format!("lag_{}", period);
-        df_columns.push(Series::new(col_name.into(), lag_cols[lag_idx].clone()).into());
-    }
+    // Flatten to column-major Vec<f64> for perpetual Matrix
+    let flat_features: Vec<f64> = columns.into_iter().flat_map(|c| c).collect();
 
-    // Create Polars DataFrame
-    let df = DataFrame::new(df_columns)?;
-
-    println!("df: {:?}", df);
-
-    Ok((df, targets, n_features))
+    (flat_features, targets, n_features)
 }
 
 /// Calculate residual standard deviation
@@ -382,35 +329,18 @@ fn calculate_residual_std(targets: &[f64], predictions: &[f64]) -> f64 {
 /// * `options` - Forecaster configuration options
 /// 
 /// # Returns
-/// Polars DataFrame, containing the following columns:
-/// - time: Timestamp
-/// - pred: Predicted value
-/// - lower_bound: Lower bound
-/// - upper_bound: Upper bound
-/// - anomaly: Anomaly flag
+/// DetectionResult containing timestamps, predicted values, anomaly flags, and bounds.
 pub fn forecast(
-    data: &[[f64; 2]],
-    history_data: &[[f64; 2]],
+    data: TimeSeriesInput<'_>,
+    history_data: TimeSeriesInput<'_>,
     options: &ForecasterOptions,
-) -> Result<DataFrame, Box<dyn Error>> {
+) -> Result<DetectionResult, Box<dyn Error>> {
     let n_lags = options.n_lags.unwrap_or(24);
     let std_dev_multiplier = options.std_dev_multiplier.unwrap_or(2.0);
     let allow_negative_bounds = options.allow_negative_bounds.unwrap_or(false);
 
-    let (data_features_df, data_targets, data_n_features) = extract_features(data, &options.periods)?;
-    let (history_features_df, history_targets, history_n_features) = extract_features(history_data, &options.periods)?;
-    
-    // Extract feature vectors from DataFrame for creating Matrix
-    // Convert all columns of DataFrame to flattened feature vectors
-    let data_features: Vec<f64> = data_features_df
-        .iter()
-        .flat_map(|s| s.f64().unwrap().into_no_null_iter())
-        .collect();
-    
-    let history_features: Vec<f64> = history_features_df
-        .iter()
-        .flat_map(|s| s.f64().unwrap().into_no_null_iter())
-        .collect();
+    let (data_features, data_targets, data_n_features) = extract_features(data.timestamps, data.values, &options.periods);
+    let (history_features, history_targets, history_n_features) = extract_features(history_data.timestamps, history_data.values, &options.periods);
 
     // Create matrix (created at caller to maintain lifetime)
     let matrix = Matrix::new(&data_features, data.len(), data_n_features);
@@ -422,7 +352,7 @@ pub fn forecast(
             // Calculate residual standard deviation (using training set)
             let pred = model.predict(&matrix, true);
             let residual_std = calculate_residual_std(&data_targets, &pred);
-            return compute_anomaly(&data, &pred, residual_std, std_dev_multiplier, allow_negative_bounds);
+            return Ok(compute_anomaly(data.timestamps, data.values, &pred, residual_std, std_dev_multiplier, allow_negative_bounds));
         }
         // Model doesn't exist, continue training new model
     }
@@ -456,62 +386,53 @@ pub fn forecast(
         ).into());
     }
 
-    let df = compute_anomaly(&data, &pred, residual_std, std_dev_multiplier, allow_negative_bounds)?;
-    Ok(df)
+    Ok(compute_anomaly(data.timestamps, data.values, &pred, residual_std, std_dev_multiplier, allow_negative_bounds))
 }
 
-fn compute_anomaly(data: &[[f64; 2]], pred: &[f64], residual_std: f64, std_dev_multiplier: f64, allow_negative_bounds: bool) -> Result<DataFrame, Box<dyn Error>> {
-    let df = DataFrame::new(vec![
-        Series::new(TIMESTAMP_COL.into(), data.iter().map(|x| x[0]).collect::<Vec<f64>>()).into(),
-        Series::new(VALUE_COL.into(), data.iter().map(|x| x[1]).collect::<Vec<f64>>()).into(),
-        Series::new(PRED_COL.into(), pred).into(),
-    ])?;
+fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_std: f64, std_dev_multiplier: f64, allow_negative_bounds: bool) -> DetectionResult {
+    let n = timestamps.len();
+    let margin = std_dev_multiplier * residual_std;
 
-    // Step 1: Add upper and lower bound columns
-    let df = df.lazy().with_columns([
-        {
-            let lower_bound_expr = col(PRED_COL) - lit(std_dev_multiplier * residual_std);
-            // If negative values are not allowed, limit lower bound to 0
-            if allow_negative_bounds {
-                lower_bound_expr.alias(LOWER_BOUND_COL)
-            } else {
-                when(lower_bound_expr.clone().lt(lit(0.0)))
-                    .then(lit(0.0))
-                    .otherwise(lower_bound_expr)
-                    .alias(LOWER_BOUND_COL)
-            }
-        },
-        // Calculate upper bound: pred + std_dev_multiplier * residual_std
-        (col(PRED_COL) + lit(std_dev_multiplier * residual_std))
-            .alias(UPPER_BOUND_COL),
-    ]).collect()?;
+    let mut result_timestamps = Vec::with_capacity(n);
+    let mut result_values = Vec::with_capacity(n);
+    let mut anomalies = Vec::with_capacity(n);
+    let mut upper = Vec::with_capacity(n);
+    let mut lower = Vec::with_capacity(n);
 
-    // Step 2: Add anomaly column (can now reference the created upper and lower bound columns)
-    let df = df.lazy().with_columns([
-        when(
-            col(VALUE_COL).lt(col(LOWER_BOUND_COL))
-                .or(col(VALUE_COL).gt(col(UPPER_BOUND_COL)))
-        )
-            .then(col(VALUE_COL))
-            .otherwise(lit(f64::NAN))
-            .alias(ANOMALY_COL),
-    ]).collect()?;
+    for i in 0..n {
+        result_timestamps.push(timestamps[i] as i64);
+        result_values.push(pred[i]);
 
-    let df = df.lazy().select([
-        col(TIMESTAMP_COL),
-        col(PRED_COL),
-        col(LOWER_BOUND_COL),
-        col(UPPER_BOUND_COL),
-        col(ANOMALY_COL),
-    ]).collect()?;
+        let ub = pred[i] + margin;
+        let lb = if allow_negative_bounds {
+            pred[i] - margin
+        } else {
+            (pred[i] - margin).max(0.0)
+        };
+        upper.push(ub);
+        lower.push(lb);
 
-    Ok(df)
+        if values[i] < lb || values[i] > ub {
+            anomalies.push(values[i]); // anomalous: use original value
+        } else {
+            anomalies.push(f64::NAN); // normal: NaN (compatible with Golang math.NaN)
+        }
+    }
+
+    DetectionResult {
+        timestamps: result_timestamps,
+        values: result_values,
+        anomalies,
+        upper_bound: Some(upper),
+        lower_bound: Some(lower),
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsod_core::OwnedTimeSeries;
     use rsod_utils::read_csv_to_vec;
 
     #[test]
@@ -532,25 +453,23 @@ mod tests {
             allow_negative_bounds: Some(false),
         };
         
+        let owned_current = OwnedTimeSeries::from_pairs(&current_data);
+        let owned_history = OwnedTimeSeries::from_pairs(&history_data);
+        
         // Predict current_data.len() values
-        let result = forecast(&current_data, &history_data, &options);
+        let result = forecast(owned_current.as_input(), owned_history.as_input(), &options);
         println!("result: {:?}", result);
         assert!(result.is_ok());
-        let df = result.unwrap();
+        let det = result.unwrap();
         
-        // Verify DataFrame columns and row count
-        assert_eq!(df.width(), 5); // time, pred, lower_bound, upper_bound, anomaly
-        assert_eq!(df.height(), current_data.len());
+        // Verify DetectionResult fields
+        assert_eq!(det.timestamps.len(), current_data.len());
+        assert_eq!(det.values.len(), current_data.len());
+        assert_eq!(det.anomalies.len(), current_data.len());
+        assert!(det.upper_bound.is_some());
+        assert!(det.lower_bound.is_some());
+        assert_eq!(det.upper_bound.as_ref().unwrap().len(), current_data.len());
         
-        // Verify column names
-        let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-        assert!(columns.contains(&TIMESTAMP_COL.to_string()));
-        assert!(columns.contains(&PRED_COL.to_string()));
-        assert!(columns.contains(&LOWER_BOUND_COL.to_string()));
-        assert!(columns.contains(&UPPER_BOUND_COL.to_string()));
-        assert!(columns.contains(&ANOMALY_COL.to_string()));
-        
-        println!("DataFrame shape: {}x{}", df.height(), df.width());
-        println!("DataFrame columns: {:?}", df.head(Some(10)));
+        println!("DetectionResult timestamps count: {}", det.timestamps.len());
     }
 }

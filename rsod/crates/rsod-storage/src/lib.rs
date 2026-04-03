@@ -1,6 +1,8 @@
 pub mod model;
 pub mod db;
 
+pub use model::GlobalStorage;
+
 use std::sync::{Mutex, OnceLock};
 
 use crate::db::{DbBackend, init_sqlite, init_postgres};

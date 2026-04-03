@@ -4,6 +4,7 @@ version = "0.1.2"
 edition = "2021"
 
 [dependencies]
+rsod-core = { workspace = true }
 rsod-outlier = { workspace = true }
 rsod-forecaster = { workspace = true }
 rsod-baseline = { workspace = true }

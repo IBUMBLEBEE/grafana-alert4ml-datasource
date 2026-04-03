@@ -5,13 +5,12 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2.172"
+rsod-core = { workspace = true }
 rsod-outlier = { workspace = true }
 rsod-forecaster = { workspace = true }
 rsod-baseline = { workspace = true }
 rsod-storage = { workspace = true }
 rsod-utils = { workspace = true }
-polars.workspace = true
-polars-arrow.workspace = true
 csv.workspace = true
 chrono.workspace = true
 arrow.workspace = true

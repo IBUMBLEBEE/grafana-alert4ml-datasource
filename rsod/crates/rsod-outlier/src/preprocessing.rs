@@ -74,18 +74,16 @@ mod tests {
 
     #[test]
     fn test_fill_nan_basic() {
-        let data = vec![[1.0, f64::NAN], [2.0, f64::NAN], [3.0, 2.0]];
+        // Linear interpolation needs non-NaN anchors on both sides.
+        // Leading NaNs cannot be interpolated and stay NaN.
+        let data = vec![[1.0, 1.0], [2.0, f64::NAN], [3.0, 3.0]];
         let filled = fill_nan(&data);
-        
-        // Check that first and last values remain unchanged
+
         assert_eq!(filled[0][1], 1.0);
-        assert_eq!(filled[2][1], 2.0);
-        
-        // Check that middle values are filled by interpolation
+        assert_eq!(filled[2][1], 3.0);
+        // Middle value should be interpolated
         assert!(!filled[1][1].is_nan());
-        assert!(!filled[2][1].is_nan());
-        assert!(filled[1][1] > 1.0 && filled[1][1] < 2.0);
-        assert!(filled[2][1] > 1.0 && filled[2][1] < 2.0);
+        assert!(filled[1][1] > 1.0 && filled[1][1] < 3.0);
     }
 
     #[test]
@@ -100,7 +98,10 @@ mod tests {
         let data = vec![[1.0, f64::NAN], [2.0, f64::NAN], [3.0, f64::NAN]];
         let filled = fill_nan(&data);
         // If all values are NaN, they should remain NaN after interpolation
-        assert_eq!(filled, data);
+        // NaN != NaN in IEEE 754, so check element-wise with is_nan()
+        for p in &filled {
+            assert!(p[1].is_nan());
+        }
     }
 
     #[test]
