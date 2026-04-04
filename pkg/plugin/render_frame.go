@@ -188,3 +188,16 @@ func removeAnomalyField(df *data.Frame) {
 	}
 	df.Fields = fields
 }
+
+// removeNonAnomalyFields keeps only Time and Anomaly fields, removing baseline/bounds/forecast etc.
+func removeNonAnomalyFields(df *data.Frame) {
+	fields := make([]*data.Field, 0, len(df.Fields))
+	for _, field := range df.Fields {
+		name := field.Name
+		if name == constant.GF_FRAME_RESULT_NAME_TIME || field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime ||
+			name == constant.GF_FRAME_RESULT_NAME_ANOMALY || name == "anomaly" {
+			fields = append(fields, field)
+		}
+	}
+	df.Fields = fields
+}
