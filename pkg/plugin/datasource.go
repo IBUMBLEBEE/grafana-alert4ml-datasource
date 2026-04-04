@@ -129,8 +129,10 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 						return nil, err
 					}
 
-					newframe := newDataFrameFromeResult(f, constant.DetectTypeOutlier, constant.GF_FRAME_RESULT_NAME_ANOMALY, selfRefID, resultOutlier)
-					newframes = append(newframes, newframe)
+					if queryJson.ShowAnomalyPoints {
+						newframe := newDataFrameFromeResult(f, constant.DetectTypeOutlier, constant.GF_FRAME_RESULT_NAME_ANOMALY, selfRefID, resultOutlier)
+						newframes = append(newframes, newframe)
+					}
 
 				case constant.SupportDetectTypeBaseline:
 					options := rsod.BaselineOptions{
@@ -161,6 +163,9 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 
 					newframe := RenderFrameWithBaseline(resultBaselineDF, selfRefID)
+					if !queryJson.ShowAnomalyPoints {
+						removeAnomalyField(newframe)
+					}
 					newframes = append(newframes, newframe)
 
 				case constant.DetectTypeForecast:
@@ -201,15 +206,14 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 						return nil, err
 					}
 					newframe := RenderFrameWithForecast(resultForecastDF, selfRefID, f.Name)
+					if !queryJson.ShowAnomalyPoints {
+						removeAnomalyField(newframe)
+					}
 					newframes = append(newframes, newframe)
 				}
 			}
 			existingResponse := rsp.Responses[selfRefID]
-			if queryJson.ShowOriginalData {
-				existingResponse.Frames = append(existingResponse.Frames, newframes...)
-			} else {
-				existingResponse.Frames = newframes
-			}
+			existingResponse.Frames = append(existingResponse.Frames, newframes...)
 			newResponses.Responses[selfRefID] = existingResponse
 		}
 	}

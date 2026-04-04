@@ -111,7 +111,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
     detectType = Alert4MLDetectType.Outlier,
-    showOriginalData = false, showAnomalyPoints = false,
+    showAnomalyPoints = true,
     hyperParams = DEFAULT_RSOD_PARAMS,
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
@@ -146,7 +146,6 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       onChange({...query, 
         supportDetect: supportDetect || Alert4MLSupportDetect.MachineLearning,
         detectType: detectType || Alert4MLDetectType.Outlier,
-        showOriginalData: showOriginalData || false,
         hyperParams: hyperParams || DEFAULT_RSOD_PARAMS,
         historyTimeRange: historyTimeRange,
         uniqueKeys: newUniqueKeys,
@@ -218,12 +217,6 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   const onShowAnomalyPointsChange = (checked: boolean) => {
     if (typeof checked === 'boolean') {
       runDebouncedQueryWithTempTargets({ showAnomalyPoints: checked });
-    }
-  };
-
-  const onShowOriginalDataChange = (checked: boolean) => {
-    if (typeof checked === 'boolean') {
-      runDebouncedQueryWithTempTargets({ showOriginalData: checked });
     }
   };
 
@@ -309,12 +302,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           value={showAnomalyPoints || false}
           onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
         />
-        <InlineSwitch
-          label="Show Original Data"
-          showLabel={true}
-          value={showOriginalData || false}
-          onChange={(e) => e && onShowOriginalDataChange(e.currentTarget.checked)}
-        />
+
       </Stack>
       <Stack gap={0}>
         <Collapse

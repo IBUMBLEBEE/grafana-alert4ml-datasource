@@ -117,7 +117,6 @@ func createTestRequest() *backend.QueryDataRequest {
 					"maxDataPoints": 43200,
 					"refId": "B",
 					"seriesRefId": "A",
-					"showOriginalData": false,
 					"supportDetect": "machine_learning",
 					"targets": [{
 						"datasource": {"type": "prometheus", "uid": "fekd6mryd46pse"},
@@ -151,7 +150,6 @@ func CreateOutlierDetectionRequest() *backend.QueryDataRequest {
 		"historyTimeRange": {"from": 300, "to": 0},
 		"hyperParams": {"modelName": "rsod_model", "periods": ""},
 		"seriesRefId": "A",
-		"showOriginalData": true,
 		"supportDetect": "machine_learning",
 		"targets": [{
 			"datasource": {"type": "prometheus", "uid": "fekd6mryd46pse"},
