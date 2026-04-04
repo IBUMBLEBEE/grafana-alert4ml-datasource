@@ -41,8 +41,10 @@ bool baseline_fit_predict(FFI_ArrowSchema *data_schema,
 /**
  * FFI 函数：初始化数据库
  * 供 Go 代码在启动时显式调用
+ * - `trial_mode = true`: 使用 SQLite 内存数据库（试用模式）
+ * - `trial_mode = false`: 使用 PostgreSQL（生产模式，需要有效的 pg_dsn）
  */
-bool rsod_storage_init(void);
+bool rsod_storage_init(bool trial_mode, const char *pg_dsn);
 
 bool rsod_forecaster(FFI_ArrowSchema *data_schema,
                      FFI_ArrowArray *data_array,

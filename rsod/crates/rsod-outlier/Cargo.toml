@@ -4,6 +4,7 @@ version = "0.1.2"
 edition = "2021"
 
 [dependencies]
+rsod-core.workspace = true
 ndarray.workspace = true
 rand.workspace = true
 statrs.workspace = true
@@ -20,8 +21,6 @@ num-complex.workspace = true
 chrono.workspace = true
 stlrs.workspace = true
 itertools.workspace = true
-polars.workspace = true
-polars-arrow.workspace = true
 
 rsod-utils.workspace = true
 rsod-storage.workspace = true

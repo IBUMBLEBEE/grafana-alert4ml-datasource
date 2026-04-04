@@ -5,6 +5,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
+rsod-core = { path = "crates/rsod-core", version="0.1.2" }
 rsod-outlier = { path = "crates/rsod-outlier", version="0.1.2" }
 rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.2" }
 rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }

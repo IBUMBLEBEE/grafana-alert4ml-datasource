@@ -17,7 +17,6 @@ type Alert4MLQueryJson struct {
 	SeriesRefId       string            `json:"seriesRefId"`
 	HyperParams       json.RawMessage   `json:"hyperParams"`
 	Targets           []json.RawMessage `json:"targets,omitempty"`
-	ShowOriginalData  bool              `json:"showOriginalData"`
 	ShowAnomalyPoints bool              `json:"showAnomalyPoints"`
 	HistoryTimeRange  HistoryTimeRange  `json:"historyTimeRange"`
 	UniqueKeys        UniqueKeys        `json:"uniqueKeys"`

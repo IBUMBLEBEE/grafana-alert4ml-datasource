@@ -177,3 +177,14 @@ func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *d
 	}
 	return df
 }
+
+// removeAnomalyField removes the anomaly field from a data.Frame in place.
+func removeAnomalyField(df *data.Frame) {
+	fields := make([]*data.Field, 0, len(df.Fields))
+	for _, field := range df.Fields {
+		if field.Name != constant.GF_FRAME_RESULT_NAME_ANOMALY && field.Name != "anomaly" {
+			fields = append(fields, field)
+		}
+	}
+	df.Fields = fields
+}

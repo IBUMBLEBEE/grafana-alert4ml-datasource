@@ -4,12 +4,12 @@ version = "0.1.2"
 edition = "2021"
 
 [dependencies]
+rsod-core.workspace = true
 rsod-utils.workspace = true
 serde.workspace = true
 perpetual.workspace = true
 rsod-storage.workspace = true
 chrono.workspace = true
-polars.workspace = true
 
 [lints]
 workspace = true

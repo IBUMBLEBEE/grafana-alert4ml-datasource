@@ -1,99 +1,44 @@
 use arrow::array::{Array, Float64Array, Int64Array, StructArray};
 use arrow::datatypes::{DataType, Field};
 use arrow::ffi::{from_ffi, to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
-use polars::frame::DataFrame;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::sync::Arc;
 
-use rsod_storage::init_db;
+use rsod_core::{
+    DetectionResult, ANOMALY_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, PRED_COL, TIMESTAMP_COL,
+    UPPER_BOUND_COL,
+};
+use rsod_storage::init_db_with_config;
 use rsod_outlier::{outlier, OutlierOptions};
-use rsod_baseline::baseline_detect;
-use rsod_baseline::BaselineOptions;
-use rsod_baseline::{TIMESTAMP_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
-use rsod_forecaster::{forecast, ForecasterOptions, PRED_COL};
+use rsod_baseline::{baseline_detect, BaselineOptions};
+use rsod_forecaster::{forecast, ForecasterOptions};
 
-pub type Size = usize;
-pub type Float64 = f64;
-pub type Bool = bool;
+// ── FFI helpers ──────────────────────────────────────────────────────
 
-#[no_mangle]
-pub extern "C" fn outlier_fit_predict(
-    data_schema: *mut FFI_ArrowSchema,
-    data_array: *mut FFI_ArrowArray,
-    _options_json: *const c_char,
+/// Import an Arrow StructArray from raw FFI pointers. Returns `None` on null pointers or decode failure.
+fn import_ffi_struct_array(
+    schema: *mut FFI_ArrowSchema,
+    array: *mut FFI_ArrowArray,
+) -> Option<StructArray> {
+    if array.is_null() || schema.is_null() {
+        return None;
+    }
+    let array_data = unsafe {
+        let arr = FFI_ArrowArray::from_raw(array);
+        let sch = FFI_ArrowSchema::from_raw(schema);
+        from_ffi(arr, &sch).ok()?
+    };
+    Some(StructArray::from(array_data))
+}
+
+/// Export an Arrow StructArray into raw FFI output pointers. Returns `false` on failure.
+fn export_ffi_result(
+    struct_array: StructArray,
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
 ) -> bool {
-    if data_array.is_null() || data_schema.is_null() {
-        return false;
-    }
-
-    let array_data = unsafe {
-        let array_ref = FFI_ArrowArray::from_raw(data_array);
-        let schema_ref = FFI_ArrowSchema::from_raw(data_schema);
-        // 从 Arrow FFI 转换为 ArrayData，解析输入的时序数据
-        // from_ffi(array_ref, &schema_ref).unwrap()
-        match from_ffi(array_ref, &schema_ref) {
-            Ok(data) => data,
-            Err(_) => {
-                return false;
-            }
-        }
-    };
-
-    let struct_array = StructArray::from(array_data);
-    let data_vec = struct_array_to_vec_array2(&struct_array);
-
-    // 解析 options
-    let options_json = unsafe { CStr::from_ptr(_options_json) };
-    let opts: OutlierOptions =
-        serde_json::from_str(options_json.to_str().unwrap()).expect("JSON parsing failed");
-
-    // 调用 outlier 函数
-    let outlier_result = match outlier(&data_vec, &opts.periods, &opts.uuid) {
-        Ok(result) => result,
-        Err(_) => {
-            return false;
-        }
-    };
-
-
-
-    // 获取col1，与 outlier_result 合并创建新的 StructArray
-    let new_col_ts = struct_array
-        .column(0)
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap()
-        .clone();
-
-    // 如果 outlier_result 是 polars::DataFrame，取 "value" 列并转换为 Arrow Float64Array
-    let new_col_outlier = {
-        // 假设 outlier_result 是 polars::prelude::DataFrame
-        let series = outlier_result
-            .column("value")
-            .expect("missing column 'value'");
-        let ca = series.f64().expect("column 'value' is not f64");
-        // ca.into_iter() -> Iterator<Item = Option<f64>>
-        Float64Array::from_iter(ca.into_iter())
-    };
-
-    let new_struct = StructArray::from(vec![
-        (
-            std::sync::Arc::new(Field::new("time", DataType::Float64, false)),
-            std::sync::Arc::new(new_col_ts) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new("value", DataType::Float64, false)),
-            std::sync::Arc::new(new_col_outlier) as std::sync::Arc<dyn Array>,
-        ),
-    ]);
-
-    // 导出 FFI 给 Go
-    // let (out_array_ffi, out_schema_ffi) = to_ffi(&new_struct.into_data()).unwrap();
-
-    // 导出到 FFI
-    match to_ffi(&new_struct.into_data()) {
+    match to_ffi(&struct_array.into_data()) {
         Ok((out_array, out_schema)) => {
             unsafe {
                 *result_array = out_array;
@@ -105,6 +50,129 @@ pub extern "C" fn outlier_fit_predict(
     }
 }
 
+/// Parse a JSON C-string into a typed options struct. Returns `None` on null/invalid input.
+fn parse_json_options<T: serde::de::DeserializeOwned>(json_ptr: *const c_char) -> Option<T> {
+    if json_ptr.is_null() {
+        return None;
+    }
+    let c_str = unsafe { CStr::from_ptr(json_ptr) };
+    serde_json::from_str(c_str.to_str().ok()?).ok()
+}
+
+/// Build a 5-column StructArray from a `DetectionResult`.
+///
+/// - `value_col_name`: column name for the values (e.g. `BASELINE_VALUE_COL` or `PRED_COL`).
+/// - `timestamp_as_f64`: when `true`, timestamps are stored as `Float64`; otherwise as `Int64`.
+fn detection_result_to_struct(
+    det: &DetectionResult,
+    value_col_name: &str,
+    timestamp_as_f64: bool,
+) -> StructArray {
+    let ts_field: Arc<Field>;
+    let ts_col: Arc<dyn Array>;
+    if timestamp_as_f64 {
+        ts_field = Arc::new(Field::new(TIMESTAMP_COL, DataType::Float64, false));
+        ts_col = Arc::new(Float64Array::from(
+            det.timestamps.iter().map(|&t| t as f64).collect::<Vec<f64>>(),
+        ));
+    } else {
+        ts_field = Arc::new(Field::new(TIMESTAMP_COL, DataType::Int64, false));
+        ts_col = Arc::new(Int64Array::from(det.timestamps.clone()));
+    }
+
+    StructArray::from(vec![
+        (ts_field, ts_col),
+        (
+            Arc::new(Field::new(value_col_name, DataType::Float64, true)),
+            Arc::new(Float64Array::from(nan_to_option(&det.values))) as Arc<dyn Array>,
+        ),
+        (
+            Arc::new(Field::new(LOWER_BOUND_COL, DataType::Float64, true)),
+            Arc::new(Float64Array::from(nan_to_option(
+                det.lower_bound.as_deref().unwrap_or(&[]),
+            ))) as Arc<dyn Array>,
+        ),
+        (
+            Arc::new(Field::new(UPPER_BOUND_COL, DataType::Float64, true)),
+            Arc::new(Float64Array::from(nan_to_option(
+                det.upper_bound.as_deref().unwrap_or(&[]),
+            ))) as Arc<dyn Array>,
+        ),
+        (
+            Arc::new(Field::new(ANOMALY_COL, DataType::Float64, true)),
+            Arc::new(Float64Array::from(nan_to_option(&det.anomalies))) as Arc<dyn Array>,
+        ),
+    ])
+}
+
+#[no_mangle]
+pub extern "C" fn outlier_fit_predict(
+    data_schema: *mut FFI_ArrowSchema,
+    data_array: *mut FFI_ArrowArray,
+    _options_json: *const c_char,
+    result_schema: *mut FFI_ArrowSchema,
+    result_array: *mut FFI_ArrowArray,
+) -> bool {
+    let struct_array = match import_ffi_struct_array(data_schema, data_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let input = struct_array_to_input(&struct_array);
+
+    let opts: OutlierOptions = match parse_json_options(_options_json) {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let det = match outlier(input.as_input(), &opts.periods, &opts.uuid) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+
+    // Outlier output uses a simpler 2-column format: {time: f64, value: f64}
+    let new_struct = StructArray::from(vec![
+        (
+            Arc::new(Field::new("time", DataType::Float64, false)),
+            Arc::new(Float64Array::from(
+                det.timestamps.iter().map(|&t| t as f64).collect::<Vec<f64>>(),
+            )) as Arc<dyn Array>,
+        ),
+        (
+            Arc::new(Field::new("value", DataType::Float64, false)),
+            Arc::new(Float64Array::from(det.anomalies)) as Arc<dyn Array>,
+        ),
+    ]);
+
+    export_ffi_result(new_struct, result_schema, result_array)
+}
+
+/// Extract zero-copy column slices from Arrow StructArray into an OwnedTimeSeries.
+/// The Arrow Float64Array::values() provides the underlying &[f64] buffers.
+fn struct_array_to_input(struct_array: &StructArray) -> rsod_core::OwnedTimeSeries {
+    let col1 = struct_array
+        .column(0)
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    let col2 = struct_array
+        .column(1)
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+
+    rsod_core::OwnedTimeSeries {
+        timestamps: col1.values().to_vec(),
+        values: col2.values().to_vec(),
+    }
+}
+
+/// Convert f64 slice to Option<f64> for Arrow nullable columns (NaN → None).
+fn nan_to_option(data: &[f64]) -> Vec<Option<f64>> {
+    data.iter().map(|&v| if v.is_nan() { None } else { Some(v) }).collect()
+}
+
+/// Legacy helper — kept for FFI tests that still construct Vec<[f64; 2]>.
+#[allow(dead_code)]
 fn struct_array_to_vec_array2(struct_array: &StructArray) -> Vec<[f64; 2]> {
     let col1 = struct_array
         .column(0)
@@ -134,134 +202,50 @@ extern "C" fn baseline_fit_predict(
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
 ) -> bool {
-    if data_array.is_null() || data_schema.is_null() {
-        return false;
-    }
+    let data_struct = match import_ffi_struct_array(data_schema, data_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let data_input = struct_array_to_input(&data_struct);
 
-    let array_data = unsafe {
-        let array_ref = FFI_ArrowArray::from_raw(data_array);
-        let schema_ref = FFI_ArrowSchema::from_raw(data_schema);
-        match from_ffi(array_ref, &schema_ref) {
-            Ok(data) => data,
-            Err(_) => {
-                return false;
-            }
-        }
+    let history_struct = match import_ffi_struct_array(history_schema, history_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let history_input = struct_array_to_input(&history_struct);
+
+    let opts: BaselineOptions = match parse_json_options(_options_json) {
+        Some(o) => o,
+        None => return false,
     };
 
-    let struct_array = StructArray::from(array_data);
-    let data_vec = struct_array_to_vec_array2(&struct_array);
-
-    let history_array_data = unsafe {
-
-        let array_ref = FFI_ArrowArray::from_raw(history_array);
-        let schema_ref = FFI_ArrowSchema::from_raw(history_schema);
-        match from_ffi(array_ref, &schema_ref) {
-            Ok(data) => data,
-            Err(_) => {
-                return false;
-            }
-        }
+    let det = match baseline_detect(data_input.as_input(), history_input.as_input(), &opts) {
+        Ok(r) => r,
+        Err(_) => return false,
     };
 
-    let history_struct_array = StructArray::from(history_array_data);
-    let history_data_vec = struct_array_to_vec_array2(&history_struct_array);
-
-    let options_json = unsafe { CStr::from_ptr(_options_json) };
-    let opts: BaselineOptions =
-        serde_json::from_str(options_json.to_str().unwrap()).expect("JSON parsing failed");
-
-    let baseline_df: DataFrame = baseline_detect(&data_vec, &history_data_vec , &opts).unwrap();
-
-    // 从 Polars DataFrame 中提取各列数据
-    let timestamps_series = baseline_df.column(TIMESTAMP_COL).expect("missing timestamp column");
-    let baseline_series = baseline_df.column(BASELINE_VALUE_COL).expect("missing baseline column");
-    let lower_bound_series = baseline_df.column(LOWER_BOUND_COL).expect("missing lower_bound column");
-    let upper_bound_series = baseline_df.column(UPPER_BOUND_COL).expect("missing upper_bound column");
-    let anomaly_series = baseline_df.column(ANOMALY_COL).expect("missing anomaly column");
-
-    // 从 Polars Series 提取数据
-    let timestamps_values: Vec<i64> = timestamps_series
-        .i64()
-        .expect("timestamp column is not i64")
-        .into_iter()
-        .map(|opt| opt.unwrap_or(0))
-        .collect();
-    
-    let baseline_values: Vec<Option<f64>> = baseline_series
-        .f64()
-        .expect("baseline column is not f64")
-        .into_iter()
-        .collect();
-    
-    let lower_bound_values: Vec<Option<f64>> = lower_bound_series
-        .f64()
-        .expect("lower_bound column is not f64")
-        .into_iter()
-        .collect();
-    
-    let upper_bound_values: Vec<Option<f64>> = upper_bound_series
-        .f64()
-        .expect("upper_bound column is not f64")
-        .into_iter()
-        .collect();
-    
-    let anomaly_values: Vec<Option<f64>> = anomaly_series
-        .f64()
-        .expect("anomaly column is not f64")
-        .into_iter()
-        .collect();
-    
-    // 创建数组
-    let new_col_timestamp = Int64Array::from(timestamps_values);
-    let new_col_baseline = Float64Array::from(baseline_values);
-    let new_col_lower_bound = Float64Array::from(lower_bound_values);
-    let new_col_upper_bound = Float64Array::from(upper_bound_values);
-    let new_col_anomaly = Float64Array::from(anomaly_values);
-    // 创建包含多列的 StructArray
-    let new_struct = StructArray::from(vec![
-        (
-            std::sync::Arc::new(Field::new(TIMESTAMP_COL, DataType::Int64, false)),
-            std::sync::Arc::new(new_col_timestamp) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(BASELINE_VALUE_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_baseline) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(LOWER_BOUND_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_lower_bound) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(UPPER_BOUND_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_upper_bound) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(ANOMALY_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_anomaly) as std::sync::Arc<dyn Array>,
-        ),
-    ]);
-
-    match to_ffi(&new_struct.into_data()) {
-        Ok((out_array, out_schema)) => {
-            unsafe {
-                *result_array = out_array;
-                *result_schema = out_schema;
-            }
-            true
-        }
-        Err(_) => false,
-    }
+    let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
+    export_ffi_result(out, result_schema, result_array)
 }
 
 /// FFI 函数：初始化数据库
 /// 供 Go 代码在启动时显式调用
+/// - `trial_mode = true`: 使用 SQLite 内存数据库（试用模式）
+/// - `trial_mode = false`: 使用 PostgreSQL（生产模式，需要有效的 pg_dsn）
 #[no_mangle]
-pub extern "C" fn rsod_storage_init() -> bool {
+pub extern "C" fn rsod_storage_init(trial_mode: bool, pg_dsn: *const c_char) -> bool {
     // 使用 catch_unwind 捕获可能的 panic，避免插件崩溃
     let result = std::panic::catch_unwind(|| {
-        // 调用 init_db，它会处理所有初始化逻辑
-        match init_db() {
+        let dsn = if pg_dsn.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(pg_dsn) }
+                .to_str()
+                .unwrap_or("")
+                .to_string()
+        };
+
+        match init_db_with_config(trial_mode, &dsn) {
             Ok(_) => true,
             Err(e) => {
                 eprintln!("Failed to initialize database: {:?}", e);
@@ -289,186 +273,43 @@ pub extern "C" fn rsod_forecaster(
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
 ) -> bool {
-    if data_array.is_null() || data_schema.is_null() {
-        return false;
-    }
+    let data_struct = match import_ffi_struct_array(data_schema, data_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let data_input = struct_array_to_input(&data_struct);
 
-    let array_data = unsafe {
-        let array_ref = FFI_ArrowArray::from_raw(data_array);
-        let schema_ref = FFI_ArrowSchema::from_raw(data_schema);
-        match from_ffi(array_ref, &schema_ref) {
-            Ok(data) => data,
-            Err(_) => {
-                return false;
-            }
-        }
+    let history_struct = match import_ffi_struct_array(history_schema, history_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let history_input = struct_array_to_input(&history_struct);
+
+    let opts: ForecasterOptions = match parse_json_options(_options_json) {
+        Some(o) => o,
+        None => return false,
     };
 
-    let struct_array = StructArray::from(array_data);
-    let data_vec = struct_array_to_vec_array2(&struct_array);
-
-    // 解析历史数据
-    if history_array.is_null() || history_schema.is_null() {
-        return false;
-    }
-
-    let history_array_data = unsafe {
-        let array_ref = FFI_ArrowArray::from_raw(history_array);
-        let schema_ref = FFI_ArrowSchema::from_raw(history_schema);
-        match from_ffi(array_ref, &schema_ref) {
-            Ok(data) => data,
-            Err(_) => {
-                return false;
-            }
-        }
-    };
-
-    let history_struct_array = StructArray::from(history_array_data);
-    let history_data_vec = struct_array_to_vec_array2(&history_struct_array);
-
-    let options_json = unsafe { CStr::from_ptr(_options_json) };
-    let opts: ForecasterOptions =
-        serde_json::from_str(options_json.to_str().unwrap()).expect("JSON parsing failed");
-
-    // 调用 forecast 函数，返回 DataFrame
-    let forecaster_df = match forecast(&data_vec, &history_data_vec, &opts) {
-        Ok(df) => df,
-        Err(_) => {
-            return false;
-        }
-    };
-
-    // 从 DataFrame 中提取各列
-    let timestamp_col = match forecaster_df.column(TIMESTAMP_COL) {
-        Ok(col) => match col.f64() {
-            Ok(f64_col) => f64_col,
-            Err(_) => return false,
-        },
-        Err(_) => return false,
-    };
-    
-    let pred_col = match forecaster_df.column(PRED_COL) {
-        Ok(col) => match col.f64() {
-            Ok(f64_col) => f64_col,
-            Err(_) => return false,
-        },
-        Err(_) => return false,
-    };
-    
-    let lower_bound_col = match forecaster_df.column(LOWER_BOUND_COL) {
-        Ok(col) => match col.f64() {
-            Ok(f64_col) => f64_col,
-            Err(_) => return false,
-        },
-        Err(_) => return false,
-    };
-    
-    let upper_bound_col = match forecaster_df.column(UPPER_BOUND_COL) {
-        Ok(col) => match col.f64() {
-            Ok(f64_col) => f64_col,
-            Err(_) => return false,
-        },
-        Err(_) => return false,
-    };
-    
-    let anomaly_col = match forecaster_df.column(ANOMALY_COL) {
-        Ok(col) => match col.f64() {
-            Ok(f64_col) => f64_col,
-            Err(_) => return false,
-        },
+    let det = match forecast(data_input.as_input(), history_input.as_input(), &opts) {
+        Ok(r) => r,
         Err(_) => return false,
     };
 
-    // 提取数据并转换为 Option<f64>（处理 NaN）
-    let timestamp_values: Vec<f64> = (0..timestamp_col.len())
-        .map(|i| timestamp_col.get(i).unwrap())
-        .collect();
-    
-    let pred_values: Vec<Option<f64>> = (0..pred_col.len())
-        .map(|i| {
-            let val = pred_col.get(i).unwrap();
-            if val.is_nan() { None } else { Some(val) }
-        })
-        .collect();
-    
-    let lower_bound_values: Vec<Option<f64>> = (0..lower_bound_col.len())
-        .map(|i| {
-            let val = lower_bound_col.get(i).unwrap();
-            if val.is_nan() { None } else { Some(val) }
-        })
-        .collect();
-    
-    let upper_bound_values: Vec<Option<f64>> = (0..upper_bound_col.len())
-        .map(|i| {
-            let val = upper_bound_col.get(i).unwrap();
-            if val.is_nan() { None } else { Some(val) }
-        })
-        .collect();
-    
-    let anomaly_values: Vec<Option<f64>> = (0..anomaly_col.len())
-        .map(|i| {
-            let val = anomaly_col.get(i).unwrap();
-            if val.is_nan() { None } else { Some(val) }
-        })
-        .collect();
-
-    // 创建 Arrow Array
-    let new_col_timestamp = Float64Array::from(timestamp_values);
-    let new_col_pred = Float64Array::from(pred_values);
-    let new_col_lower_bound = Float64Array::from(lower_bound_values);
-    let new_col_upper_bound = Float64Array::from(upper_bound_values);
-    let new_col_anomaly = Float64Array::from(anomaly_values);
-
-    // 创建包含所有列的 StructArray
-    let new_struct = StructArray::from(vec![
-        (
-            std::sync::Arc::new(Field::new(TIMESTAMP_COL, DataType::Float64, false)),
-            std::sync::Arc::new(new_col_timestamp) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(PRED_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_pred) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(LOWER_BOUND_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_lower_bound) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(UPPER_BOUND_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_upper_bound) as std::sync::Arc<dyn Array>,
-        ),
-        (
-            std::sync::Arc::new(Field::new(ANOMALY_COL, DataType::Float64, true)),
-            std::sync::Arc::new(new_col_anomaly) as std::sync::Arc<dyn Array>,
-        ),
-    ]);
-
-    // 导出到 FFI
-    match to_ffi(&new_struct.into_data()) {
-        Ok((out_array, out_schema)) => {
-            unsafe {
-                *result_array = out_array;
-                *result_schema = out_schema;
-            }
-            true
-        }
-        Err(_) => false,
-    }
+    let out = detection_result_to_struct(&det, PRED_COL, true);
+    export_ffi_result(out, result_schema, result_array)
 }
 
 pub extern "C" fn export_dataframe_to_go() -> bool {
-    // 初始化数据库
-    rsod_storage_init()
+    // 初始化数据库（默认试用模式）
+    rsod_storage_init(true, std::ptr::null())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rsod_utils::read_csv_to_vec;
-    use rsod_baseline::TrendType;
-    use std::sync::Arc;
-    use rsod_baseline::METRIC_VALUE_COL;
-    use rsod_forecaster::VALUE_COL;
+    use rsod_baseline::{TrendType, METRIC_VALUE_COL};
+    use rsod_core::VALUE_COL;
 
     #[test]
     fn test_outlier_fit_predict() {
@@ -628,19 +469,21 @@ mod tests {
         let result_struct = StructArray::from(result_data);
         println!("result_struct: {:?}", result_struct);
         
-        // 验证输出结构包含多列：baseline, lower_bound, upper_bound
-        assert_eq!(result_struct.num_columns(), 3);
-        assert_eq!(result_struct.column_names()[0], BASELINE_VALUE_COL);
-        assert_eq!(result_struct.column_names()[1], LOWER_BOUND_COL);
-        assert_eq!(result_struct.column_names()[2], UPPER_BOUND_COL);
+        // 验证输出结构包含 5 列：time, baseline, lower_bound, upper_bound, anomaly
+        assert_eq!(result_struct.num_columns(), 5);
+        assert_eq!(result_struct.column_names()[0], TIMESTAMP_COL);
+        assert_eq!(result_struct.column_names()[1], BASELINE_VALUE_COL);
+        assert_eq!(result_struct.column_names()[2], LOWER_BOUND_COL);
+        assert_eq!(result_struct.column_names()[3], UPPER_BOUND_COL);
+        assert_eq!(result_struct.column_names()[4], ANOMALY_COL);
         
         // 验证输出数据不为空
         assert!(result_struct.len() > 0);
         
         // 验证各列数据长度一致
-        let baseline_col = result_struct.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-        let lower_bound_col = result_struct.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-        let upper_bound_col = result_struct.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let baseline_col = result_struct.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let lower_bound_col = result_struct.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let upper_bound_col = result_struct.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_eq!(baseline_col.len(), lower_bound_col.len());
         assert_eq!(baseline_col.len(), upper_bound_col.len());
         

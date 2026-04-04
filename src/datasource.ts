@@ -41,6 +41,6 @@ export class DataSource extends DataSourceWithBackend<Alert4MLQuery, Alert4MLDat
 
   filterQuery(query: Alert4MLQuery): boolean {
     // if no query has been provided, prevent the query from being executed
-    return !!query.targets;
+    return Array.isArray(query.targets) && query.targets.length > 0;
   }
 }

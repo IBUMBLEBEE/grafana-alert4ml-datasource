@@ -136,12 +136,13 @@ export interface Alert4MLQuery extends DataQuery {
   seriesRefId: string;
   supportDetect: string;
   detectType: string;
-  showOriginalData: boolean; // For alerts, whether to show original data
   hyperParams: RsodParams | BaselineParams | LLMParams | ForecastParams;
   targets: DataQuery[];
   historyTimeRange: RelativeTimeRange;
   showAnomalyPoints: boolean;
   uniqueKeys: UniqueKeys;
+  baseDsUid?: string;
+  rawQuery?: Record<string, any>;
 }
 
 export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
@@ -149,8 +150,7 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
   seriesRefId: 'A',
   supportDetect: Alert4MLSupportDetect.MachineLearning,
   detectType: Alert4MLDetectType.Outlier,
-  showOriginalData: false,
-  showAnomalyPoints: false,
+  showAnomalyPoints: true,
   hyperParams: DEFAULT_RSOD_PARAMS,
   targets: [],
   historyTimeRange: DEFAULT_TIME_RANGE,
@@ -176,10 +176,18 @@ export interface DataSourceResponse {
  */
 export interface Alert4MLDataSourceOptions extends DataSourceJsonData {
   url?: string;
+  trialMode?: boolean;
+  pgHost?: string;
+  pgPort?: number;
+  pgDatabase?: string;
+  pgUser?: string;
+  pgSSLMode?: string;
 }
 
 export const DEFAULT_URL: Partial<Alert4MLDataSourceOptions> = {
   url: 'http://localhost:3000',
+  trialMode: false,
+  pgSSLMode: 'disable',
 };
 
 /**
@@ -187,4 +195,8 @@ export const DEFAULT_URL: Partial<Alert4MLDataSourceOptions> = {
  */
 export interface Alert4MLSecureJsonData {
   apiToken?: string;
+}
+
+export interface Alert4MLPgSecureJsonData {
+  pgPassword?: string;
 }

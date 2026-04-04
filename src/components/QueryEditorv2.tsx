@@ -7,8 +7,8 @@ import {
   InlineSwitch,
   RelativeTimeRangePicker,
 } from '@grafana/ui';
-import { QueryEditorProps, SelectableValue, RelativeTimeRange } from '@grafana/data';
-import {getTemplateSrv} from '@grafana/runtime';
+import { QueryEditorProps, SelectableValue, RelativeTimeRange, DataSourceApi } from '@grafana/data';
+import {getTemplateSrv, getDataSourceSrv} from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { DataSource } from '../datasource';
 import {
@@ -41,14 +41,77 @@ import { Forecast } from './Forecast';
 type Props = QueryEditorProps<DataSource, Alert4MLQuery, Alert4MLDataSourceOptions>;
                                                                                 
 // query 是 <Alert4MLQuery | AlertDataQuery>  类型， 需要根据 query 的类型来判断是 Alert4MLQuery 还是 AlertDataQuery
-export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app }: Props) {
+export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app, datasource }: Props) {
   console.log('query variables', getTemplateSrv().replace("${__dashboard.uid}"));
   const [isHyperParamsOpen, setIsHyperParamsOpen] = useState<boolean>(false);
+
+  // --- Base DataSource nested QueryEditor ---
+  const baseDsUid = query.baseDsUid;
+  const [baseDsInstance, setBaseDsInstance] = useState<DataSourceApi | null>(null);
+  const [NativeQueryEditor, setNativeQueryEditor] = useState<React.ComponentType<any> | null>(null);
+
+  const dataSourceOptions = React.useMemo(() => {
+    return getDataSourceSrv()
+      .getList()
+      .filter((ds) => ds.type !== ALERT4ML_DATA_SOURCE_TYPE)
+      .map((ds) => ({
+        label: `${ds.name} (${ds.type})`,
+        value: ds.uid,
+      }));
+  }, []);
+
+  const onBaseDsUidChange = useCallback((option: { label?: string; value: string } | null) => {
+    onChange({ ...query, baseDsUid: option?.value ?? undefined, rawQuery: undefined, targets: [] });
+  }, [query, onChange]);
+
+  useEffect(() => {
+    if (!baseDsUid) {
+      setBaseDsInstance(null);
+      setNativeQueryEditor(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const instance = await getDataSourceSrv().get({ uid: baseDsUid });
+        if (cancelled) {
+          return;
+        }
+        setBaseDsInstance(instance);
+        const QE = instance.components?.QueryEditor;
+        if (QE) {
+          setNativeQueryEditor(() => QE);
+        } else {
+          setNativeQueryEditor(null);
+        }
+      } catch (err) {
+        console.error('Failed to load base data source:', err);
+        setBaseDsInstance(null);
+        setNativeQueryEditor(null);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [baseDsUid]);
+
+  const onRawQueryChange = useCallback((rawQuery: DataQuery) => {
+    // Ensure datasource info is attached so Grafana /api/ds/query can route the query
+    const enrichedQuery = {
+      ...rawQuery,
+      datasource: baseDsInstance
+        ? { uid: baseDsInstance.uid, type: baseDsInstance.type }
+        : rawQuery.datasource,
+    };
+    onChange({ ...query, rawQuery: enrichedQuery, targets: [enrichedQuery] });
+  }, [query, onChange, baseDsInstance]);
+
+  // --- End Base DataSource nested QueryEditor ---
+
   const {
-    seriesRefId = '',
     supportDetect = Alert4MLSupportDetect.MachineLearning,
     detectType = Alert4MLDetectType.Outlier,
-    targets = [], showOriginalData = false, showAnomalyPoints = false,
+    showAnomalyPoints = true,
     hyperParams = DEFAULT_RSOD_PARAMS,
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
@@ -57,71 +120,39 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app 
   const isInitialized = useRef(false);
   // 创建一个处理 debounced 查询的函数
   const runDebouncedQueryWithTempTargets = useCallback((updatedQuery: Partial<Alert4MLQuery>) => {
-    const currentSeriesRefId = updatedQuery.seriesRefId || seriesRefId;
-    const currentTargets = queries?.filter((target: DataQuery) => target.refId === currentSeriesRefId) || targets || [];
+    const currentTargets = updatedQuery.targets || query.targets || [];
     // 确保 uniqueKeys 有值，优先使用 updatedQuery.uniqueKeys，否则使用 query.uniqueKeys，最后使用默认值
     const fallbackUniqueKeys: UniqueKeys = {
       dashboardUid: getTemplateSrv().replace("${__dashboard.uid}"),
       panelId: data?.request?.panelId || 0,
-      seriesRefId: currentSeriesRefId,
+      seriesRefId: query.refId,
     };
     onChange({...query, ...updatedQuery, targets: currentTargets, uniqueKeys: updatedQuery.uniqueKeys || query.uniqueKeys || fallbackUniqueKeys});    
-    console.log('updatedQuery', updatedQuery);
     const debouncedQueryWithCleanup = debounce(() => {
       onRunQuery();
     }, 200);
     
     debouncedQueryWithCleanup();
-  }, [data, seriesRefId, query, queries, targets]);
+  }, [data, query]);
 
 
   useEffect(() => {
     if (!isInitialized.current) {
-      const seriesRefId = queries?.[0]?.refId || '';
-      // 重新计算 uniqueKeys，确保使用正确的 seriesRefId
       const newUniqueKeys: UniqueKeys = {
         dashboardUid: getTemplateSrv().replace("${__dashboard.uid}"),
         panelId: data?.request?.panelId || 0,
-        seriesRefId: seriesRefId,
+        seriesRefId: query.refId,
       };
       onChange({...query, 
-        seriesRefId: seriesRefId,
         supportDetect: supportDetect || Alert4MLSupportDetect.MachineLearning,
         detectType: detectType || Alert4MLDetectType.Outlier,
-        showOriginalData: showOriginalData || false,
-        targets: queries?.filter((target: DataQuery) => target.refId === seriesRefId) || [],
         hyperParams: hyperParams || DEFAULT_RSOD_PARAMS,
         historyTimeRange: historyTimeRange,
         uniqueKeys: newUniqueKeys,
       });
       runDebouncedQueryWithTempTargets({...query});
     }
-  }, [queries]);
-
-  // 从data PanelData 中获取refId的options
-  const loadSeriesRefIdOptions = useCallback((data: DataQuery[] | undefined) => {
-    if (!data) {
-      return [];
-    }
-    return queries
-        ?.filter((targets: any) => targets.datasource?.type !== ALERT4ML_DATA_SOURCE_TYPE)
-        ?.map((targets: any) => ({
-          label: targets.refId,
-          value: targets.refId
-        })) || [];
   }, []);
-
-  const onSeriesRefIDChange = (v: SelectableValue) => {
-    if (v && v.value) {
-      let newUniqueKeys: UniqueKeys = {
-        dashboardUid: getTemplateSrv().replace("${__dashboard.uid}"),
-        panelId: data?.request?.panelId || 0,
-        seriesRefId: v.value as string,
-      };
-      console.log('newUniqueKeysnewUniqueKeysnewUniqueKeys', newUniqueKeys);
-      runDebouncedQueryWithTempTargets({ seriesRefId: v.value as string, uniqueKeys: newUniqueKeys });
-    }
-  };
 
   const loadSupportDetectOptions = () => {
     return SUPPORT_DETECT_OPTIONS;
@@ -189,12 +220,6 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app 
     }
   };
 
-  const onShowOriginalDataChange = (checked: boolean) => {
-    if (typeof checked === 'boolean') {
-      runDebouncedQueryWithTempTargets({ showOriginalData: checked });
-    }
-  };
-
   const onHistoryTimeRangeChange = (v: RelativeTimeRange) => {
     if (v && typeof v.from === 'number' && typeof v.to === 'number') {
       runDebouncedQueryWithTempTargets({ historyTimeRange: v });
@@ -216,16 +241,40 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app 
 
   return (
     <Stack direction="column" gap={1}>
-      <Stack gap={0}>
-        <InlineField label="Select Series">
-        <Combobox
-            width={10}
-            options={loadSeriesRefIdOptions(queries) || []}
-            onChange={(v) => v && onSeriesRefIDChange(v as SelectableValue)}
-            value={seriesRefId || ''}
-          />
-        </InlineField>
-        <InlineField label="Support Detect">
+      {/* ── Data Source Query ── */}
+      <fieldset style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}>
+        <legend style={{ fontSize: 14, fontWeight: 500, padding: '0 6px', width: 'auto' }}>Data Source Query</legend>
+        <Stack direction="column" gap={1}>
+          <InlineField label="Base DataSource" tooltip="Select the data source whose native query editor will be embedded">
+            <Combobox
+              width={30}
+              options={dataSourceOptions}
+              value={baseDsUid ?? ''}
+              onChange={(v) => onBaseDsUidChange(v)}
+            />
+          </InlineField>
+          {NativeQueryEditor && baseDsInstance && (
+            <NativeQueryEditor
+              datasource={baseDsInstance}
+              query={query.rawQuery || { refId: query.refId }}
+              onChange={onRawQueryChange}
+              onRunQuery={onRunQuery}
+            />
+          )}
+          {baseDsUid && !NativeQueryEditor && !baseDsInstance && (
+            <div style={{ color: '#8e8e8e', fontSize: '12px' }}>
+              Loading base data source query editor...
+            </div>
+          )}
+        </Stack>
+      </fieldset>
+
+      {/* ── Alert4ML Detection Settings ── */}
+      <fieldset style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}>
+        <legend style={{ fontSize: 14, fontWeight: 500, padding: '0 6px', width: 'auto' }}>Alert4ML Detection</legend>
+        <Stack direction="column" gap={1}>
+          <Stack gap={0}>
+              <InlineField label="Support Detect">
           <Combobox
             options={loadSupportDetectOptions() as any}
             onChange={(v) => v && onSupportDetectChange(v as SupportDetectOption)}
@@ -253,12 +302,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app 
           value={showAnomalyPoints || false}
           onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
         />
-        <InlineSwitch
-          label="Show Original Data"
-          showLabel={true}
-          value={showOriginalData || false}
-          onChange={(e) => e && onShowOriginalDataChange(e.currentTarget.checked)}
-        />
+
       </Stack>
       <Stack gap={0}>
         <Collapse
@@ -295,6 +339,8 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app 
             )}
           </Collapse>
       </Stack>
+        </Stack>
+      </fieldset>
     </Stack>
   );
 }
