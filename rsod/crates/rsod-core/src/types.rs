@@ -96,6 +96,8 @@ pub enum SeriesCharacteristic {
         periods: Vec<usize>,
         direction: TrendDirection,
     },
+    /// Irregular / noisy series with high coefficient of variation and no clear pattern
+    Irregular,
 }
 
 /// Direction of a detected trend.

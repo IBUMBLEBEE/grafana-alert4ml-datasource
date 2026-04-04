@@ -1,5 +1,6 @@
 pub mod classify;
 pub mod config;
+pub mod decision;
 pub mod error;
 pub mod preprocessing;
 pub mod traits;
@@ -17,3 +18,7 @@ pub use config::{DetectionConfig, DetectionMethod, TrendType};
 pub use traits::{Detector, ModelSerializable, ModelStorage};
 pub use preprocessing::check_missing_rate;
 pub use classify::classify;
+pub use decision::{
+    DetectionDecision, PreprocessingPlan, ThresholdMethod,
+    decide, select_threshold_method,
+};
