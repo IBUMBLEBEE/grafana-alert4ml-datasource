@@ -53,6 +53,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "anofox-forecast"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4985d4fb654424b11ee57c6f308e0359f96d6a082729972d87bf16f3373b5b69"
+dependencies = [
+ "anofox-statistics",
+ "chrono",
+ "getrandom 0.2.16",
+ "lbfgs",
+ "rand 0.8.5",
+ "statrs",
+ "thiserror 2.0.17",
+ "trueno",
+]
+
+[[package]]
+name = "anofox-statistics"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4248509e270e5fb61677e7a4909ea44c33ec4177c61feb9f438fd36566e834bf"
+dependencies = [
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "statrs",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -546,6 +574,19 @@ dependencies = [
  "augurs-core",
  "itertools",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "augurs-seasons"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd19353866ea5d344f116f9e1c3179f6addcd5dc2840919fa6d501c54bdf168"
+dependencies = [
+ "itertools",
+ "num-traits",
+ "thiserror 2.0.17",
+ "tracing",
+ "welch-sde",
 ]
 
 [[package]]
@@ -1806,6 +1847,15 @@ checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "lbfgs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fc0f9b082f5ec7327d5092d6617680d0edc657fc7630ec69de3798b7a23b96b"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -3440,6 +3490,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsod-classifier"
+version = "0.1.2"
+dependencies = [
+ "anofox-forecast",
+ "augurs",
+ "augurs-seasons",
+ "chrono",
+ "ndarray 0.16.1",
+ "rayon",
+ "rsod-core",
+ "serde",
+ "serde_json",
+ "statrs",
+ "stlrs",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "rsod-core"
 version = "0.1.2"
 dependencies = [
@@ -3457,6 +3525,7 @@ dependencies = [
  "csv",
  "libc",
  "rsod-baseline",
+ "rsod-classifier",
  "rsod-core",
  "rsod-forecaster",
  "rsod-outlier",
@@ -4482,6 +4551,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "trueno"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7a78cdf00ae8659264f48cf96f9e925357b6258db70ba83d2b60a80fad7e56a"
+dependencies = [
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4749,6 +4827,17 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "welch-sde"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cf9e00ede58031fc5fefd05329aeb93ffbc195ca5416e35144f1eff3c196067"
+dependencies = [
+ "num-complex",
+ "num-traits",
+ "rustfft",
 ]
 
 [[package]]

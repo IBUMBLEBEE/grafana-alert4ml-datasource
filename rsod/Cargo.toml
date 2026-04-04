@@ -12,6 +12,7 @@ rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }
 rsod-utils = { path = "crates/rsod-utils", version="0.1.2" }
 rsod-storage = { path = "crates/rsod-storage", version="0.1.2" }
 rsod-ffi = { path = "crates/rsod-storage", version="0.1.1" }
+rsod-classifier = { path = "crates/rsod-classifier", version="0.1.2" }
 
 ndarray = "0.16.1"
 rand = "0.8"
@@ -34,6 +35,7 @@ polars = { version = "0.51.0", features = ["lazy"] }
 arrow = { version = "56.2.0", features = ["ffi"] }
 polars-arrow = "0.51.0"
 perpetual = "0.10.0"
+anofox-forecast = { version = "0.5", default-features = false }
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"

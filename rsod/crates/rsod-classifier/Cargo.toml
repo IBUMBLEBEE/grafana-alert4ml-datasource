@@ -1,0 +1,21 @@
+[package]
+name = "rsod-classifier"
+version = "0.1.2"
+edition = "2021"
+publish = false
+
+[dependencies]
+rsod-core = { workspace = true }
+ndarray = { workspace = true }
+statrs = { workspace = true }
+stlrs = { workspace = true }
+augurs = { workspace = true }
+augurs-seasons = "0.10.0"
+anofox-forecast = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rayon = { workspace = true }
+chrono = { workspace = true }
+thiserror = "1.0"
+
+[dev-dependencies]
