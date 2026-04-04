@@ -142,6 +142,8 @@ export interface Alert4MLQuery extends DataQuery {
   historyTimeRange: RelativeTimeRange;
   showAnomalyPoints: boolean;
   uniqueKeys: UniqueKeys;
+  baseDsUid?: string;
+  rawQuery?: Record<string, any>;
 }
 
 export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
