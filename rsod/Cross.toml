@@ -1,7 +1,7 @@
 [build]
 #build-std = false                              # do not build the std library. has precedence over xargo
 #xargo = true                                   # enable the use of xargo by default                                    # do not use zig cc for the builds
-default-target = "x86_64-unknown-linux-gnu"    # use this target if none is explicitly provided
+default-target = "x86_64-unknown-linux-musl"    # use musl for static linking
 
 [target.x86_64-unknown-linux-gnu]
 pre-build = [
@@ -19,4 +19,10 @@ pre-build = [
 pre-build = [
     "export DEBIAN_FRONTEND=noninteractive",
     "apt-get update && apt-get install -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' musl-tools"
+]
+
+[target.aarch64-unknown-linux-musl]
+pre-build = [
+    "export DEBIAN_FRONTEND=noninteractive",
+    "apt-get update && apt-get install -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' musl-tools gcc-aarch64-linux-gnu"
 ]

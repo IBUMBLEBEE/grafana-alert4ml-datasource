@@ -1,4 +1,4 @@
-# Anomaly detection based on machine learning.
+# Anomaly detection based on machine learning
 
 Grafana supports a wide range of data sources, including Prometheus, MySQL, and even Datadog. There’s a good chance you can already visualize metrics from the systems you have set up. **Alert4ML** serves as the observability layer for SRE teams, automatically detects anomalies in time-series data based on collected data, thereby reducing the effort required by fixed-threshold methods and manual identification of abnormal system behavior.
 
@@ -66,5 +66,5 @@ make
 
 ## Reference
 
-* https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/
-* https://docs.victoriametrics.com/anomaly-detection/
+* [https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/](https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/)
+* [https://docs.victoriametrics.com/anomaly-detection/](https://docs.victoriametrics.com/anomaly-detection/)

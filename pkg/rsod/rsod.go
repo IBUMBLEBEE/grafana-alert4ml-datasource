@@ -1,13 +1,10 @@
-//go:build linux || darwin || windows
+//go:build linux
 
 package rsod
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../rsod/crates/rsod-ffi/include
-#cgo linux LDFLAGS: -L${SRCDIR}/../../rsod/target/x86_64-unknown-linux-gnu/release -lrsod_go -Wl,-rpath=${SRCDIR}/../../rsod/target/x86_64-unknown-linux-gnu/release:/var/lib/grafana/plugins/ibumblebee-alert4ml-datasource:./data/plugins/ibumblebee-alert4ml-datasource
-#cgo darwin LDFLAGS: -L${SRCDIR}/../../rsod/target/x86_64-unknown-linux-gnu/release -lrsod_go -Wl,-rpath=@loader_path/${SRCDIR}/../../rsod/target/x86_64-unknown-linux-gnu/release:/var/lib/grafana/plugins/ibumblebee-alert4ml-datasource:./data/plugins/ibumblebee-alert4ml-datasource
-#cgo windows LDFLAGS: -L${SRCDIR}/../../rsod/target/x86_64-unknown-linux-gnu/release -lrsod_go
-
+#cgo linux LDFLAGS: -lrsod_go -lm -lpthread
 
 #include "rsod_go.h"
 */
