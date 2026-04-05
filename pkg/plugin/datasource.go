@@ -166,6 +166,42 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 					newframes = append(newframes, newframe)
 
+				case constant.BaselineDetectTypeDynamics:
+					options := rsod.DynamicsOptions{
+						Seasonality:       hyperParams.(*DynamicsHyperParams).Seasonality,
+						WindowSize:        hyperParams.(*DynamicsHyperParams).WindowSize,
+						MinPoints:         hyperParams.(*DynamicsHyperParams).MinPoints,
+						WarningThreshold:  hyperParams.(*DynamicsHyperParams).WarningThreshold,
+						CriticalThreshold: hyperParams.(*DynamicsHyperParams).CriticalThreshold,
+						RobustMode:        hyperParams.(*DynamicsHyperParams).RobustMode,
+					}
+					// Prepare frames
+					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
+					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
+					if err != nil {
+						return nil, err
+					}
+					// 转换时间字段为 float64
+					err = TransformDataFrame(currentFrame)
+					if err != nil {
+						return nil, err
+					}
+					err = TransformDataFrame(historyFrame)
+					if err != nil {
+						return nil, err
+					}
+
+					resultDynamicsDF, err := rsod.DynamicsFitPredict(currentFrame, historyFrame, options)
+					if err != nil {
+						return nil, err
+					}
+
+					newframe := RenderFrameWithBaseline(resultDynamicsDF, selfRefID)
+					if queryJson.ShowAnomalyPoints {
+						removeNonAnomalyFields(newframe)
+					}
+					newframes = append(newframes, newframe)
+
 				case constant.DetectTypeForecast:
 					periods, err := ParsePeriods(hyperParams.(*ForecastHyperParams).Periods, queryAlert4MLQueryBody.IntervalMs)
 					if err != nil {
@@ -438,7 +474,7 @@ func setDataFrameFieldConfigForOutlier(df *data.Frame, refID string, resultName 
 			"mode":       "fixed",
 		},
 		Custom: map[string]any{
-			"lineStyle": "solid",
+			"lineStyle": map[string]any{"fill": "solid"},
 			"drawStyle": "points",
 			"pointSize": 10,
 		},
@@ -453,7 +489,7 @@ func setDataFrameFieldConfigForBaseline(df *data.Frame, refID string, resultName
 			"mode":       "fixed",
 		},
 		Custom: map[string]any{
-			"lineStyle": "solid",
+			"lineStyle": map[string]any{"fill": "solid"},
 			"drawStyle": "lines",
 			"pointSize": 1,
 		},

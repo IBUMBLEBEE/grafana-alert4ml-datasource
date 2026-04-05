@@ -39,6 +39,17 @@ bool baseline_fit_predict(FFI_ArrowSchema *data_schema,
                           FFI_ArrowArray *result_array);
 
 /**
+ * FFI function for dynamics baseline detection
+ */
+bool dynamics_fit_predict(FFI_ArrowSchema *data_schema,
+                          FFI_ArrowArray *data_array,
+                          FFI_ArrowArray *history_array,
+                          FFI_ArrowSchema *history_schema,
+                          const char *_options_json,
+                          FFI_ArrowSchema *result_schema,
+                          FFI_ArrowArray *result_array);
+
+/**
  * FFI 函数：初始化数据库
  * 供 Go 代码在启动时显式调用
  * - `trial_mode = true`: 使用 SQLite 内存数据库（试用模式）

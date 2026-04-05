@@ -32,12 +32,13 @@ const (
 	BaselineDetectTypeStd           = "std"
 	BaselineDetectTypeZScore        = "zscore"
 	BaselineDetectTypeMovingAverage = "moving_average"
+	BaselineDetectTypeDynamics      = "dynamics"
 )
 
 // IsBaselineDetectType 判断 detectType 是否为 Baseline 子类型
 func IsBaselineDetectType(detectType string) bool {
 	switch detectType {
-	case BaselineDetectTypeStd, BaselineDetectTypeZScore, BaselineDetectTypeMovingAverage:
+	case BaselineDetectTypeStd, BaselineDetectTypeZScore, BaselineDetectTypeMovingAverage, BaselineDetectTypeDynamics:
 		return true
 	default:
 		return false
@@ -99,6 +100,7 @@ var SUPPORT_DETECT_OPTIONS = []SupportDetectOption{
 			{Label: BaselineDetectTypeStd, Value: BaselineDetectTypeStd},
 			{Label: BaselineDetectTypeZScore, Value: BaselineDetectTypeZScore},
 			{Label: BaselineDetectTypeMovingAverage, Value: BaselineDetectTypeMovingAverage},
+			{Label: BaselineDetectTypeDynamics, Value: BaselineDetectTypeDynamics},
 		},
 	},
 	{

@@ -31,10 +31,13 @@ import {
   UniqueKeys,
   ForecastParams,
   DEFAULT_FORECAST_PARAMS,
+  DynamicsParams,
+  DEFAULT_DYNAMICS_PARAMS,
 } from '../types';
 import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
 import { Baseline } from './Baseline';
+import { Dynamics } from './Dynamics';
 import { LLM } from './LLM';
 import { Forecast } from './Forecast';
 
@@ -221,11 +224,14 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   }, [supportDetect]);
 
   // 根据 detectType 获取对应的默认 hyperParams
-  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | BaselineParams | LLMParams | ForecastParams => {
+  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | BaselineParams | DynamicsParams | LLMParams | ForecastParams => {
     if (detectTypeValue === Alert4MLBaselineDetectType.Std ||
         detectTypeValue === Alert4MLBaselineDetectType.ZScore ||
         detectTypeValue === Alert4MLBaselineDetectType.MovingAverage) {
       return DEFAULT_BASELINE_PARAMS;
+    }
+    if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
+      return DEFAULT_DYNAMICS_PARAMS;
     }
     if (detectTypeValue === Alert4MLLLMDetectType.Deepseek || 
         detectTypeValue === Alert4MLLLMDetectType.Qwen || 
@@ -258,7 +264,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     runDebouncedQueryWithTempTargets({ detectType: opt.value, hyperParams: defaultParams });
   };
 
-  const onHyperParamsChange = (params: RsodParams | BaselineParams | LLMParams | ForecastParams) => {
+  const onHyperParamsChange = (params: RsodParams | BaselineParams | DynamicsParams | LLMParams | ForecastParams) => {
     if (params) {
       runDebouncedQueryWithTempTargets({ hyperParams: params });
     }
@@ -367,6 +373,12 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
               detectType === Alert4MLBaselineDetectType.MovingAverage) && (
               <Baseline
                 params={(hyperParams as BaselineParams) || DEFAULT_BASELINE_PARAMS}
+                onParamsChange={(params) => params && onHyperParamsChange(params)}
+              />
+            )}
+            {detectType === Alert4MLBaselineDetectType.Dynamics && (
+              <Dynamics
+                params={(hyperParams as DynamicsParams) || DEFAULT_DYNAMICS_PARAMS}
                 onParamsChange={(params) => params && onHyperParamsChange(params)}
               />
             )}
