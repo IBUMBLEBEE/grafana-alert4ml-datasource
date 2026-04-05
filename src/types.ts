@@ -30,6 +30,7 @@ export enum Alert4MLBaselineDetectType {
   Std = "std",
   ZScore = "zscore",
   MovingAverage = "moving_average",
+  Dynamics = "dynamics",
 }
 
 export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
@@ -41,6 +42,7 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
       { label: "Standard Deviation", value: Alert4MLBaselineDetectType.Std, description: "μ ± kσ confidence interval based on historical grouping" },
       { label: "Z-Score", value: Alert4MLBaselineDetectType.ZScore, description: "Standardized score anomaly detection" },
       { label: "Moving Average", value: Alert4MLBaselineDetectType.MovingAverage, description: "Moving average smoothed baseline" },
+      { label: "Dynamics", value: Alert4MLBaselineDetectType.Dynamics, description: "Advanced dynamics baseline with seasonal comparison, saturation forecasting, and drift monitoring" },
     ],
   },
   {
@@ -77,6 +79,15 @@ export interface BaselineParams {
   trendType?: 'Daily' | 'Weekly' | 'Monthly' | 'None' | undefined;
   intervalMins?: number | undefined;
   stdDevMultiplier?: number | undefined;
+}
+
+export interface DynamicsParams {
+  seasonality?: string;
+  windowSize?: number;
+  minPoints?: number;
+  warningThreshold?: number;
+  criticalThreshold?: number;
+  robustMode?: string;
 }
 
 export interface LLMParams {
@@ -122,6 +133,15 @@ export const DEFAULT_BASELINE_PARAMS: BaselineParams = {
   stdDevMultiplier: 2.0,
 };
 
+export const DEFAULT_DYNAMICS_PARAMS: DynamicsParams = {
+  seasonality: 'Weekly',
+  windowSize: 4,
+  minPoints: 3,
+  warningThreshold: 2.0,
+  criticalThreshold: 4.0,
+  robustMode: 'MedianMad',
+};
+
 export const DEFAULT_LLM_PARAMS: LLMParams = {
   modelName: 'deepseek-chat',
   temperature: 0.5,
@@ -144,7 +164,7 @@ export interface Alert4MLQuery extends DataQuery {
   seriesRefId: string;
   supportDetect: string;
   detectType: string;
-  hyperParams: RsodParams | BaselineParams | LLMParams | ForecastParams;
+  hyperParams: RsodParams | BaselineParams | DynamicsParams | LLMParams | ForecastParams;
   targets: DataQuery[];
   historyTimeRange: RelativeTimeRange;
   showAnomalyPoints: boolean;

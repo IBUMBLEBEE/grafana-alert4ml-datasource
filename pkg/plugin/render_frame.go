@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/IBUMBLEBEE/grafana-alert4ml-datasource/pkg/constant"
@@ -77,26 +78,29 @@ func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
 			field.Config = &data.FieldConfig{
 				DisplayName: fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_LOWER_BOUND),
 				Color: map[string]any{
-					"fixedColor": "#ccccdc",
+					"fixedColor": "#808080",
 					"mode":       "fixed",
 				},
 				Custom: map[string]any{
-					"lineStyle": "solid",
+					"lineWidth": 0,
 					"drawStyle": "lines",
-					"pointSize": 1,
+					"pointSize": 0,
 				},
 			}
 		case constant.GF_FRAME_RESULT_NAME_UPPER_BOUND:
+			lowerBoundName := fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_LOWER_BOUND)
 			field.Config = &data.FieldConfig{
 				DisplayName: fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_UPPER_BOUND),
 				Color: map[string]any{
-					"fixedColor": "#ccccdc",
+					"fixedColor": "#808080",
 					"mode":       "fixed",
 				},
 				Custom: map[string]any{
-					"lineStyle": "solid",
-					"drawStyle": "lines",
-					"pointSize": 1,
+					"lineWidth":   0,
+					"drawStyle":   "lines",
+					"pointSize":   0,
+					"fillOpacity": 15,
+					"fillBelowTo": lowerBoundName,
 				},
 			}
 		case constant.GF_FRAME_RESULT_NAME_ANOMALY, "anomaly":
@@ -107,7 +111,7 @@ func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
 					"mode":       "fixed",
 				},
 				Custom: map[string]any{
-					"lineStyle": "solid",
+					"lineStyle": map[string]any{"fill": "solid"},
 					"drawStyle": "points",
 					"pointSize": 10,
 				},
@@ -145,19 +149,32 @@ func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *d
 				},
 			}
 		case constant.GF_FRAME_RESULT_NAME_UPPER_BOUND:
+			lowerBoundName := fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_LOWER_BOUND)
 			field.Config = &data.FieldConfig{
 				DisplayName: fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_UPPER_BOUND),
 				Color: map[string]any{
-					"fixedColor": "#ccccdc",
+					"fixedColor": "#808080",
 					"mode":       "fixed",
+				},
+				Custom: map[string]any{
+					"lineWidth":   0,
+					"drawStyle":   "lines",
+					"pointSize":   0,
+					"fillOpacity": 15,
+					"fillBelowTo": lowerBoundName,
 				},
 			}
 		case constant.GF_FRAME_RESULT_NAME_LOWER_BOUND:
 			field.Config = &data.FieldConfig{
 				DisplayName: fmt.Sprintf("%s-%s-%s", refID, df.Name, constant.GF_FRAME_RESULT_NAME_LOWER_BOUND),
 				Color: map[string]any{
-					"fixedColor": "#ccccdc",
+					"fixedColor": "#808080",
 					"mode":       "fixed",
+				},
+				Custom: map[string]any{
+					"lineWidth": 0,
+					"drawStyle": "lines",
+					"pointSize": 0,
 				},
 			}
 		case constant.GF_FRAME_RESULT_NAME_ANOMALY, "anomaly":
@@ -168,7 +185,7 @@ func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *d
 					"mode":       "fixed",
 				},
 				Custom: map[string]any{
-					"lineStyle": "solid",
+					"lineStyle": map[string]any{"fill": "solid"},
 					"drawStyle": "points",
 					"pointSize": 10,
 				},
@@ -195,7 +212,7 @@ func removeNonAnomalyFields(df *data.Frame) {
 	for _, field := range df.Fields {
 		name := field.Name
 		if name == constant.GF_FRAME_RESULT_NAME_TIME || field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime ||
-			name == constant.GF_FRAME_RESULT_NAME_ANOMALY || name == "anomaly" {
+			strings.EqualFold(name, constant.GF_FRAME_RESULT_NAME_ANOMALY) || strings.EqualFold(name, "anomaly") {
 			fields = append(fields, field)
 		}
 	}

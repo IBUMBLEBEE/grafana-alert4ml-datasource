@@ -11,7 +11,7 @@ use rsod_core::{
 };
 use rsod_storage::init_db_with_config;
 use rsod_outlier::{outlier, OutlierOptions};
-use rsod_baseline::{baseline_detect, BaselineOptions};
+use rsod_baseline::{baseline_detect, BaselineOptions, dynamics::{dynamics_detect, BaselineConfig}};
 use rsod_forecaster::{forecast, ForecasterOptions};
 
 // ── FFI helpers ──────────────────────────────────────────────────────
@@ -223,6 +223,40 @@ extern "C" fn baseline_fit_predict(
         Ok(r) => r,
         Err(_) => return false,
     };
+
+    let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
+    export_ffi_result(out, result_schema, result_array)
+}
+
+/// FFI function for dynamics baseline detection
+#[no_mangle]
+pub extern "C" fn dynamics_fit_predict(
+    data_schema: *mut FFI_ArrowSchema,
+    data_array: *mut FFI_ArrowArray,
+    history_array: *mut FFI_ArrowArray,
+    history_schema: *mut FFI_ArrowSchema,
+    _options_json: *const c_char,
+    result_schema: *mut FFI_ArrowSchema,
+    result_array: *mut FFI_ArrowArray,
+) -> bool {
+    let data_struct = match import_ffi_struct_array(data_schema, data_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let data_input = struct_array_to_input(&data_struct);
+
+    let history_struct = match import_ffi_struct_array(history_schema, history_array) {
+        Some(sa) => sa,
+        None => return false,
+    };
+    let history_input = struct_array_to_input(&history_struct);
+
+    let opts: BaselineConfig = match parse_json_options(_options_json) {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let det = dynamics_detect(data_input.as_input(), history_input.as_input(), &opts);
 
     let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
     export_ffi_result(out, result_schema, result_array)

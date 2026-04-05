@@ -44,6 +44,15 @@ type BaselineOptions struct {
 	UUID                string  `json:"uuid"`
 }
 
+type DynamicsOptions struct {
+	Seasonality       string  `json:"seasonality"`
+	WindowSize        int     `json:"window_size"`
+	MinPoints         int     `json:"min_points"`
+	WarningThreshold  float64 `json:"warning_threshold"`
+	CriticalThreshold float64 `json:"critical_threshold"`
+	RobustMode        string  `json:"robust_mode"`
+}
+
 type LLMOptions struct {
 	ModelName   string `json:"model_name"`
 	Temperature int    `json:"temperature"`
@@ -299,7 +308,100 @@ func BaselineFitPredict(frame *data.Frame, historyFrame *data.Frame, options Bas
 	return dfData, nil
 }
 
-func WriteArrowRecordToCSV(record arrow.Record, filename string) error {
+func DynamicsFitPredict(frame *data.Frame, historyFrame *data.Frame, options DynamicsOptions) (*data.Frame, error) {
+	if frame == nil {
+		return nil, errors.New("frame is null")
+	}
+
+	if historyFrame == nil {
+		return nil, errors.New("historyFrame is null")
+	}
+
+	table, err := data.FrameToArrowTable(frame)
+	if err != nil {
+		return nil, err
+	}
+
+	historyTable, err := data.FrameToArrowTable(historyFrame)
+	if err != nil {
+		return nil, err
+	}
+
+	record := tableToRecord(table)
+	historyRecord := tableToRecord(historyTable)
+
+	optsJson, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+
+	var inArray cdata.CArrowArray
+	var inSchema cdata.CArrowSchema
+	cdata.ExportArrowRecordBatch(record, &inArray, &inSchema)
+	defer cdata.ReleaseCArrowArray(&inArray)
+	defer cdata.ReleaseCArrowSchema(&inSchema)
+
+	var historyInArray cdata.CArrowArray
+	var historyInSchema cdata.CArrowSchema
+	cdata.ExportArrowRecordBatch(historyRecord, &historyInArray, &historyInSchema)
+	defer cdata.ReleaseCArrowArray(&historyInArray)
+	defer cdata.ReleaseCArrowSchema(&historyInSchema)
+
+	var outSchema cdata.CArrowSchema
+	var outArray cdata.CArrowArray
+	defer cdata.ReleaseCArrowArray(&outArray)
+	defer cdata.ReleaseCArrowSchema(&outSchema)
+
+	tnow := time.Now()
+
+	// 验证数据有效性
+	if len(frame.Fields) < 2 {
+		return nil, errors.New("frame has insufficient fields")
+	}
+	if len(historyFrame.Fields) < 2 {
+		return nil, errors.New("historyFrame has insufficient fields")
+	}
+	if frame.Fields[0].Len() == 0 {
+		return nil, fmt.Errorf("frame has no rows")
+	}
+	if historyFrame.Fields[0].Len() == 0 {
+		return nil, fmt.Errorf("historyFrame has no rows (filtered out by time range)")
+	}
+
+	// 创建 CString 并确保释放
+	cOptsJson := C.CString(string(optsJson))
+	defer C.free(unsafe.Pointer(cOptsJson))
+
+	success := C.dynamics_fit_predict(
+		C.to_arrow_schema(unsafe.Pointer(&inSchema)),
+		C.to_arrow_array(unsafe.Pointer(&inArray)),
+		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
+		C.to_arrow_schema(unsafe.Pointer(&historyInSchema)),
+		cOptsJson,
+		C.to_arrow_schema(unsafe.Pointer(&outSchema)),
+		C.to_arrow_array(unsafe.Pointer(&outArray)),
+	)
+
+	duration := time.Since(tnow)
+	if !success {
+		return nil, fmt.Errorf("dynamics fit predict failed (duration: %v)", duration)
+	}
+
+	imp, err := cdata.ImportCRecordBatch(&outArray, &outSchema)
+	if err != nil {
+		return nil, err
+	}
+	defer imp.Release()
+
+	dfData, err := data.FromArrowRecord(imp)
+	if err != nil {
+		return nil, err
+	}
+
+	return dfData, nil
+}
+
+func WriteArrowRecordToCSV(record arrow.RecordBatch, filename string) error {
 	f, err := os.Create(filename)
 	if err != nil {
 		fmt.Printf("Error creating file: %v\n", err)

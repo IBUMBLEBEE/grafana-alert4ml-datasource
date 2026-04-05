@@ -1,3 +1,5 @@
+pub mod dynamics;
+
 use polars::prelude::*;
 use polars::datatypes::DataType;
 use rsod_core::{DetectionResult, TimeSeriesInput};
@@ -424,21 +426,6 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
     Ok(result)
 }
 
-#[allow(dead_code)]
-fn array_to_dataframe(data: &[[f64; 2]]) -> DataFrame {
-    let mut timestamps = Vec::new();
-    let mut values = Vec::new();
-    
-    for [timestamp, value] in data {
-        timestamps.push((timestamp * 1000.0) as i64); // Convert to milliseconds
-        values.push(*value);
-    }
-    
-    DataFrame::new(vec![
-        Series::new(TIMESTAMP_COL.into(), timestamps).into(),
-        Series::new(METRIC_VALUE_COL.into(), values).into(),
-    ]).unwrap()
-}
 
 #[cfg(test)]
 mod tests {

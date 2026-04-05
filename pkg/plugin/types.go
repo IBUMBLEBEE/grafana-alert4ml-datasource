@@ -28,7 +28,6 @@ type HistoryTimeRange struct {
 }
 
 // HyperParams 是所有超参数的接口
-// 参考 gRPC 源码模式，添加 SetDefaults 方法
 type HyperParams interface {
 	GetType() string
 	SetDefaults() // 设置默认值的方法
@@ -42,13 +41,19 @@ func ParseHyperParams(detectType string, data json.RawMessage) (HyperParams, err
 		if err := json.Unmarshal(data, &params); err != nil {
 			return nil, fmt.Errorf("failed to parse RsodHyperParams: %w", err)
 		}
-		// 参考 gRPC 源码模式，解析后自动设置默认值
 		params.SetDefaults()
 		return &params, nil
 	case constant.SupportDetectTypeBaseline:
 		var params BaselineHyperParams
 		if err := json.Unmarshal(data, &params); err != nil {
 			return nil, fmt.Errorf("failed to parse BaselineHyperParams: %w", err)
+		}
+		params.SetDefaults()
+		return &params, nil
+	case constant.BaselineDetectTypeDynamics:
+		var params DynamicsHyperParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return nil, fmt.Errorf("failed to parse DynamicsHyperParams: %w", err)
 		}
 		params.SetDefaults()
 		return &params, nil
@@ -124,6 +129,41 @@ func (p *BaselineHyperParams) SetDefaults() {
 	}
 	if p.StdDevMultiplier == 0 {
 		p.StdDevMultiplier = constant.DefaultBaselineStdDevMultiplier
+	}
+}
+
+// DynamicsHyperParams 动态基线检测参数
+type DynamicsHyperParams struct {
+	Seasonality       string  `json:"seasonality,omitempty"`
+	WindowSize        int     `json:"windowSize,omitempty"`
+	MinPoints         int     `json:"minPoints,omitempty"`
+	WarningThreshold  float64 `json:"warningThreshold,omitempty"`
+	CriticalThreshold float64 `json:"criticalThreshold,omitempty"`
+	RobustMode        string  `json:"robustMode,omitempty"`
+}
+
+func (p *DynamicsHyperParams) GetType() string {
+	return constant.BaselineDetectTypeDynamics
+}
+
+func (p *DynamicsHyperParams) SetDefaults() {
+	if p.Seasonality == "" {
+		p.Seasonality = "Weekly"
+	}
+	if p.WindowSize == 0 {
+		p.WindowSize = 4
+	}
+	if p.MinPoints == 0 {
+		p.MinPoints = 3
+	}
+	if p.WarningThreshold == 0 {
+		p.WarningThreshold = 2.0
+	}
+	if p.CriticalThreshold == 0 {
+		p.CriticalThreshold = 4.0
+	}
+	if p.RobustMode == "" {
+		p.RobustMode = "MedianMad"
 	}
 }
 
