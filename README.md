@@ -49,8 +49,6 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 1. Request a service account token. Home --> Administration --> Users and access --> Service accounts
 2. Enter the address and token to access the Grafana API. Home --> Connections --> Data sources --> ibumblebee-alert4ml-datasource
 
-This plugin relies on Grafana's Mixed data source mode.
-
 ![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/demo.gif)
 
 ### Development building and running
