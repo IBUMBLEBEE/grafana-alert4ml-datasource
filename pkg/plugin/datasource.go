@@ -129,12 +129,10 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 						return nil, err
 					}
 
-					if queryJson.ShowAnomalyPoints {
-						newframe := newDataFrameFromeResult(f, constant.DetectTypeOutlier, constant.GF_FRAME_RESULT_NAME_ANOMALY, selfRefID, resultOutlier)
-						newframes = append(newframes, newframe)
-					}
+					newframe := newDataFrameFromeResult(f, constant.DetectTypeOutlier, constant.GF_FRAME_RESULT_NAME_ANOMALY, selfRefID, resultOutlier)
+					newframes = append(newframes, newframe)
 
-				case constant.SupportDetectTypeBaseline:
+				case constant.BaselineDetectTypeStd, constant.BaselineDetectTypeZScore, constant.BaselineDetectTypeMovingAverage:
 					options := rsod.BaselineOptions{
 						TrendType:        hyperParams.(*BaselineHyperParams).TrendType,
 						IntervalMins:     hyperParams.(*BaselineHyperParams).IntervalMins,
@@ -163,8 +161,8 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 
 					newframe := RenderFrameWithBaseline(resultBaselineDF, selfRefID)
-					if !queryJson.ShowAnomalyPoints {
-						removeAnomalyField(newframe)
+					if queryJson.ShowAnomalyPoints {
+						removeNonAnomalyFields(newframe)
 					}
 					newframes = append(newframes, newframe)
 
@@ -206,14 +204,19 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 						return nil, err
 					}
 					newframe := RenderFrameWithForecast(resultForecastDF, selfRefID, f.Name)
-					if !queryJson.ShowAnomalyPoints {
-						removeAnomalyField(newframe)
+					if queryJson.ShowAnomalyPoints {
+						removeNonAnomalyFields(newframe)
 					}
 					newframes = append(newframes, newframe)
 				}
 			}
 			existingResponse := rsp.Responses[selfRefID]
-			existingResponse.Frames = append(existingResponse.Frames, newframes...)
+			if queryJson.ShowAnomalyPoints {
+				// 仅显示异常点：丢弃原始数据帧，只返回检测结果帧
+				existingResponse.Frames = newframes
+			} else {
+				existingResponse.Frames = append(existingResponse.Frames, newframes...)
+			}
 			newResponses.Responses[selfRefID] = existingResponse
 		}
 	}
@@ -386,7 +389,7 @@ func newDataFrameFromeResult(df *data.Frame, detectType string, resultName strin
 
 	valueField := data.NewField(df.Fields[1].Name, df.Fields[1].Labels, make([]float64, fieldLength))
 	valueField.SetConfig(setDataFrameFieldConfigForOutlier(df, refID, resultName))
-	if detectType == constant.SupportDetectTypeBaseline {
+	if constant.IsBaselineDetectType(detectType) {
 		valueField.SetConfig(setDataFrameFieldConfigForBaseline(df, refID, resultName))
 	}
 	for idx := range fieldLength {
@@ -405,14 +408,14 @@ func newDataFrameFromeResult(df *data.Frame, detectType string, resultName strin
 			if err != nil {
 				return nil
 			}
-			switch detectType {
-			case constant.DetectTypeOutlier:
+			switch {
+			case detectType == constant.DetectTypeOutlier:
 				if result[idx] == 1 {
 					valueField.Set(idx, *value*result[idx])
 				} else {
 					valueField.Set(idx, math.NaN())
 				}
-			case constant.SupportDetectTypeBaseline:
+			case constant.IsBaselineDetectType(detectType):
 				valueField.Set(idx, result[idx])
 			default:
 				valueField.Set(idx, math.NaN())

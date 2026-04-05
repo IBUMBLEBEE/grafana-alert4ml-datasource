@@ -11,7 +11,6 @@ export enum Alert4MLUseCase {
 export enum Alert4MLDetectType {
   Outlier = "outlier",
   Forecast = "forecast",
-  Baseline = "baseline",
 }
 
 export enum Alert4MLLLMDetectType {
@@ -25,33 +24,42 @@ export enum Alert4MLSupportDetect {
   MachineLearning = "machine_learning",
   LLM = "llm",
 }
+
+// Baseline 子算法类型，与 Go 后端 const.go 保持一致
 export enum Alert4MLBaselineDetectType {
-  Baseline = "baseline",
+  Std = "std",
+  ZScore = "zscore",
+  MovingAverage = "moving_average",
 }
 
 export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
   {
-    label: Alert4MLSupportDetect.Baseline,
+    label: "Baseline",
     value: Alert4MLSupportDetect.Baseline,
+    description: "Dynamic baseline detection based on historical time patterns",
     detectTypes: [
-      { label: Alert4MLBaselineDetectType.Baseline, value: Alert4MLBaselineDetectType.Baseline },
+      { label: "Standard Deviation", value: Alert4MLBaselineDetectType.Std, description: "μ ± kσ confidence interval based on historical grouping" },
+      { label: "Z-Score", value: Alert4MLBaselineDetectType.ZScore, description: "Standardized score anomaly detection" },
+      { label: "Moving Average", value: Alert4MLBaselineDetectType.MovingAverage, description: "Moving average smoothed baseline" },
     ],
   },
   {
-    label: Alert4MLSupportDetect.MachineLearning,
+    label: "Machine Learning",
     value: Alert4MLSupportDetect.MachineLearning,
+    description: "Unsupervised ML-based anomaly detection",
     detectTypes: [
-      { label: Alert4MLDetectType.Outlier, value: Alert4MLDetectType.Outlier },
-      { label: Alert4MLDetectType.Forecast, value: Alert4MLDetectType.Forecast }
+      { label: "Outlier (EIF + MSTL)", value: Alert4MLDetectType.Outlier, description: "Extended Isolation Forest with seasonal decomposition" },
+      { label: "Forecast (Gradient Boosting)", value: Alert4MLDetectType.Forecast, description: "PerpetualBooster time series forecasting with confidence intervals" },
     ],
   },
   {
-    label: Alert4MLSupportDetect.LLM,
+    label: "LLM",
     value: Alert4MLSupportDetect.LLM,
+    description: "Large Language Model based anomaly analysis",
     detectTypes: [
-      { label: Alert4MLLLMDetectType.Deepseek, value: Alert4MLLLMDetectType.Deepseek },
-      { label: Alert4MLLLMDetectType.Qwen, value: Alert4MLLLMDetectType.Qwen },
-      { label: Alert4MLLLMDetectType.ChatGPT, value: Alert4MLLLMDetectType.ChatGPT },
+      { label: "DeepSeek", value: Alert4MLLLMDetectType.Deepseek },
+      { label: "Qwen", value: Alert4MLLLMDetectType.Qwen },
+      { label: "ChatGPT", value: Alert4MLLLMDetectType.ChatGPT },
     ],
   }
 ];
@@ -150,7 +158,7 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
   seriesRefId: 'A',
   supportDetect: Alert4MLSupportDetect.MachineLearning,
   detectType: Alert4MLDetectType.Outlier,
-  showAnomalyPoints: true,
+  showAnomalyPoints: false,
   hyperParams: DEFAULT_RSOD_PARAMS,
   targets: [],
   historyTimeRange: DEFAULT_TIME_RANGE,

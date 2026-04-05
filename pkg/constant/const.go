@@ -34,6 +34,16 @@ const (
 	BaselineDetectTypeMovingAverage = "moving_average"
 )
 
+// IsBaselineDetectType 判断 detectType 是否为 Baseline 子类型
+func IsBaselineDetectType(detectType string) bool {
+	switch detectType {
+	case BaselineDetectTypeStd, BaselineDetectTypeZScore, BaselineDetectTypeMovingAverage:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	GF_FRAME_RESULT_NAME_ANOMALY     = "Anomaly"
 	GF_FRAME_RESULT_NAME_BASELINE    = "Baseline"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   InlineField,
   Stack,
@@ -7,7 +7,8 @@ import {
   InlineSwitch,
   RelativeTimeRangePicker,
 } from '@grafana/ui';
-import { QueryEditorProps, SelectableValue, RelativeTimeRange, DataSourceApi } from '@grafana/data';
+import type { ComboboxOption } from '@grafana/ui';
+import { QueryEditorProps, RelativeTimeRange, DataSourceApi } from '@grafana/data';
 import {getTemplateSrv, getDataSourceSrv} from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { DataSource } from '../datasource';
@@ -16,7 +17,6 @@ import {
   Alert4MLQuery,
   ALERT4ML_DATA_SOURCE_TYPE,
   SUPPORT_DETECT_OPTIONS,
-  SupportDetectOption,
   Alert4MLDetectType,
   RsodParams,
   DEFAULT_RSOD_PARAMS,
@@ -50,7 +50,17 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   const [baseDsInstance, setBaseDsInstance] = useState<DataSourceApi | null>(null);
   const [NativeQueryEditor, setNativeQueryEditor] = useState<React.ComponentType<any> | null>(null);
 
-  const dataSourceOptions = React.useMemo(() => {
+  // 缓存每个 dsUid 对应的 rawQuery，切换数据源时可恢复
+  const rawQueryCacheRef = useRef<Record<string, Record<string, any>>>({});
+
+  // 初始化时，将已保存的 rawQuery 存入缓存
+  useEffect(() => {
+    if (baseDsUid && query.rawQuery) {
+      rawQueryCacheRef.current[baseDsUid] = query.rawQuery;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dataSourceOptions: ComboboxOption<string>[] = useMemo(() => {
     return getDataSourceSrv()
       .getList()
       .filter((ds) => ds.type !== ALERT4ML_DATA_SOURCE_TYPE)
@@ -61,8 +71,35 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   }, []);
 
   const onBaseDsUidChange = useCallback((option: { label?: string; value: string } | null) => {
-    onChange({ ...query, baseDsUid: option?.value ?? undefined, rawQuery: undefined, targets: [] });
-  }, [query, onChange]);
+    const newUid = option?.value;
+    const prevUid = query.baseDsUid;
+
+    // 切换到同一个数据源，无需操作
+    if (newUid === prevUid) {
+      return;
+    }
+
+    // 将当前数据源的 rawQuery 保存到缓存
+    if (prevUid && query.rawQuery) {
+      rawQueryCacheRef.current[prevUid] = query.rawQuery;
+    }
+
+    if (!newUid) {
+      // 清空数据源
+      onChange({ ...query, baseDsUid: undefined, rawQuery: undefined, targets: [] });
+      onRunQuery();
+      return;
+    }
+
+    // 尝试从缓存恢复目标数据源的 rawQuery
+    const cachedRawQuery = rawQueryCacheRef.current[newUid];
+    if (cachedRawQuery) {
+      onChange({ ...query, baseDsUid: newUid, rawQuery: cachedRawQuery, targets: [cachedRawQuery as DataQuery] });
+    } else {
+      onChange({ ...query, baseDsUid: newUid, rawQuery: undefined, targets: [] });
+    }
+    onRunQuery();
+  }, [query, onChange, onRunQuery]);
 
   useEffect(() => {
     if (!baseDsUid) {
@@ -103,15 +140,19 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         ? { uid: baseDsInstance.uid, type: baseDsInstance.type }
         : rawQuery.datasource,
     };
+    // 同步更新缓存
+    if (baseDsUid) {
+      rawQueryCacheRef.current[baseDsUid] = enrichedQuery;
+    }
     onChange({ ...query, rawQuery: enrichedQuery, targets: [enrichedQuery] });
-  }, [query, onChange, baseDsInstance]);
+  }, [query, onChange, baseDsInstance, baseDsUid]);
 
   // --- End Base DataSource nested QueryEditor ---
 
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
     detectType = Alert4MLDetectType.Outlier,
-    showAnomalyPoints = true,
+    showAnomalyPoints = false,
     hyperParams = DEFAULT_RSOD_PARAMS,
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
@@ -154,25 +195,36 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   }, []);
 
-  const loadSupportDetectOptions = () => {
-    return SUPPORT_DETECT_OPTIONS;
-  };
+  const supportDetectComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
+    return SUPPORT_DETECT_OPTIONS.map(opt => ({
+      label: opt.label ?? (opt.value as string),
+      value: opt.value as string,
+      description: opt.description,
+    }));
+  }, []);
 
-  const onSupportDetectChange = (v: SupportDetectOption) => {
-    if (v && v.value === Alert4MLSupportDetect.MachineLearning) {
-      runDebouncedQueryWithTempTargets({ supportDetect: v.value, hyperParams: DEFAULT_RSOD_PARAMS });
-    } else if (v && v.value) {
-      runDebouncedQueryWithTempTargets({ supportDetect: v.value });
+  const onSupportDetectChange = (opt: ComboboxOption<string>) => {
+    if (opt.value === Alert4MLSupportDetect.MachineLearning) {
+      runDebouncedQueryWithTempTargets({ supportDetect: opt.value, hyperParams: DEFAULT_RSOD_PARAMS });
+    } else {
+      runDebouncedQueryWithTempTargets({ supportDetect: opt.value });
     }
   };
 
-  const loadDetectTypesOptions = () => {
-    return SUPPORT_DETECT_OPTIONS.find((option) => option.value === supportDetect)?.detectTypes || [];
-  };
+  const detectTypeComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
+    const types = SUPPORT_DETECT_OPTIONS.find(opt => opt.value === supportDetect)?.detectTypes || [];
+    return types.map(t => ({
+      label: t.label ?? (t.value as string),
+      value: t.value as string,
+      description: t.description,
+    }));
+  }, [supportDetect]);
 
   // 根据 detectType 获取对应的默认 hyperParams
   const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | BaselineParams | LLMParams | ForecastParams => {
-    if (detectTypeValue === Alert4MLBaselineDetectType.Baseline) {
+    if (detectTypeValue === Alert4MLBaselineDetectType.Std ||
+        detectTypeValue === Alert4MLBaselineDetectType.ZScore ||
+        detectTypeValue === Alert4MLBaselineDetectType.MovingAverage) {
       return DEFAULT_BASELINE_PARAMS;
     }
     if (detectTypeValue === Alert4MLLLMDetectType.Deepseek || 
@@ -201,11 +253,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     isInitialized.current = true;
   }, [supportDetect]);
 
-  const onDetectTypeChange = (v: SelectableValue) => {
-    if (v && v.value) {
-      const defaultParams = getDefaultHyperParamsByDetectType(v.value);
-      runDebouncedQueryWithTempTargets({ detectType: v.value, hyperParams: defaultParams });
-    }
+  const onDetectTypeChange = (opt: ComboboxOption<string>) => {
+    const defaultParams = getDefaultHyperParamsByDetectType(opt.value);
+    runDebouncedQueryWithTempTargets({ detectType: opt.value, hyperParams: defaultParams });
   };
 
   const onHyperParamsChange = (params: RsodParams | BaselineParams | LLMParams | ForecastParams) => {
@@ -247,10 +297,11 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         <Stack direction="column" gap={1}>
           <InlineField label="Base DataSource" tooltip="Select the data source whose native query editor will be embedded">
             <Combobox
+              isClearable
               width={30}
               options={dataSourceOptions}
-              value={baseDsUid ?? ''}
-              onChange={(v) => onBaseDsUidChange(v)}
+              value={baseDsUid ?? null}
+              onChange={(opt) => onBaseDsUidChange(opt ? { value: opt.value } : null)}
             />
           </InlineField>
           {NativeQueryEditor && baseDsInstance && (
@@ -276,16 +327,16 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           <Stack gap={0}>
               <InlineField label="Support Detect">
           <Combobox
-            options={loadSupportDetectOptions() as any}
-            onChange={(v) => v && onSupportDetectChange(v as SupportDetectOption)}
-            value={supportDetect || ''}
+            options={supportDetectComboboxOptions}
+            onChange={(opt) => onSupportDetectChange(opt)}
+            value={supportDetect || null}
           />
         </InlineField>
-        <InlineField label="Detect Types" disabled={!loadDetectTypesOptions() || loadDetectTypesOptions().length === 0}>
+        <InlineField label="Detect Types" disabled={detectTypeComboboxOptions.length === 0}>
           <Combobox
-            options={loadDetectTypesOptions() as any}
-            onChange={(v) => v && onDetectTypeChange(v as SelectableValue)}
-            value={detectType || ''}
+            options={detectTypeComboboxOptions}
+            onChange={(opt) => onDetectTypeChange(opt)}
+            value={detectType || null}
           />
         </InlineField>
       </Stack>
@@ -297,7 +348,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           />
         </InlineField>
         <InlineSwitch
-          label="Show Anomaly Points"
+          label="Only Anomaly Points"
           showLabel={true}
           value={showAnomalyPoints || false}
           onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
@@ -311,7 +362,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           onToggle={() => setIsHyperParamsOpen(prev => !prev)}
           collapsible
           >
-            {detectType === Alert4MLBaselineDetectType.Baseline && (
+            {(detectType === Alert4MLBaselineDetectType.Std ||
+              detectType === Alert4MLBaselineDetectType.ZScore ||
+              detectType === Alert4MLBaselineDetectType.MovingAverage) && (
               <Baseline
                 params={(hyperParams as BaselineParams) || DEFAULT_BASELINE_PARAMS}
                 onParamsChange={(params) => params && onHyperParamsChange(params)}
