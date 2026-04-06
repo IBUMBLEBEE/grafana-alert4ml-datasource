@@ -37,5 +37,8 @@ polars-arrow = "0.51.0"
 perpetual = "0.10.0"
 anofox-forecast = { version = "0.5", default-features = false }
 
+[profile.release]
+panic = "abort"
+
 [workspace.lints.rust]
 missing_debug_implementations = "warn"

@@ -1,10 +1,10 @@
 name: 'Rust Plugin Builder'
-description: 'Compiles Rust backend for the plugin'
+description: 'Compiles Rust static library for the plugin (musl targets) using cargo-zigbuild'
 
 inputs:
   target:
-    description: 'Compilation target'
-    default: 'x86_64-unknown-linux-gnu'
+    description: 'Rust compilation target (musl)'
+    default: 'x86_64-unknown-linux-musl'
     required: true
 
 runs:
@@ -12,53 +12,28 @@ runs:
   steps:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.target }}
 
-    - name: Build Rust Backend
+    - name: Install zig
       shell: bash
       run: |
-        mkdir -p ./dist-rs
-        cd rsod/
-        cargo install cross --git https://github.com/cross-rs/cross
-        
-        # Build rsod crate which produces the shared library
+        ZIG_VERSION=0.15.2
+        curl -fsSL https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz \
+          | tar xJ -C /tmp
+        sudo mv /tmp/zig-linux-x86_64-${ZIG_VERSION} /opt/zig
+        sudo ln -sf /opt/zig/zig /usr/local/bin/zig
+        zig version
+
+    - name: Install cargo-zigbuild
+      shell: bash
+      run: cargo install cargo-zigbuild --locked
+
+    - name: Build Rust static library
+      shell: bash
+      run: |
         echo "Building rsod for target: ${{ inputs.target }}"
-        cross build --release --target ${{ inputs.target }}
-        
-        # Copy library files based on target platform
-        TARGET_DIR="target/${{ inputs.target }}/release"
-        
-        # Debug: list what was built
-        echo "=== Build artifacts in $TARGET_DIR ==="
-        ls -lh "$TARGET_DIR" | grep -E '\.(so|dll|dylib)' | head -20 || echo "Looking for library files..."
-        echo "=== Checking for library files ==="
-        find "$TARGET_DIR" -maxdepth 1 -type f \( -name "librsod*" -o -name "rsod*.so" -o -name "rsod*.dll" -o -name "librsod*.dylib" \) -exec ls -lh {} \;
-        
-        # Copy based on platform
-        case "${{ inputs.target }}" in
-          *linux*)
-            echo "Copying .so files for Linux..."
-            cp "$TARGET_DIR"/librsod*.so ../dist-rs/ 2>/dev/null && echo "✓ Copied .so files" || echo "⚠ No .so files found"
-            ;;
-          *windows*)
-            echo "Copying .dll files for Windows..."
-            cp "$TARGET_DIR"/*.dll ../dist-rs/ 2>/dev/null && echo "✓ Copied .dll files" || echo "⚠ No .dll files found"
-            ;;
-          *darwin*)
-            echo "Copying .dylib files for macOS..."
-            cp "$TARGET_DIR"/librsod*.dylib ../dist-rs/ 2>/dev/null && echo "✓ Copied .dylib files" || echo "⚠ No .dylib files found"
-            ;;
-          *)
-            echo "Unknown target platform, attempting generic copy..."
-            find "$TARGET_DIR" -maxdepth 1 -type f \( -name "librsod*" -o -name "rsod*.dll" \) -exec cp {} ../dist-rs/ \; && echo "✓ Copied files" || echo "⚠ No library files found"
-            ;;
-        esac
-        
-        # Verify dist-rs directory contents
-        echo "=== Verifying dist-rs directory ==="
-        if [ -d ../dist-rs ] && [ "$(ls -A ../dist-rs 2>/dev/null | wc -l)" -gt 0 ]; then
-          ls -lh ../dist-rs/
-          echo "✓ Build artifacts copied successfully"
-        else
-          echo "⚠ Warning: dist-rs directory is empty or missing"
-          exit 1
-        fi
+        cd rsod/
+        cargo zigbuild --release --target ${{ inputs.target }}
+        echo "=== Static library ==="
+        ls -lh target/${{ inputs.target }}/release/librsod_go.a

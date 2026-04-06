@@ -19,6 +19,12 @@ runs:
       shell: bash
       run: |
         case "${{ inputs.target }}" in
+          x86_64-unknown-linux-musl)
+            echo "os_arch=linux-amd64" >> $GITHUB_OUTPUT
+            ;;
+          aarch64-unknown-linux-musl)
+            echo "os_arch=linux-arm64" >> $GITHUB_OUTPUT
+            ;;
           x86_64-unknown-linux-gnu)
             echo "os_arch=linux-amd64" >> $GITHUB_OUTPUT
             ;;

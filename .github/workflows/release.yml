@@ -1,5 +1,4 @@
 name: "Grafana Build Plugin"
-description: "Builds a Grafana plugin"
 
 on:
   push:
@@ -7,95 +6,99 @@ on:
       - 'v*' # Run workflow on version tags, e.g. v1.0.0.
 
 jobs:
-  release:
-    permissions:
-      id-token: write
-      contents: write
-      attestations: write
+  # ── Step 1: Build frontend once ─────────────────────────────
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Node.js Builder
+        uses: ./.github/actions/js-builder
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-frontend
+          path: dist/
+          retention-days: 1
+
+  # ── Step 2: Build Rust + Go backend per platform ─────────────
+  build-backend:
+    needs: build-frontend
     runs-on: ubuntu-latest
     env:
       PLUGIN_NAME: ibumblebee-alert4ml-datasource
     strategy:
       matrix:
-        target:
-          - 'x86_64-unknown-linux-gnu'
-          # - 'aarch64-unknown-linux-gnu'
-          # - 'aarch64-apple-darwin'
-          # - 'x86_64-pc-windows-gnu'
-          # - 'aarch64-pc-windows-gnu'
+        include:
+          - target: x86_64-unknown-linux-musl
+            os_arch: linux-amd64
+          - target: aarch64-unknown-linux-musl
+            os_arch: linux-arm64
     steps:
-      - name: Install dependencies
+      - name: Install system dependencies
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config zip tar
-        
+
       - uses: actions/checkout@v4
-      
-      - name: Map Rust Target to OS-Arch
-        id: target-map
-        uses: ./.github/actions/target-mapper
-        with:
-          target: ${{ matrix.target }}
-      
+
       - name: Run Rust Builder
         uses: ./.github/actions/rust-builder
         with:
           target: ${{ matrix.target }}
-      
+
       - name: Run Go Builder
         uses: ./.github/actions/go-builder
         with:
           target: ${{ matrix.target }}
-  
-      - name: Run Node.js Builder
-        uses: ./.github/actions/js-builder
 
-      - name: Merge Rust Build Artifacts
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-frontend
+          path: dist/
+
+      - name: Verify dist contents
         shell: bash
         run: |
-          # Ensure dist directory exists and contains Go/JS builds
-          if [ ! -d dist ]; then
-            echo "Error: dist directory not created by Go/JS builders"
-            exit 1
-          fi
-          
-          # Copy Rust artifacts to dist (library files)
-          if [ -d dist-rs ] && [ "$(ls -A dist-rs 2>/dev/null | wc -l)" -gt 0 ]; then
-            echo "Copying Rust build artifacts to dist..."
-            cp -f dist-rs/* dist/ 2>/dev/null && echo "✓ Merged Rust artifacts" || echo "✓ No Rust artifacts to merge"
-          else
-            echo "⚠ Warning: No Rust artifacts found in dist-rs"
-          fi
-          
-          # Verify final dist contents
-          echo "=== Final dist directory contents ==="
+          echo "=== dist/ contents ==="
           ls -lh dist/
-          file_count=$(ls -1 dist | wc -l)
-          echo "Total files: $file_count"
-          if [ "$file_count" -lt 3 ]; then
-            echo "⚠ Warning: dist directory seems incomplete"
-          fi
 
-      - name: Archive as ZIP
+      - name: Package plugin
         shell: bash
         run: |
-          # Rename dist to plugin directory for cleaner archive structure
+          cp -f README.md dist/README.md 2>/dev/null || true
           mv dist ${{ env.PLUGIN_NAME }}
-          
-          # Create ZIP with plugin directory as root
-          zip -r ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip ${{ env.PLUGIN_NAME }}/
+          zip -r ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ matrix.os_arch }}.zip ${{ env.PLUGIN_NAME }}/
+          tar -czf ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ matrix.os_arch }}.tar.gz ${{ env.PLUGIN_NAME }}/
 
-      - name: Archive as TAR.GZ
-        shell: bash
-        run: |
-          # Create TAR.GZ with plugin directory as root
-          tar -czf ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz ${{ env.PLUGIN_NAME }}/
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.os_arch }}
+          path: |
+            ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ matrix.os_arch }}.zip
+            ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ matrix.os_arch }}.tar.gz
+          retention-days: 1
 
-      - name: Release
+  # ── Step 3: Create GitHub release with all platform packages ─
+  release:
+    needs: build-backend
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
         with:
           files: |
-            ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.zip
-            ${{ env.PLUGIN_NAME }}-${{ github.ref_name }}-${{ steps.target-map.outputs.os_arch }}.tar.gz
+            *.zip
+            *.tar.gz

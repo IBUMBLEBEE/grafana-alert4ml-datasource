@@ -6,6 +6,8 @@ require (
 	github.com/apache/arrow-go/v18 v18.5.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/grafana-plugin-sdk-go v0.290.0
+	github.com/lib/pq v1.12.2
+	github.com/magefile/mage v1.15.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/xhit/go-str2duration/v2 v2.1.0
 )
@@ -13,7 +15,6 @@ require (
 require github.com/tidwall/match v1.1.1 // indirect
 
 require (
-	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -21,7 +22,6 @@ require (
 	github.com/clipperhouse/displaywidth v0.6.2 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
-	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -43,8 +43,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/lib/pq v1.12.2 // indirect
-	github.com/magefile/mage v1.15.0 // indirect
 	github.com/mattetti/filebuffer v1.0.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -63,13 +61,8 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
-	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
-	github.com/unknwon/bra v0.0.0-20200517080246-1e3013ecaff8 // indirect
-	github.com/unknwon/com v1.0.1 // indirect
-	github.com/unknwon/log v0.0.0-20150304194804-e617c87089d3 // indirect
-	github.com/urfave/cli v1.22.17 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.65.0 // indirect
@@ -96,5 +89,4 @@ require (
 	google.golang.org/genproto v0.0.0-20210630183607-d20f26d13c79 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/fsnotify/fsnotify.v1 v1.4.7 // indirect
 )
