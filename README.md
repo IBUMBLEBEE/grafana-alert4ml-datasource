@@ -37,12 +37,10 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 ### Installation
 
-**The Grafana plugin directory must be `/var/lib/grafana/plugins` because `CGO` specifies this path for searching. [Reference](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/pkg/rsod/rsod.go#L7).**
-
 1. [Download from release](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases)
-2. Unzip file. `unzip ibumblebee-alert4ml-datasource-v0.1.21-linux-amd64.zip`
+2. Unzip file. `unzip ibumblebee-alert4ml-datasource-<RELEASE_VERSION>-linux-amd64.zip`
 
-3. Move to `/var/lib/grafana/plugins/ibumblebee-alert4ml-datasource`
+3. Move to `/<GRAFANA_DATA_DIR>/plugins/ibumblebee-alert4ml-datasource`
 
 ## Configuration
 
