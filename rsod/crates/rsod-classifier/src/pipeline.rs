@@ -118,8 +118,8 @@ impl TimeSeriesClassifierPipeline {
         seasonality: &Option<SeasonalityAnalysis>,
         periodicity: &Option<PeriodicityAnalysis>,
     ) -> (SeriesCharacteristic, f64, String) {
-        let mut reasoning = String::new();
-        let mut confidence = 0.75;
+        let mut reasoning;
+        let confidence;
 
         // Check for irregular/noisy data
         if *cv > self.config.irregular_cv_threshold {
