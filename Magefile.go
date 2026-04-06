@@ -89,7 +89,7 @@ func buildGo(goos, goarch, cc, rustTarget string) error {
 
 // Linux builds Go plugin for linux/amd64 (static, no glibc).
 func (Build) Linux() error {
-	return buildGo("linux", "amd64", "musl-gcc", rustTargetAMD64)
+	return buildGo("linux", "amd64", "x86_64-linux-musl-gcc", rustTargetAMD64)
 }
 
 // LinuxARM64 builds Go plugin for linux/arm64 (static, no glibc).
@@ -97,16 +97,16 @@ func (Build) LinuxARM64() error {
 	return buildGo("linux", "arm64", "aarch64-linux-musl-gcc", rustTargetARM64)
 }
 
-// RsAMD64 builds Rust library for linux/amd64 (musl static).
+// RsAMD64 builds Rust library for linux/amd64 (musl static) using cargo-zigbuild.
 func (Build) RsAMD64() error {
-	return sh.RunV("cross", "build", "--release",
+	return sh.RunV("cargo", "zigbuild", "--release",
 		"--target", rustTargetAMD64,
 		"--manifest-path", filepath.Join("rsod", "Cargo.toml"))
 }
 
-// RsARM64 builds Rust library for linux/arm64 (musl static).
+// RsARM64 builds Rust library for linux/arm64 (musl static) using cargo-zigbuild.
 func (Build) RsARM64() error {
-	return sh.RunV("cross", "build", "--release",
+	return sh.RunV("cargo", "zigbuild", "--release",
 		"--target", rustTargetARM64,
 		"--manifest-path", filepath.Join("rsod", "Cargo.toml"))
 }

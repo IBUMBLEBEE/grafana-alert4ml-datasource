@@ -1,5 +1,5 @@
 name: 'Rust Plugin Builder'
-description: 'Compiles Rust static library for the plugin (musl targets)'
+description: 'Compiles Rust static library for the plugin (musl targets) using cargo-zigbuild'
 
 inputs:
   target:
@@ -12,16 +12,28 @@ runs:
   steps:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.target }}
 
-    - name: Install cross
+    - name: Install zig
       shell: bash
-      run: cargo install cross --locked
+      run: |
+        ZIG_VERSION=0.15.2
+        curl -fsSL https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz \
+          | tar xJ -C /tmp
+        sudo mv /tmp/zig-linux-x86_64-${ZIG_VERSION} /opt/zig
+        sudo ln -sf /opt/zig/zig /usr/local/bin/zig
+        zig version
+
+    - name: Install cargo-zigbuild
+      shell: bash
+      run: cargo install cargo-zigbuild --locked
 
     - name: Build Rust static library
       shell: bash
       run: |
         echo "Building rsod for target: ${{ inputs.target }}"
         cd rsod/
-        cross build --release --target ${{ inputs.target }}
+        cargo zigbuild --release --target ${{ inputs.target }}
         echo "=== Static library ==="
         ls -lh target/${{ inputs.target }}/release/librsod_go.a
