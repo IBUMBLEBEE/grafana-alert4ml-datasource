@@ -1,26 +1,64 @@
 name: 'GO Plugin Builder'
-description: 'Compiles Go backend for the plugin'
+description: 'Compiles Go backend for the plugin (linux/amd64 and linux/arm64)'
 
 inputs:
   target:
-    description: 'Compilation target'
-    default: 'x86_64-unknown-linux-gnu'
+    description: 'Rust target triple (x86_64-unknown-linux-musl or aarch64-unknown-linux-musl)'
+    default: 'x86_64-unknown-linux-musl'
     required: true
 
 runs:
   using: "composite"
   steps:
+    # ── amd64: musl-gcc from musl-tools ─────────────────────
+    - name: Install musl-tools (amd64)
+      if: inputs.target == 'x86_64-unknown-linux-musl'
+      shell: bash
+      run: |
+        sudo apt-get install -y musl-tools
+        musl-gcc --version
+
+    # ── arm64: zig cc as aarch64-linux-musl-gcc wrapper ─────
+    - name: Install zig (arm64 cross-compiler)
+      if: inputs.target == 'aarch64-unknown-linux-musl'
+      shell: bash
+      run: |
+        ZIG_VERSION=0.15.2
+        curl -fsSL https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz \
+          | tar xJ -C /tmp
+        sudo mv /tmp/zig-linux-x86_64-${ZIG_VERSION} /opt/zig
+        sudo ln -sf /opt/zig/zig /usr/local/bin/zig
+        zig version
+
+    - name: Create aarch64-linux-musl-gcc wrapper
+      if: inputs.target == 'aarch64-unknown-linux-musl'
+      shell: bash
+      run: |
+        printf '#!/bin/sh\nexec zig cc -target aarch64-linux-musl "$@"\n' \
+          | sudo tee /usr/local/bin/aarch64-linux-musl-gcc
+        sudo chmod +x /usr/local/bin/aarch64-linux-musl-gcc
+        # smoke test
+        echo 'int main(){}' | aarch64-linux-musl-gcc -x c - -o /tmp/zt && file /tmp/zt
+
+    # ── Go setup ─────────────────────────────────────────────
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: '1.25'
-    
+
     - name: Download Go dependencies
       shell: bash
       run: |
         go install github.com/magefile/mage@latest
         go mod download
-    
-    - name: Build Go Backend
+
+    # ── Build ────────────────────────────────────────────────
+    - name: Build Go Backend (linux/amd64)
+      if: inputs.target == 'x86_64-unknown-linux-musl'
       shell: bash
       run: mage -v build:linux
+
+    - name: Build Go Backend (linux/arm64)
+      if: inputs.target == 'aarch64-unknown-linux-musl'
+      shell: bash
+      run: mage -v build:linuxARM64

@@ -5,6 +5,7 @@ package rsod
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../rsod/crates/rsod-ffi/include
 #cgo linux LDFLAGS: -lrsod_go -lm -lpthread
+#cgo linux,arm64 LDFLAGS: -lunwind
 
 #include "rsod_go.h"
 */
