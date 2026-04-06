@@ -39,7 +39,6 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 1. [Download from release](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases)
 2. Unzip file. `unzip ibumblebee-alert4ml-datasource-<RELEASE_VERSION>-linux-amd64.zip`
-
 3. Move to `/<GRAFANA_DATA_DIR>/plugins/ibumblebee-alert4ml-datasource`
 
 ## Configuration
