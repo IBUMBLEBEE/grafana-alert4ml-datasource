@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*' # Run workflow on version tags, e.g. v1.0.0.
+  workflow_dispatch:  # Allow manual triggering from GitHub UI
 
 jobs:
   # ── Step 1: Build frontend once ─────────────────────────────
@@ -33,8 +34,8 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             os_arch: linux-amd64
-          - target: aarch64-unknown-linux-musl
-            os_arch: linux-arm64
+          # - target: aarch64-unknown-linux-musl
+          #   os_arch: linux-arm64
     steps:
       - name: Install system dependencies
         shell: bash

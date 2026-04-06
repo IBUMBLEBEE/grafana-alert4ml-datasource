@@ -15,6 +15,10 @@ runs:
       with:
         targets: ${{ inputs.target }}
 
+    - name: Add Rust musl target
+      shell: bash
+      run: rustup target add ${{ inputs.target }}
+
     - name: Install zig
       shell: bash
       run: |
