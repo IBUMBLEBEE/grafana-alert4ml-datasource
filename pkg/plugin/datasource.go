@@ -168,12 +168,9 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 				case constant.BaselineDetectTypeDynamics:
 					options := rsod.DynamicsOptions{
-						Seasonality:       hyperParams.(*DynamicsHyperParams).Seasonality,
-						WindowSize:        hyperParams.(*DynamicsHyperParams).WindowSize,
-						MinPoints:         hyperParams.(*DynamicsHyperParams).MinPoints,
-						WarningThreshold:  hyperParams.(*DynamicsHyperParams).WarningThreshold,
-						CriticalThreshold: hyperParams.(*DynamicsHyperParams).CriticalThreshold,
-						RobustMode:        hyperParams.(*DynamicsHyperParams).RobustMode,
+						Trend:            hyperParams.(*DynamicsHyperParams).Trend,
+						PeriodDays:       hyperParams.(*DynamicsHyperParams).PeriodDays,
+						StdDevMultiplier: hyperParams.(*DynamicsHyperParams).StdDevMultiplier,
 					}
 					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]

@@ -9,23 +9,16 @@ interface DynamicsProps {
   onParamsChange: (params: DynamicsParams) => void;
 }
 
-const SEASONALITY_OPTIONS = [
-  { label: 'Daily', value: 'Daily' },
-  { label: 'Weekly', value: 'Weekly' },
-];
-
-const ROBUST_MODE_OPTIONS = [
-  { label: 'Classical', value: 'Classical' },
-  { label: 'Median MAD', value: 'MedianMad' },
-  { label: 'Trimmed Mean', value: 'TrimmedMean' },
+const TREND_OPTIONS = [
+  { label: 'Daily', value: 'daily' },
+  { label: 'Weekly', value: 'weekly' },
+  { label: 'Monthly', value: 'monthly' },
+  { label: 'None', value: 'none' },
 ];
 
 export const Dynamics: React.FC<DynamicsProps> = ({ params, onParamsChange }) => {
-  const currentSeasonality = params.seasonality || DEFAULT_DYNAMICS_PARAMS.seasonality;
-  const seasonalityOption = SEASONALITY_OPTIONS.find(opt => opt.value === currentSeasonality) || SEASONALITY_OPTIONS[1];
-
-  const currentRobustMode = params.robustMode || DEFAULT_DYNAMICS_PARAMS.robustMode;
-  const robustModeOption = ROBUST_MODE_OPTIONS.find(opt => opt.value === currentRobustMode) || ROBUST_MODE_OPTIONS[1];
+  const currentTrend = params.trend || DEFAULT_DYNAMICS_PARAMS.trend;
+  const trendOption = TREND_OPTIONS.find(opt => opt.value === currentTrend) || TREND_OPTIONS[1];
 
   const handleNumberChange = (key: keyof DynamicsParams, value: string) => {
     const parsedValue = value === '' ? undefined : parseFloat(value);
@@ -43,60 +36,33 @@ export const Dynamics: React.FC<DynamicsProps> = ({ params, onParamsChange }) =>
 
   return (
     <Stack direction="column" gap={1}>
-      <InlineField label="Seasonality" tooltip="Seasonal period used for hourly aggregation (default Weekly)">
+      <InlineField label="Trend" tooltip="Seasonal grouping strategy: Daily (hourly buckets), Weekly (weekday×hour), Monthly (day×hour), None (single bucket)">
         <Combobox
-          options={SEASONALITY_OPTIONS}
-          value={seasonalityOption}
+          options={TREND_OPTIONS}
+          value={trendOption}
           onChange={(v: SelectableValue) => {
             if (v && v.value) {
-              onParamsChange({ ...params, seasonality: v.value as string });
+              onParamsChange({ ...params, trend: v.value as string });
             }
           }}
         />
       </InlineField>
-      <InlineField label="Window Size" tooltip="Number of seasonal slots used for robust statistics (default 4)">
+      <InlineField label="Period (days)" tooltip="Lookback window in days. Leave empty to use default based on trend (Daily=30, Weekly=90, Monthly=365, None=30)">
         <Input
-          value={params.windowSize ?? DEFAULT_DYNAMICS_PARAMS.windowSize}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleIntChange('windowSize', event.target.value)}
+          value={params.periodDays ?? ''}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => handleIntChange('periodDays', event.target.value)}
           type="number"
           min="1"
+          placeholder="auto"
         />
       </InlineField>
-      <InlineField label="Min Points" tooltip="Minimum data points required in a slot for valid baseline (default 3)">
+      <InlineField label="Std Dev Multiplier" tooltip="σ multiplier for upper/lower bounds (default 2.0)">
         <Input
-          value={params.minPoints ?? DEFAULT_DYNAMICS_PARAMS.minPoints}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleIntChange('minPoints', event.target.value)}
-          type="number"
-          min="1"
-        />
-      </InlineField>
-      <InlineField label="Warning Threshold" tooltip="MAD multiplier for warning level anomaly (default 2.0)">
-        <Input
-          value={params.warningThreshold ?? DEFAULT_DYNAMICS_PARAMS.warningThreshold}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleNumberChange('warningThreshold', event.target.value)}
+          value={params.stdDevMultiplier ?? DEFAULT_DYNAMICS_PARAMS.stdDevMultiplier}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => handleNumberChange('stdDevMultiplier', event.target.value)}
           type="number"
           step="0.1"
-          min="0"
-        />
-      </InlineField>
-      <InlineField label="Critical Threshold" tooltip="MAD multiplier for critical level anomaly (default 4.0)">
-        <Input
-          value={params.criticalThreshold ?? DEFAULT_DYNAMICS_PARAMS.criticalThreshold}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleNumberChange('criticalThreshold', event.target.value)}
-          type="number"
-          step="0.1"
-          min="0"
-        />
-      </InlineField>
-      <InlineField label="Robust Mode" tooltip="Statistical method for baseline estimation (default Median MAD)">
-        <Combobox
-          options={ROBUST_MODE_OPTIONS}
-          value={robustModeOption}
-          onChange={(v: SelectableValue) => {
-            if (v && v.value) {
-              onParamsChange({ ...params, robustMode: v.value as string });
-            }
-          }}
+          min="0.1"
         />
       </InlineField>
     </Stack>

@@ -82,12 +82,9 @@ export interface BaselineParams {
 }
 
 export interface DynamicsParams {
-  seasonality?: string;
-  windowSize?: number;
-  minPoints?: number;
-  warningThreshold?: number;
-  criticalThreshold?: number;
-  robustMode?: string;
+  trend?: string;
+  periodDays?: number;
+  stdDevMultiplier?: number;
 }
 
 export interface LLMParams {
@@ -134,12 +131,8 @@ export const DEFAULT_BASELINE_PARAMS: BaselineParams = {
 };
 
 export const DEFAULT_DYNAMICS_PARAMS: DynamicsParams = {
-  seasonality: 'Weekly',
-  windowSize: 4,
-  minPoints: 3,
-  warningThreshold: 2.0,
-  criticalThreshold: 4.0,
-  robustMode: 'MedianMad',
+  trend: 'weekly',
+  stdDevMultiplier: 2.0,
 };
 
 export const DEFAULT_LLM_PARAMS: LLMParams = {

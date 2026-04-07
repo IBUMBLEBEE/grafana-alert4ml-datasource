@@ -134,12 +134,9 @@ func (p *BaselineHyperParams) SetDefaults() {
 
 // DynamicsHyperParams 动态基线检测参数
 type DynamicsHyperParams struct {
-	Seasonality       string  `json:"seasonality,omitempty"`
-	WindowSize        int     `json:"windowSize,omitempty"`
-	MinPoints         int     `json:"minPoints,omitempty"`
-	WarningThreshold  float64 `json:"warningThreshold,omitempty"`
-	CriticalThreshold float64 `json:"criticalThreshold,omitempty"`
-	RobustMode        string  `json:"robustMode,omitempty"`
+	Trend            string  `json:"trend,omitempty"`
+	PeriodDays       int     `json:"periodDays,omitempty"`
+	StdDevMultiplier float64 `json:"stdDevMultiplier,omitempty"`
 }
 
 func (p *DynamicsHyperParams) GetType() string {
@@ -147,23 +144,11 @@ func (p *DynamicsHyperParams) GetType() string {
 }
 
 func (p *DynamicsHyperParams) SetDefaults() {
-	if p.Seasonality == "" {
-		p.Seasonality = "Weekly"
+	if p.Trend == "" {
+		p.Trend = "weekly"
 	}
-	if p.WindowSize == 0 {
-		p.WindowSize = 4
-	}
-	if p.MinPoints == 0 {
-		p.MinPoints = 3
-	}
-	if p.WarningThreshold == 0 {
-		p.WarningThreshold = 2.0
-	}
-	if p.CriticalThreshold == 0 {
-		p.CriticalThreshold = 4.0
-	}
-	if p.RobustMode == "" {
-		p.RobustMode = "MedianMad"
+	if p.StdDevMultiplier == 0 {
+		p.StdDevMultiplier = 2.0
 	}
 }
 

@@ -256,7 +256,10 @@ pub extern "C" fn dynamics_fit_predict(
         None => return false,
     };
 
-    let det = dynamics_detect(data_input.as_input(), history_input.as_input(), &opts);
+    let det = match dynamics_detect(data_input.as_input(), history_input.as_input(), &opts) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
 
     let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
     export_ffi_result(out, result_schema, result_array)

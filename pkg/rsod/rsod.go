@@ -42,12 +42,9 @@ type BaselineOptions struct {
 }
 
 type DynamicsOptions struct {
-	Seasonality       string  `json:"seasonality"`
-	WindowSize        int     `json:"window_size"`
-	MinPoints         int     `json:"min_points"`
-	WarningThreshold  float64 `json:"warning_threshold"`
-	CriticalThreshold float64 `json:"critical_threshold"`
-	RobustMode        string  `json:"robust_mode"`
+	Trend            string  `json:"trend"`
+	PeriodDays       int     `json:"period_days,omitempty"`
+	StdDevMultiplier float64 `json:"std_dev_multiplier"`
 }
 
 type LLMOptions struct {
