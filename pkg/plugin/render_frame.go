@@ -125,10 +125,6 @@ func RenderFrameWithOutlier(df *data.Frame) *data.Frame {
 	return df
 }
 
-func RenderFrameWithLLM(df *data.Frame) *data.Frame {
-	return df
-}
-
 func RenderFrameWithForecast(df *data.Frame, refID string, seriesName string) *data.Frame {
 	df.RefID = refID
 	df.Name = seriesName

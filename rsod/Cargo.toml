@@ -34,7 +34,7 @@ itertools = "0.14.0"
 polars = { version = "0.51.0", features = ["lazy"] }
 arrow = { version = "56.2.0", features = ["ffi"] }
 polars-arrow = "0.51.0"
-perpetual = "0.10.0"
+perpetual = "2.1.0"
 anofox-forecast = { version = "0.5", default-features = false }
 
 [profile.release]

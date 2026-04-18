@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use perpetual::{objective_functions::Objective, Matrix, PerpetualBooster};
+use perpetual::{objective::Objective, Matrix, PerpetualBooster};
 use perpetual::booster::config::BoosterIO;
 use std::error::Error;
 use std::io::Write;
@@ -37,6 +37,18 @@ pub struct ForecasterOptions {
     pub std_dev_multiplier: Option<f64>,
     /// Whether to allow lower bound of confidence interval to be negative (default false)
     pub allow_negative_bounds: Option<bool>,
+    /// Maximum number of bins for feature discretization (default 255)
+    pub max_bin: Option<u16>,
+    /// Hard limit on total boosting rounds
+    pub iteration_limit: Option<usize>,
+    /// Max training time in seconds
+    pub timeout: Option<f32>,
+    /// Early stopping rounds
+    pub stopping_rounds: Option<usize>,
+    /// Random seed for reproducibility (default 0)
+    pub seed: Option<u64>,
+    /// Logging frequency, 0 disables logging (default 0)
+    pub log_iterations: Option<usize>,
 }
 
 impl Default for ForecasterOptions {
@@ -52,6 +64,12 @@ impl Default for ForecasterOptions {
             n_lags: Some(5),
             std_dev_multiplier: Some(2.0),
             allow_negative_bounds: Some(false),
+            max_bin: Some(255),
+            iteration_limit: None,
+            timeout: None,
+            stopping_rounds: None,
+            seed: Some(0),
+            log_iterations: Some(0),
         }
     }
 }
@@ -361,7 +379,13 @@ pub fn forecast(
     let mut model = PerpetualBooster::default()
         .set_objective(Objective::SquaredLoss)
         .set_num_threads(options.num_threads)
-        .set_budget(budget);
+        .set_budget(budget)
+        .set_max_bin(options.max_bin.unwrap_or(255))
+        .set_seed(options.seed.unwrap_or(0))
+        .set_log_iterations(options.log_iterations.unwrap_or(0))
+        .set_iteration_limit(options.iteration_limit)
+        .set_timeout(options.timeout)
+        .set_stopping_rounds(options.stopping_rounds);
 
     // Use perpetual's split functionality: pass training weights and validation set indices
     // fit method signature: fit(matrix, targets, train_weights, valid_indices)
@@ -451,6 +475,12 @@ mod tests {
             n_lags: Some(24),
             std_dev_multiplier: Some(2.0),
             allow_negative_bounds: Some(false),
+            max_bin: Some(255),
+            iteration_limit: None,
+            timeout: None,
+            stopping_rounds: None,
+            seed: Some(0),
+            log_iterations: Some(0),
         };
         
         let owned_current = OwnedTimeSeries::from_pairs(&current_data);

@@ -13,36 +13,20 @@ const (
 	DetectTypeChangePoint = "changepoint"
 )
 
-// LLM检测类型
-const (
-	LLMDetectTypeDeepseek = "deepseek"
-	LLMDetectTypeQwen     = "qwen"
-	LLMDetectTypeChatGPT  = "chatgpt"
-)
-
 // 支持的检测类型
 const (
 	SupportDetectTypeBaseline = "baseline"
 	SupportDetectTypeML       = "machine_learning"
-	SupportDetectTypeLLM      = "llm"
 )
 
 // 基线检测类型
 const (
-	BaselineDetectTypeStd           = "std"
-	BaselineDetectTypeZScore        = "zscore"
-	BaselineDetectTypeMovingAverage = "moving_average"
-	BaselineDetectTypeDynamics      = "dynamics"
+	BaselineDetectTypeDynamics = "dynamics"
 )
 
 // IsBaselineDetectType 判断 detectType 是否为 Baseline 子类型
 func IsBaselineDetectType(detectType string) bool {
-	switch detectType {
-	case BaselineDetectTypeStd, BaselineDetectTypeZScore, BaselineDetectTypeMovingAverage, BaselineDetectTypeDynamics:
-		return true
-	default:
-		return false
-	}
+	return detectType == BaselineDetectTypeDynamics
 }
 
 const (
@@ -63,15 +47,6 @@ const (
 	DefaultRsodPeriods   = ""
 	DefaultRsodModelName = "rsod_model"
 	DefaultRsodDBPath    = "rsod_sqlite.db"
-)
-
-// 基线算法默认值
-const (
-	DefaultBaselineTrendType           = "daily"
-	DefaultBaselineIntervalMins        = 15
-	DefaultBaselineConfidenceLevel     = 95.0
-	DefaultBaselineAllowNegativeBounds = false
-	DefaultBaselineStdDevMultiplier    = 2.0
 )
 
 // 默认时间范围（秒）
@@ -97,9 +72,6 @@ var SUPPORT_DETECT_OPTIONS = []SupportDetectOption{
 			Value: SupportDetectTypeBaseline,
 		},
 		DetectTypes: []CommKV{
-			{Label: BaselineDetectTypeStd, Value: BaselineDetectTypeStd},
-			{Label: BaselineDetectTypeZScore, Value: BaselineDetectTypeZScore},
-			{Label: BaselineDetectTypeMovingAverage, Value: BaselineDetectTypeMovingAverage},
 			{Label: BaselineDetectTypeDynamics, Value: BaselineDetectTypeDynamics},
 		},
 	},
@@ -112,17 +84,6 @@ var SUPPORT_DETECT_OPTIONS = []SupportDetectOption{
 			{Label: DetectTypeOutlier, Value: DetectTypeOutlier},
 			{Label: DetectTypeChangePoint, Value: DetectTypeChangePoint},
 			{Label: DetectTypeForecast, Value: DetectTypeForecast},
-		},
-	},
-	{
-		CommKV: CommKV{
-			Label: SupportDetectTypeLLM,
-			Value: SupportDetectTypeLLM,
-		},
-		DetectTypes: []CommKV{
-			{Label: LLMDetectTypeDeepseek, Value: LLMDetectTypeDeepseek},
-			{Label: LLMDetectTypeQwen, Value: LLMDetectTypeQwen},
-			{Label: LLMDetectTypeChatGPT, Value: LLMDetectTypeChatGPT},
 		},
 	},
 }

@@ -45,3 +45,19 @@ func (uk *UniqueKeysUUID) ToUUIDString() (string, error) {
 	}
 	return u.String(), nil
 }
+
+// DeriveUUID creates a new deterministic UUID by combining a base UUID with
+// additional data (e.g. training parameters). Same inputs always produce the
+// same derived UUID, different inputs produce different UUIDs.
+func DeriveUUID(baseUUID string, extra interface{}) (string, error) {
+	base, err := uuid.Parse(baseUUID)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse base UUID: %w", err)
+	}
+	extraJSON, err := json.Marshal(extra)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal extra data: %w", err)
+	}
+	derived := uuid.NewSHA1(base, extraJSON)
+	return derived.String(), nil
+}

@@ -43,24 +43,10 @@ func ParseHyperParams(detectType string, data json.RawMessage) (HyperParams, err
 		}
 		params.SetDefaults()
 		return &params, nil
-	case constant.SupportDetectTypeBaseline:
-		var params BaselineHyperParams
-		if err := json.Unmarshal(data, &params); err != nil {
-			return nil, fmt.Errorf("failed to parse BaselineHyperParams: %w", err)
-		}
-		params.SetDefaults()
-		return &params, nil
 	case constant.BaselineDetectTypeDynamics:
 		var params DynamicsHyperParams
 		if err := json.Unmarshal(data, &params); err != nil {
 			return nil, fmt.Errorf("failed to parse DynamicsHyperParams: %w", err)
-		}
-		params.SetDefaults()
-		return &params, nil
-	case constant.SupportDetectTypeLLM:
-		var params LLMHyperParams
-		if err := json.Unmarshal(data, &params); err != nil {
-			return nil, fmt.Errorf("failed to parse LLMHyperParams: %w", err)
 		}
 		params.SetDefaults()
 		return &params, nil
@@ -77,8 +63,12 @@ func ParseHyperParams(detectType string, data json.RawMessage) (HyperParams, err
 }
 
 type RsodHyperParams struct {
-	Periods   string `json:"periods,omitempty"`
-	ModelName string `json:"model_name,omitempty"`
+	Periods        string `json:"periods,omitempty"`
+	ModelName      string `json:"model_name,omitempty"`
+	NTrees         *int   `json:"nTrees,omitempty"`
+	SampleSize     *int   `json:"sampleSize,omitempty"`
+	MaxTreeDepth   *int   `json:"maxTreeDepth,omitempty"`
+	ExtensionLevel *int   `json:"extensionLevel,omitempty"`
 }
 
 func (p *RsodHyperParams) GetType() string {
@@ -102,36 +92,6 @@ type Alert4MLQueryBody struct {
 	IntervalMs int64             `json:"-"` // 查询间隔，单位毫秒
 }
 
-type BaselineHyperParams struct {
-	TrendType           string  `json:"trendType,omitempty"`
-	IntervalMins        int     `json:"intervalMins,omitempty"`
-	ConfidenceLevel     float64 `json:"confidenceLevel,omitempty"`
-	AllowNegativeBounds bool    `json:"allowNegativeBounds,omitempty"`
-	StdDevMultiplier    float64 `json:"stdDevMultiplier,omitempty"`
-}
-
-func (p *BaselineHyperParams) GetType() string {
-	return constant.SupportDetectTypeBaseline
-}
-
-func (p *BaselineHyperParams) SetDefaults() {
-	if p.TrendType == "" {
-		p.TrendType = constant.DefaultBaselineTrendType
-	}
-	if p.IntervalMins == 0 {
-		p.IntervalMins = constant.DefaultBaselineIntervalMins
-	}
-	if p.ConfidenceLevel == 0 {
-		p.ConfidenceLevel = constant.DefaultBaselineConfidenceLevel
-	}
-	if !p.AllowNegativeBounds {
-		p.AllowNegativeBounds = constant.DefaultBaselineAllowNegativeBounds
-	}
-	if p.StdDevMultiplier == 0 {
-		p.StdDevMultiplier = constant.DefaultBaselineStdDevMultiplier
-	}
-}
-
 // DynamicsHyperParams 动态基线检测参数
 type DynamicsHyperParams struct {
 	Trend            string  `json:"trend,omitempty"`
@@ -152,28 +112,6 @@ func (p *DynamicsHyperParams) SetDefaults() {
 	}
 }
 
-type LLMHyperParams struct {
-	ModelName   string `json:"modelName,omitempty"`
-	Temperature int    `json:"temperature,omitempty"`
-	MaxTokens   int    `json:"maxTokens,omitempty"`
-}
-
-func (p *LLMHyperParams) GetType() string {
-	return constant.SupportDetectTypeLLM
-}
-
-func (p *LLMHyperParams) SetDefaults() {
-	if p.ModelName == "" {
-		p.ModelName = constant.LLMDetectTypeDeepseek
-	}
-	if p.Temperature == 0 {
-		p.Temperature = 1
-	}
-	if p.MaxTokens == 0 {
-		p.MaxTokens = 1000
-	}
-}
-
 type UniqueKeys struct {
 	DashboardUid string `json:"dashboardUid"`
 	PanelId      int    `json:"panelId"`
@@ -181,18 +119,37 @@ type UniqueKeys struct {
 }
 
 type ForecastHyperParams struct {
-	ModelName           string  `json:"model_name"`
-	Periods             string  `json:"periods"`
-	UUID                string  `json:"uuid"`
-	Budget              float32 `json:"budget,omitempty"`
-	NumThreads          int     `json:"numThreads,omitempty"`
-	Nlags               int     `json:"nlags,omitempty"`
-	StdDevMultiplier    float64 `json:"stdDevMultiplier,omitempty"`
-	AllowNegativeBounds bool    `json:"allowNegativeBounds,omitempty"`
+	ModelName           string   `json:"model_name"`
+	Periods             string   `json:"periods"`
+	UUID                string   `json:"uuid"`
+	Budget              float32  `json:"budget,omitempty"`
+	NumThreads          int      `json:"numThreads,omitempty"`
+	Nlags               int      `json:"nlags,omitempty"`
+	StdDevMultiplier    float64  `json:"stdDevMultiplier,omitempty"`
+	AllowNegativeBounds bool     `json:"allowNegativeBounds,omitempty"`
+	MaxBin              uint16   `json:"maxBin,omitempty"`
+	IterationLimit      *int     `json:"iterationLimit,omitempty"`
+	Timeout             *float32 `json:"timeout,omitempty"`
+	StoppingRounds      *int     `json:"stoppingRounds,omitempty"`
+	Seed                *uint64  `json:"seed,omitempty"`
+	LogIterations       *int     `json:"logIterations,omitempty"`
 }
 
 func (p *ForecastHyperParams) GetType() string {
 	return constant.DetectTypeForecast
+}
+
+// ForecastTrainingKey contains only parameters that affect model training.
+// Used to derive a deterministic UUID so that parameter changes trigger retraining.
+type ForecastTrainingKey struct {
+	Periods        []uint   `json:"periods"`
+	Budget         float32  `json:"budget"`
+	NumThreads     int      `json:"num_threads"`
+	MaxBin         uint16   `json:"max_bin"`
+	IterationLimit *int     `json:"iteration_limit"`
+	Timeout        *float32 `json:"timeout"`
+	StoppingRounds *int     `json:"stopping_rounds"`
+	Seed           *uint64  `json:"seed"`
 }
 
 func (p *ForecastHyperParams) SetDefaults() {
@@ -220,5 +177,8 @@ func (p *ForecastHyperParams) SetDefaults() {
 	}
 	if !p.AllowNegativeBounds {
 		p.AllowNegativeBounds = false
+	}
+	if p.MaxBin == 0 {
+		p.MaxBin = 255
 	}
 }

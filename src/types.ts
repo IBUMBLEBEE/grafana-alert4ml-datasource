@@ -13,23 +13,13 @@ export enum Alert4MLDetectType {
   Forecast = "forecast",
 }
 
-export enum Alert4MLLLMDetectType {
-  Deepseek = "deepseek",
-  Qwen = "qwen",
-  ChatGPT = "chatgpt",
-}
-
 export enum Alert4MLSupportDetect {
   Baseline = "baseline",
   MachineLearning = "machine_learning",
-  LLM = "llm",
 }
 
 // Baseline 子算法类型，与 Go 后端 const.go 保持一致
 export enum Alert4MLBaselineDetectType {
-  Std = "std",
-  ZScore = "zscore",
-  MovingAverage = "moving_average",
   Dynamics = "dynamics",
 }
 
@@ -39,9 +29,6 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
     value: Alert4MLSupportDetect.Baseline,
     description: "Dynamic baseline detection based on historical time patterns",
     detectTypes: [
-      { label: "Standard Deviation", value: Alert4MLBaselineDetectType.Std, description: "μ ± kσ confidence interval based on historical grouping" },
-      { label: "Z-Score", value: Alert4MLBaselineDetectType.ZScore, description: "Standardized score anomaly detection" },
-      { label: "Moving Average", value: Alert4MLBaselineDetectType.MovingAverage, description: "Moving average smoothed baseline" },
       { label: "Dynamics", value: Alert4MLBaselineDetectType.Dynamics, description: "Advanced dynamics baseline with seasonal comparison, saturation forecasting, and drift monitoring" },
     ],
   },
@@ -54,16 +41,6 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
       { label: "Forecast (Gradient Boosting)", value: Alert4MLDetectType.Forecast, description: "PerpetualBooster time series forecasting with confidence intervals" },
     ],
   },
-  {
-    label: "LLM",
-    value: Alert4MLSupportDetect.LLM,
-    description: "Large Language Model based anomaly analysis",
-    detectTypes: [
-      { label: "DeepSeek", value: Alert4MLLLMDetectType.Deepseek },
-      { label: "Qwen", value: Alert4MLLLMDetectType.Qwen },
-      { label: "ChatGPT", value: Alert4MLLLMDetectType.ChatGPT },
-    ],
-  }
 ];
 
 
@@ -75,27 +52,20 @@ export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue[] = [
   { label: '30d', value: '30d' },
 ];
 
-export interface BaselineParams {
-  trendType?: 'Daily' | 'Weekly' | 'Monthly' | 'None' | undefined;
-  intervalMins?: number | undefined;
-  stdDevMultiplier?: number | undefined;
-}
-
 export interface DynamicsParams {
   trend?: string;
   periodDays?: number;
   stdDevMultiplier?: number;
 }
 
-export interface LLMParams {
-  modelName?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
-
 export interface RsodParams {
   periods?: string;
   modelName?: string;
+  // Extended Isolation Forest advanced parameters
+  nTrees?: number;
+  sampleSize?: number | null;
+  maxTreeDepth?: number | null;
+  extensionLevel?: number;
 }
 
 export interface ForecastParams {
@@ -104,6 +74,16 @@ export interface ForecastParams {
   uuid?: string;
   stdDevMultiplier?: number;
   allowNegativeBounds?: boolean;
+  // PerpetualBooster advanced parameters
+  budget?: number;
+  numThreads?: number;
+  nlags?: number;
+  maxBin?: number;
+  iterationLimit?: number | null;
+  timeout?: number | null;
+  stoppingRounds?: number | null;
+  seed?: number;
+  logIterations?: number;
 }
 
 export const DEFAULT_FORECAST_PARAMS: ForecastParams = {
@@ -112,6 +92,15 @@ export const DEFAULT_FORECAST_PARAMS: ForecastParams = {
   uuid: '',
   stdDevMultiplier: 2.0,
   allowNegativeBounds: false,
+  budget: 1.0,
+  numThreads: 1,
+  nlags: 5,
+  maxBin: 255,
+  iterationLimit: null,
+  timeout: null,
+  stoppingRounds: null,
+  seed: 0,
+  logIterations: 0,
 };
 
 export const DEFAULT_TIME_RANGE: RelativeTimeRange = {
@@ -122,23 +111,15 @@ export const DEFAULT_TIME_RANGE: RelativeTimeRange = {
 export const DEFAULT_RSOD_PARAMS: RsodParams = {
   periods: '',
   modelName: 'rsod_model',
-};
-
-export const DEFAULT_BASELINE_PARAMS: BaselineParams = {
-  trendType: 'Daily',
-  intervalMins: 15,
-  stdDevMultiplier: 2.0,
+  nTrees: 100,
+  sampleSize: 256,
+  maxTreeDepth: null,
+  extensionLevel: 0,
 };
 
 export const DEFAULT_DYNAMICS_PARAMS: DynamicsParams = {
   trend: 'weekly',
   stdDevMultiplier: 2.0,
-};
-
-export const DEFAULT_LLM_PARAMS: LLMParams = {
-  modelName: 'deepseek-chat',
-  temperature: 0.5,
-  maxTokens: 1000,
 };
 
 export interface UniqueKeys {
@@ -157,7 +138,7 @@ export interface Alert4MLQuery extends DataQuery {
   seriesRefId: string;
   supportDetect: string;
   detectType: string;
-  hyperParams: RsodParams | BaselineParams | DynamicsParams | LLMParams | ForecastParams;
+  hyperParams: RsodParams | DynamicsParams | ForecastParams;
   targets: DataQuery[];
   historyTimeRange: RelativeTimeRange;
   showAnomalyPoints: boolean;
