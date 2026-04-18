@@ -124,7 +124,7 @@ pub extern "C" fn outlier_fit_predict(
         None => return false,
     };
 
-    let det = match outlier(input.as_input(), &opts.periods, &opts.uuid) {
+    let det = match outlier(input.as_input(), &opts) {
         Ok(r) => r,
         Err(_) => return false,
     };
@@ -256,7 +256,10 @@ pub extern "C" fn dynamics_fit_predict(
         None => return false,
     };
 
-    let det = dynamics_detect(data_input.as_input(), history_input.as_input(), &opts);
+    let det = match dynamics_detect(data_input.as_input(), history_input.as_input(), &opts) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
 
     let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
     export_ffi_result(out, result_schema, result_array)
@@ -357,6 +360,10 @@ mod tests {
             model_name: model_name.to_string(),
             periods: periods.clone(),
             uuid: "".to_string(),
+            n_trees: None,
+            sample_size: None,
+            max_tree_depth: None,
+            extension_level: None,
         };
 
         let col1 = Float64Array::from(data.iter().map(|v| v[0]).collect::<Vec<f64>>());
@@ -538,6 +545,12 @@ mod tests {
             n_lags: Some(24),
             std_dev_multiplier: Some(2.0),
             allow_negative_bounds: Some(false),
+            max_bin: Some(255),
+            iteration_limit: None,
+            timeout: None,
+            stopping_rounds: None,
+            seed: Some(0),
+            log_iterations: Some(0),
         };
 
         // 创建当前数据的 StructArray

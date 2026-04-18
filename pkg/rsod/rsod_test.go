@@ -327,6 +327,8 @@ func TestRSODForecaster(t *testing.T) {
 		t.Fatalf("GetDataFromCSV failed: %v", err)
 	}
 
+	seed := uint64(0)
+	logIterations := 0
 	options := ForecasterOptions{
 		ModelName:           "forecaster_model",
 		Periods:             []uint{24, 168},
@@ -336,6 +338,9 @@ func TestRSODForecaster(t *testing.T) {
 		Nlags:               24,
 		StdDevMultiplier:    2.0,
 		AllowNegativeBounds: false,
+		MaxBin:              255,
+		Seed:                &seed,
+		LogIterations:       &logIterations,
 	}
 
 	result, err := RSODForecaster(frame, historyFrame, options)

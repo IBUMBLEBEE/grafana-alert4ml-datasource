@@ -22,12 +22,7 @@ import {
   DEFAULT_RSOD_PARAMS,
   Alert4MLSupportDetect,
   DEFAULT_TIME_RANGE,
-  BaselineParams,
-  DEFAULT_BASELINE_PARAMS,
   Alert4MLBaselineDetectType,
-  Alert4MLLLMDetectType,
-  LLMParams,
-  DEFAULT_LLM_PARAMS,
   UniqueKeys,
   ForecastParams,
   DEFAULT_FORECAST_PARAMS,
@@ -36,9 +31,7 @@ import {
 } from '../types';
 import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
-import { Baseline } from './Baseline';
 import { Dynamics } from './Dynamics';
-import { LLM } from './LLM';
 import { Forecast } from './Forecast';
 
 type Props = QueryEditorProps<DataSource, Alert4MLQuery, Alert4MLDataSourceOptions>;
@@ -224,19 +217,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   }, [supportDetect]);
 
   // 根据 detectType 获取对应的默认 hyperParams
-  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | BaselineParams | DynamicsParams | LLMParams | ForecastParams => {
-    if (detectTypeValue === Alert4MLBaselineDetectType.Std ||
-        detectTypeValue === Alert4MLBaselineDetectType.ZScore ||
-        detectTypeValue === Alert4MLBaselineDetectType.MovingAverage) {
-      return DEFAULT_BASELINE_PARAMS;
-    }
+  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams => {
     if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
       return DEFAULT_DYNAMICS_PARAMS;
-    }
-    if (detectTypeValue === Alert4MLLLMDetectType.Deepseek || 
-        detectTypeValue === Alert4MLLLMDetectType.Qwen || 
-        detectTypeValue === Alert4MLLLMDetectType.ChatGPT) {
-      return DEFAULT_LLM_PARAMS;
     }
     if (detectTypeValue === Alert4MLDetectType.Outlier) {
       return DEFAULT_RSOD_PARAMS;
@@ -264,7 +247,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     runDebouncedQueryWithTempTargets({ detectType: opt.value, hyperParams: defaultParams });
   };
 
-  const onHyperParamsChange = (params: RsodParams | BaselineParams | DynamicsParams | LLMParams | ForecastParams) => {
+  const onHyperParamsChange = (params: RsodParams | DynamicsParams | ForecastParams) => {
     if (params) {
       runDebouncedQueryWithTempTargets({ hyperParams: params });
     }
@@ -368,27 +351,11 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           onToggle={() => setIsHyperParamsOpen(prev => !prev)}
           collapsible
           >
-            {(detectType === Alert4MLBaselineDetectType.Std ||
-              detectType === Alert4MLBaselineDetectType.ZScore ||
-              detectType === Alert4MLBaselineDetectType.MovingAverage) && (
-              <Baseline
-                params={(hyperParams as BaselineParams) || DEFAULT_BASELINE_PARAMS}
-                onParamsChange={(params) => params && onHyperParamsChange(params)}
-              />
-            )}
             {detectType === Alert4MLBaselineDetectType.Dynamics && (
               <Dynamics
                 params={(hyperParams as DynamicsParams) || DEFAULT_DYNAMICS_PARAMS}
                 onParamsChange={(params) => params && onHyperParamsChange(params)}
               />
-            )}
-            {/*  LLM 参数设置 */}
-            {detectType === Alert4MLLLMDetectType.Deepseek && (
-              <LLM
-                params={(hyperParams as LLMParams) || DEFAULT_LLM_PARAMS}
-                onParamsChange={(params) => params && onHyperParamsChange(params)}
-              >
-              </LLM>
             )}
             {detectType === Alert4MLDetectType.Outlier && (
             <RsodHyperParams

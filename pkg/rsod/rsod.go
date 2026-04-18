@@ -27,9 +27,13 @@ import (
 const MISSDATA_THRESHOLD float64 = 30
 
 type OutlierOptions struct {
-	ModelName string `json:"model_name"`
-	Periods   []uint `json:"periods"`
-	UUID      string `json:"uuid"`
+	ModelName      string `json:"model_name"`
+	Periods        []uint `json:"periods"`
+	UUID           string `json:"uuid"`
+	NTrees         *int   `json:"n_trees,omitempty"`
+	SampleSize     *int   `json:"sample_size,omitempty"`
+	MaxTreeDepth   *int   `json:"max_tree_depth,omitempty"`
+	ExtensionLevel *int   `json:"extension_level,omitempty"`
 }
 
 type BaselineOptions struct {
@@ -42,30 +46,26 @@ type BaselineOptions struct {
 }
 
 type DynamicsOptions struct {
-	Seasonality       string  `json:"seasonality"`
-	WindowSize        int     `json:"window_size"`
-	MinPoints         int     `json:"min_points"`
-	WarningThreshold  float64 `json:"warning_threshold"`
-	CriticalThreshold float64 `json:"critical_threshold"`
-	RobustMode        string  `json:"robust_mode"`
-}
-
-type LLMOptions struct {
-	ModelName   string `json:"model_name"`
-	Temperature int    `json:"temperature"`
-	MaxTokens   int    `json:"max_tokens"`
-	UUID        string `json:"uuid"`
+	Trend            string  `json:"trend"`
+	PeriodDays       int     `json:"period_days,omitempty"`
+	StdDevMultiplier float64 `json:"std_dev_multiplier"`
 }
 
 type ForecasterOptions struct {
-	ModelName           string  `json:"model_name"`
-	Periods             []uint  `json:"periods"`
-	UUID                string  `json:"uuid"`
-	Budget              float32 `json:"budget,omitempty"`
-	NumThreads          int     `json:"num_threads,omitempty"`
-	Nlags               int     `json:"n_lags,omitempty"`
-	StdDevMultiplier    float64 `json:"std_dev_multiplier,omitempty"`
-	AllowNegativeBounds bool    `json:"allow_negative_bounds,omitempty"`
+	ModelName           string   `json:"model_name"`
+	Periods             []uint   `json:"periods"`
+	UUID                string   `json:"uuid"`
+	Budget              float32  `json:"budget,omitempty"`
+	NumThreads          int      `json:"num_threads,omitempty"`
+	Nlags               int      `json:"n_lags,omitempty"`
+	StdDevMultiplier    float64  `json:"std_dev_multiplier,omitempty"`
+	AllowNegativeBounds bool     `json:"allow_negative_bounds,omitempty"`
+	MaxBin              uint16   `json:"max_bin,omitempty"`
+	IterationLimit      *int     `json:"iteration_limit,omitempty"`
+	Timeout             *float32 `json:"timeout,omitempty"`
+	StoppingRounds      *int     `json:"stopping_rounds,omitempty"`
+	Seed                *uint64  `json:"seed,omitempty"`
+	LogIterations       *int     `json:"log_iterations,omitempty"`
 }
 
 func tableToRecord(table arrow.Table) arrow.Record {
@@ -156,8 +156,10 @@ func calculateMissingRate(frame *data.Frame, valueField string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if *value == 0 {
+		if value == nil || *value == 0 {
 			zeroCount++
+			newValues[i] = 0
+			continue
 		}
 		newValues[i] = *value
 	}

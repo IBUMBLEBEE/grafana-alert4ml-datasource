@@ -111,7 +111,7 @@ func createTestRequest() *backend.QueryDataRequest {
 				JSON: json.RawMessage(`{
 					"datasource": {"type": "ibumblebee-alert4ml-datasource", "uid": "feuytustyoglce"},
 					"detectType": "outlier",
-					"historyTimeRange": {"from": 300, "to": 0},
+					"historyTimeRange": {"mode": "relative", "relativeDuration": "5m"},
 					"hyperParams": {"modelName": "rsod_model", "periods": "7d,24h"},
 					"intervalMs": 60000,
 					"maxDataPoints": 43200,
@@ -147,7 +147,7 @@ func CreateOutlierDetectionRequest() *backend.QueryDataRequest {
 	req.Queries[0].JSON = json.RawMessage(`{
 		"datasource": {"type": "ibumblebee-alert4ml-datasource", "uid": "test"},
 		"detectType": "outlier",
-		"historyTimeRange": {"from": 300, "to": 0},
+		"historyTimeRange": {"mode": "relative", "relativeDuration": "5m"},
 		"hyperParams": {"modelName": "rsod_model", "periods": ""},
 		"seriesRefId": "A",
 		"supportDetect": "machine_learning",

@@ -1,6 +1,6 @@
-import React, { ChangeEvent } from 'react';
+import React, { ChangeEvent, useState, useEffect, useCallback } from 'react';
 import { DynamicsParams } from '../types';
-import { Stack, InlineField, Input, Combobox } from '@grafana/ui';
+import { Stack, InlineField, Input, Combobox, TextArea, Button, Collapse } from '@grafana/ui';
 import { SelectableValue } from '@grafana/data';
 import { DEFAULT_DYNAMICS_PARAMS } from '../types';
 
@@ -9,96 +9,115 @@ interface DynamicsProps {
   onParamsChange: (params: DynamicsParams) => void;
 }
 
-const SEASONALITY_OPTIONS = [
-  { label: 'Daily', value: 'Daily' },
-  { label: 'Weekly', value: 'Weekly' },
+const TREND_OPTIONS = [
+  { label: 'Daily', value: 'daily' },
+  { label: 'Weekly', value: 'weekly' },
+  { label: 'Monthly', value: 'monthly' },
+  { label: 'None', value: 'none' },
 ];
 
-const ROBUST_MODE_OPTIONS = [
-  { label: 'Classical', value: 'Classical' },
-  { label: 'Median MAD', value: 'MedianMad' },
-  { label: 'Trimmed Mean', value: 'TrimmedMean' },
-];
+// Keys managed by dedicated UI controls
+const DEDICATED_KEYS: (keyof DynamicsParams)[] = ['trend', 'stdDevMultiplier'];
+
+function getAdvancedParams(params: DynamicsParams): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (!DEDICATED_KEYS.includes(key as keyof DynamicsParams)) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
 
 export const Dynamics: React.FC<DynamicsProps> = ({ params, onParamsChange }) => {
-  const currentSeasonality = params.seasonality || DEFAULT_DYNAMICS_PARAMS.seasonality;
-  const seasonalityOption = SEASONALITY_OPTIONS.find(opt => opt.value === currentSeasonality) || SEASONALITY_OPTIONS[1];
+  const currentTrend = params.trend || DEFAULT_DYNAMICS_PARAMS.trend;
+  const trendOption = TREND_OPTIONS.find(opt => opt.value === currentTrend) || TREND_OPTIONS[1];
 
-  const currentRobustMode = params.robustMode || DEFAULT_DYNAMICS_PARAMS.robustMode;
-  const robustModeOption = ROBUST_MODE_OPTIONS.find(opt => opt.value === currentRobustMode) || ROBUST_MODE_OPTIONS[1];
+  const [jsonText, setJsonText] = useState(() => JSON.stringify(getAdvancedParams(params), null, 2));
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
-  const handleNumberChange = (key: keyof DynamicsParams, value: string) => {
-    const parsedValue = value === '' ? undefined : parseFloat(value);
-    if (!isNaN(parsedValue as number) || parsedValue === undefined) {
-      onParamsChange({ ...params, [key]: parsedValue });
+  useEffect(() => {
+    setJsonText(JSON.stringify(getAdvancedParams(params), null, 2));
+    setJsonError(null);
+  }, [params.trend]);
+
+  const onJsonChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setJsonText(text);
+    try {
+      const parsed = JSON.parse(text);
+      setJsonError(null);
+      const merged: DynamicsParams = { ...params };
+      for (const [key, value] of Object.entries(parsed)) {
+        if (!DEDICATED_KEYS.includes(key as keyof DynamicsParams)) {
+          (merged as any)[key] = value;
+        }
+      }
+      onParamsChange(merged);
+    } catch {
+      setJsonError('Invalid JSON');
     }
-  };
+  }, [params, onParamsChange]);
 
-  const handleIntChange = (key: keyof DynamicsParams, value: string) => {
-    const parsedValue = value === '' ? undefined : parseInt(value, 10);
-    if (!isNaN(parsedValue as number) || parsedValue === undefined) {
-      onParamsChange({ ...params, [key]: parsedValue });
+  const onResetDefaults = useCallback(() => {
+    const defaults = getAdvancedParams(DEFAULT_DYNAMICS_PARAMS);
+    setJsonText(JSON.stringify(defaults, null, 2));
+    setJsonError(null);
+    const merged: DynamicsParams = { ...params };
+    for (const [key, value] of Object.entries(defaults)) {
+      (merged as any)[key] = value;
     }
-  };
+    onParamsChange(merged);
+  }, [params, onParamsChange]);
 
   return (
     <Stack direction="column" gap={1}>
-      <InlineField label="Seasonality" tooltip="Seasonal period used for hourly aggregation (default Weekly)">
+      <InlineField label="Trend" tooltip="Seasonal grouping strategy: Daily (hourly buckets), Weekly (weekday×hour), Monthly (day×hour), None (single bucket)">
         <Combobox
-          options={SEASONALITY_OPTIONS}
-          value={seasonalityOption}
+          options={TREND_OPTIONS}
+          value={trendOption}
           onChange={(v: SelectableValue) => {
             if (v && v.value) {
-              onParamsChange({ ...params, seasonality: v.value as string });
+              onParamsChange({ ...params, trend: v.value as string });
             }
           }}
         />
       </InlineField>
-      <InlineField label="Window Size" tooltip="Number of seasonal slots used for robust statistics (default 4)">
+      <InlineField label="Std Dev Multiplier" tooltip="σ multiplier for upper/lower bounds (default 2.0)">
         <Input
-          value={params.windowSize ?? DEFAULT_DYNAMICS_PARAMS.windowSize}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleIntChange('windowSize', event.target.value)}
-          type="number"
-          min="1"
-        />
-      </InlineField>
-      <InlineField label="Min Points" tooltip="Minimum data points required in a slot for valid baseline (default 3)">
-        <Input
-          value={params.minPoints ?? DEFAULT_DYNAMICS_PARAMS.minPoints}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleIntChange('minPoints', event.target.value)}
-          type="number"
-          min="1"
-        />
-      </InlineField>
-      <InlineField label="Warning Threshold" tooltip="MAD multiplier for warning level anomaly (default 2.0)">
-        <Input
-          value={params.warningThreshold ?? DEFAULT_DYNAMICS_PARAMS.warningThreshold}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleNumberChange('warningThreshold', event.target.value)}
-          type="number"
-          step="0.1"
-          min="0"
-        />
-      </InlineField>
-      <InlineField label="Critical Threshold" tooltip="MAD multiplier for critical level anomaly (default 4.0)">
-        <Input
-          value={params.criticalThreshold ?? DEFAULT_DYNAMICS_PARAMS.criticalThreshold}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => handleNumberChange('criticalThreshold', event.target.value)}
-          type="number"
-          step="0.1"
-          min="0"
-        />
-      </InlineField>
-      <InlineField label="Robust Mode" tooltip="Statistical method for baseline estimation (default Median MAD)">
-        <Combobox
-          options={ROBUST_MODE_OPTIONS}
-          value={robustModeOption}
-          onChange={(v: SelectableValue) => {
-            if (v && v.value) {
-              onParamsChange({ ...params, robustMode: v.value as string });
+          value={params.stdDevMultiplier ?? DEFAULT_DYNAMICS_PARAMS.stdDevMultiplier}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            const val = parseFloat(event.target.value);
+            if (!isNaN(val)) {
+              onParamsChange({ ...params, stdDevMultiplier: val });
             }
           }}
+          type="number"
+          step="0.1"
+          min="0.1"
         />
       </InlineField>
+      <Collapse
+        label="Advanced Parameters (JSON)"
+        isOpen={isAdvancedOpen}
+        onToggle={() => setIsAdvancedOpen(!isAdvancedOpen)}
+        collapsible
+      >
+        <div style={{ padding: '8px 0' }}>
+          <TextArea
+            value={jsonText}
+            onChange={onJsonChange}
+            rows={4}
+            invalid={!!jsonError}
+            style={{ fontFamily: 'monospace', fontSize: 12 }}
+          />
+          {jsonError && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{jsonError}</div>}
+          <Button size="sm" variant="secondary" onClick={onResetDefaults} style={{ marginTop: 4 }}>
+            Reset to Defaults
+          </Button>
+        </div>
+      </Collapse>
     </Stack>
   );
 };

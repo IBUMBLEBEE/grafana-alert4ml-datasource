@@ -26,6 +26,25 @@ pub struct OutlierOptions {
     pub model_name: String,
     pub periods: Vec<usize>,
     pub uuid: String,
+    /// Number of isolation trees (default 100)
+    pub n_trees: Option<usize>,
+    /// Subsample size per tree (default 256)
+    pub sample_size: Option<usize>,
+    /// Maximum tree depth (default None = unlimited)
+    pub max_tree_depth: Option<usize>,
+    /// Extension level for EIF (default 0)
+    pub extension_level: Option<usize>,
+}
+
+impl OutlierOptions {
+    pub fn eif_options(&self) -> EIFOptions {
+        EIFOptions {
+            n_trees: self.n_trees.unwrap_or(100),
+            sample_size: self.sample_size,
+            max_tree_depth: self.max_tree_depth,
+            extension_level: self.extension_level,
+        }
+    }
 }
 
 /// Detect outliers in the data array
@@ -38,7 +57,9 @@ pub struct OutlierOptions {
 /// * `uuid` - Unique identifier for the model, used for saving and loading models
 ///
 /// Returns outlier scores (0 or 1), where 1 indicates an outlier
-pub fn outlier(input: TimeSeriesInput<'_>, periods: &[usize], uuid: &str) -> Result<DetectionResult, Box<dyn Error>> {
+pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<DetectionResult, Box<dyn Error>> {
+    let periods = &options.periods;
+    let uuid = &options.uuid;
     if input.is_empty() {
         return Err("data is empty".into());
     }
@@ -73,15 +94,10 @@ pub fn outlier(input: TimeSeriesInput<'_>, periods: &[usize], uuid: &str) -> Res
         // Execute EIF and changepoint detection concurrently
         let uuid_clone = uuid.to_string();
         let residual_clone = residual_2d.clone();
+        let eif_opts = options.eif_options();
         let (eif_scores, changepoints) = rayon::join(
             || {
-                let options = EIFOptions {
-                    n_trees: 100,
-                    sample_size: Some(256),
-                    max_tree_depth: None,
-                    extension_level: Some(0),
-                };
-                iforest(uuid_clone.clone(), options, &residual_clone)
+                iforest(uuid_clone.clone(), eif_opts, &residual_clone)
             },
             || {
                 let deseasonalized_2d: Vec<[f64; 2]> = mres
@@ -118,7 +134,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, periods: &[usize], uuid: &str) -> Res
         });
     } else {
         // No periodicity, data stationarity is unknown
-        let result = match ensemble_detect(&data, uuid) {
+        let result = match ensemble_detect(&data, uuid, options.eif_options()) {
             Ok(v) => v,
             Err(e) => return Err(e.into()),
         };
@@ -132,18 +148,12 @@ pub fn outlier(input: TimeSeriesInput<'_>, periods: &[usize], uuid: &str) -> Res
     }
 }
 
-fn ensemble_detect(data: &[[f64; 2]], uuid: &str) -> Result<Vec<f64>, Box<dyn Error>> {
-    let options = EIFOptions {
-        n_trees: 100,
-        sample_size: Some(256),
-        max_tree_depth: None,
-        extension_level: Some(0),
-    };
+fn ensemble_detect(data: &[[f64; 2]], uuid: &str, eif_opts: EIFOptions) -> Result<Vec<f64>, Box<dyn Error>> {
     // Use concurrent computation for EIF and changepoint anomaly detection results
     let uuid_clone = uuid.to_string();
     let data_clone = data.to_vec();
     let (eif_scores, changepoints) = rayon::join(
-        || iforest(uuid_clone, options, &data_clone),
+        || iforest(uuid_clone, eif_opts, &data_clone),
         || {
             DefaultArgpcpDetector::default()
                 .detect_changepoints(&data.iter().map(|x| x[1]).collect::<Vec<f64>>())
@@ -223,10 +233,19 @@ mod tests {
     #[test]
     fn test_outlier_score() {
         let data: Vec<[f64; 2]> = read_csv_to_vec("data/data.csv");
-        let periods: Vec<usize> = vec![];
+
+        let options = OutlierOptions {
+            model_name: "test_model".to_string(),
+            periods: vec![],
+            uuid: "test-outlier-uuid".to_string(),
+            n_trees: None,
+            sample_size: None,
+            max_tree_depth: None,
+            extension_level: None,
+        };
 
         let owned = OwnedTimeSeries::from_pairs(&data);
-        let result = outlier(owned.as_input(), &periods, "test-outlier-uuid").unwrap();
+        let result = outlier(owned.as_input(), &options).unwrap();
         assert!(!result.anomalies.is_empty());
 
         let res_vec = &result.anomalies;

@@ -112,9 +112,13 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 
 					options := rsod.OutlierOptions{
-						ModelName: rsodParams.ModelName,
-						Periods:   periods,
-						UUID:      ukUUID,
+						ModelName:      rsodParams.ModelName,
+						Periods:        periods,
+						UUID:           ukUUID,
+						NTrees:         rsodParams.NTrees,
+						SampleSize:     rsodParams.SampleSize,
+						MaxTreeDepth:   rsodParams.MaxTreeDepth,
+						ExtensionLevel: rsodParams.ExtensionLevel,
 					}
 
 					// Prepare request
@@ -132,48 +136,11 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					newframe := newDataFrameFromeResult(f, constant.DetectTypeOutlier, constant.GF_FRAME_RESULT_NAME_ANOMALY, selfRefID, resultOutlier)
 					newframes = append(newframes, newframe)
 
-				case constant.BaselineDetectTypeStd, constant.BaselineDetectTypeZScore, constant.BaselineDetectTypeMovingAverage:
-					options := rsod.BaselineOptions{
-						TrendType:        hyperParams.(*BaselineHyperParams).TrendType,
-						IntervalMins:     hyperParams.(*BaselineHyperParams).IntervalMins,
-						StdDevMultiplier: hyperParams.(*BaselineHyperParams).StdDevMultiplier,
-						UUID:             ukUUID,
-					}
-					// Prepare frames
-					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
-					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
-					if err != nil {
-						return nil, err
-					}
-					// 转换时间字段为 float64
-					err = TransformDataFrame(currentFrame)
-					if err != nil {
-						return nil, err
-					}
-					err = TransformDataFrame(historyFrame)
-					if err != nil {
-						return nil, err
-					}
-
-					resultBaselineDF, err := rsod.BaselineFitPredict(currentFrame, historyFrame, options)
-					if err != nil {
-						return nil, err
-					}
-
-					newframe := RenderFrameWithBaseline(resultBaselineDF, selfRefID)
-					if queryJson.ShowAnomalyPoints {
-						removeNonAnomalyFields(newframe)
-					}
-					newframes = append(newframes, newframe)
-
 				case constant.BaselineDetectTypeDynamics:
 					options := rsod.DynamicsOptions{
-						Seasonality:       hyperParams.(*DynamicsHyperParams).Seasonality,
-						WindowSize:        hyperParams.(*DynamicsHyperParams).WindowSize,
-						MinPoints:         hyperParams.(*DynamicsHyperParams).MinPoints,
-						WarningThreshold:  hyperParams.(*DynamicsHyperParams).WarningThreshold,
-						CriticalThreshold: hyperParams.(*DynamicsHyperParams).CriticalThreshold,
-						RobustMode:        hyperParams.(*DynamicsHyperParams).RobustMode,
+						Trend:            hyperParams.(*DynamicsHyperParams).Trend,
+						PeriodDays:       hyperParams.(*DynamicsHyperParams).PeriodDays,
+						StdDevMultiplier: hyperParams.(*DynamicsHyperParams).StdDevMultiplier,
 					}
 					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
@@ -208,15 +175,41 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 						return nil, err
 					}
 
+					fp := hyperParams.(*ForecastHyperParams)
+
+					// Derive UUID from training-affecting parameters so that
+					// any change in these params produces a different UUID,
+					// triggering model retraining.
+					trainingKey := ForecastTrainingKey{
+						Periods:        periods,
+						Budget:         fp.Budget,
+						NumThreads:     fp.NumThreads,
+						MaxBin:         fp.MaxBin,
+						IterationLimit: fp.IterationLimit,
+						Timeout:        fp.Timeout,
+						StoppingRounds: fp.StoppingRounds,
+						Seed:           fp.Seed,
+					}
+					derivedUUID, err := DeriveUUID(ukUUID, trainingKey)
+					if err != nil {
+						return nil, err
+					}
+
 					forecasterOptions := rsod.ForecasterOptions{
-						ModelName:           hyperParams.(*ForecastHyperParams).ModelName,
+						ModelName:           fp.ModelName,
 						Periods:             periods,
-						UUID:                ukUUID,
-						Budget:              hyperParams.(*ForecastHyperParams).Budget,
-						NumThreads:          hyperParams.(*ForecastHyperParams).NumThreads,
-						Nlags:               hyperParams.(*ForecastHyperParams).Nlags,
-						StdDevMultiplier:    hyperParams.(*ForecastHyperParams).StdDevMultiplier,
-						AllowNegativeBounds: hyperParams.(*ForecastHyperParams).AllowNegativeBounds,
+						UUID:                derivedUUID,
+						Budget:              fp.Budget,
+						NumThreads:          fp.NumThreads,
+						Nlags:               fp.Nlags,
+						StdDevMultiplier:    fp.StdDevMultiplier,
+						AllowNegativeBounds: fp.AllowNegativeBounds,
+						MaxBin:              fp.MaxBin,
+						IterationLimit:      fp.IterationLimit,
+						Timeout:             fp.Timeout,
+						StoppingRounds:      fp.StoppingRounds,
+						Seed:                fp.Seed,
+						LogIterations:       fp.LogIterations,
 					}
 
 					// Prepare frames
