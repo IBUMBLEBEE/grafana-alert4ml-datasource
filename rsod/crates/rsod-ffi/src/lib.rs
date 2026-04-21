@@ -109,6 +109,8 @@ fn detection_result_to_struct(
 pub extern "C" fn outlier_fit_predict(
     data_schema: *mut FFI_ArrowSchema,
     data_array: *mut FFI_ArrowArray,
+    _history_schema: *mut FFI_ArrowSchema, // accepted for uniform interface; outlier does not use history
+    _history_array: *mut FFI_ArrowArray,   // accepted for uniform interface; outlier does not use history
     _options_json: *const c_char,
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
@@ -192,40 +194,72 @@ fn struct_array_to_vec_array2(struct_array: &StructArray) -> Vec<[f64; 2]> {
     result
 }
 
-#[no_mangle]
-extern "C" fn baseline_fit_predict(
+/// Generic internal helper that handles the common boilerplate for all history-based
+/// FFI detector endpoints:
+/// import data + history Arrow frames → parse options → run detector → export result.
+///
+/// Uniform FFI parameter order (schema-first for both data and history):
+///   `data_schema, data_array, history_schema, history_array, options_json,
+///    result_schema, result_array`
+fn run_detector_with_history<Opts, E, F>(
     data_schema: *mut FFI_ArrowSchema,
     data_array: *mut FFI_ArrowArray,
-    history_array: *mut FFI_ArrowArray,
     history_schema: *mut FFI_ArrowSchema,
-    _options_json: *const c_char,
+    history_array: *mut FFI_ArrowArray,
+    options_json: *const c_char,
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
-) -> bool {
+    detect_fn: F,
+    value_col: &str,
+    ts_as_f64: bool,
+) -> bool
+where
+    Opts: serde::de::DeserializeOwned,
+    F: FnOnce(&rsod_core::OwnedTimeSeries, &rsod_core::OwnedTimeSeries, &Opts) -> Result<DetectionResult, E>,
+{
     let data_struct = match import_ffi_struct_array(data_schema, data_array) {
         Some(sa) => sa,
         None => return false,
     };
-    let data_input = struct_array_to_input(&data_struct);
+    let data_owned = struct_array_to_input(&data_struct);
 
     let history_struct = match import_ffi_struct_array(history_schema, history_array) {
         Some(sa) => sa,
         None => return false,
     };
-    let history_input = struct_array_to_input(&history_struct);
+    let history_owned = struct_array_to_input(&history_struct);
 
-    let opts: BaselineOptions = match parse_json_options(_options_json) {
+    let opts: Opts = match parse_json_options(options_json) {
         Some(o) => o,
         None => return false,
     };
 
-    let det = match baseline_detect(data_input.as_input(), history_input.as_input(), &opts) {
+    let det = match detect_fn(&data_owned, &history_owned, &opts) {
         Ok(r) => r,
         Err(_) => return false,
     };
 
-    let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
+    let out = detection_result_to_struct(&det, value_col, ts_as_f64);
     export_ffi_result(out, result_schema, result_array)
+}
+
+#[no_mangle]
+extern "C" fn baseline_fit_predict(
+    data_schema: *mut FFI_ArrowSchema,
+    data_array: *mut FFI_ArrowArray,
+    history_schema: *mut FFI_ArrowSchema,
+    history_array: *mut FFI_ArrowArray,
+    _options_json: *const c_char,
+    result_schema: *mut FFI_ArrowSchema,
+    result_array: *mut FFI_ArrowArray,
+) -> bool {
+    run_detector_with_history::<BaselineOptions, _, _>(
+        data_schema, data_array,
+        history_schema, history_array,
+        _options_json, result_schema, result_array,
+        |data, history, opts| baseline_detect(data.as_input(), history.as_input(), opts),
+        BASELINE_VALUE_COL, false,
+    )
 }
 
 /// FFI function for dynamics baseline detection
@@ -233,36 +267,19 @@ extern "C" fn baseline_fit_predict(
 pub extern "C" fn dynamics_fit_predict(
     data_schema: *mut FFI_ArrowSchema,
     data_array: *mut FFI_ArrowArray,
-    history_array: *mut FFI_ArrowArray,
     history_schema: *mut FFI_ArrowSchema,
+    history_array: *mut FFI_ArrowArray,
     _options_json: *const c_char,
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
 ) -> bool {
-    let data_struct = match import_ffi_struct_array(data_schema, data_array) {
-        Some(sa) => sa,
-        None => return false,
-    };
-    let data_input = struct_array_to_input(&data_struct);
-
-    let history_struct = match import_ffi_struct_array(history_schema, history_array) {
-        Some(sa) => sa,
-        None => return false,
-    };
-    let history_input = struct_array_to_input(&history_struct);
-
-    let opts: BaselineConfig = match parse_json_options(_options_json) {
-        Some(o) => o,
-        None => return false,
-    };
-
-    let det = match dynamics_detect(data_input.as_input(), history_input.as_input(), &opts) {
-        Ok(r) => r,
-        Err(_) => return false,
-    };
-
-    let out = detection_result_to_struct(&det, BASELINE_VALUE_COL, false);
-    export_ffi_result(out, result_schema, result_array)
+    run_detector_with_history::<BaselineConfig, _, _>(
+        data_schema, data_array,
+        history_schema, history_array,
+        _options_json, result_schema, result_array,
+        |data, history, opts| dynamics_detect(data.as_input(), history.as_input(), opts),
+        BASELINE_VALUE_COL, false,
+    )
 }
 
 /// FFI 函数：初始化数据库
@@ -304,36 +321,19 @@ pub extern "C" fn rsod_storage_init(trial_mode: bool, pg_dsn: *const c_char) -> 
 pub extern "C" fn rsod_forecaster(
     data_schema: *mut FFI_ArrowSchema,
     data_array: *mut FFI_ArrowArray,
-    history_array: *mut FFI_ArrowArray,
     history_schema: *mut FFI_ArrowSchema,
+    history_array: *mut FFI_ArrowArray,
     _options_json: *const c_char,
     result_schema: *mut FFI_ArrowSchema,
     result_array: *mut FFI_ArrowArray,
 ) -> bool {
-    let data_struct = match import_ffi_struct_array(data_schema, data_array) {
-        Some(sa) => sa,
-        None => return false,
-    };
-    let data_input = struct_array_to_input(&data_struct);
-
-    let history_struct = match import_ffi_struct_array(history_schema, history_array) {
-        Some(sa) => sa,
-        None => return false,
-    };
-    let history_input = struct_array_to_input(&history_struct);
-
-    let opts: ForecasterOptions = match parse_json_options(_options_json) {
-        Some(o) => o,
-        None => return false,
-    };
-
-    let det = match forecast(data_input.as_input(), history_input.as_input(), &opts) {
-        Ok(r) => r,
-        Err(_) => return false,
-    };
-
-    let out = detection_result_to_struct(&det, PRED_COL, true);
-    export_ffi_result(out, result_schema, result_array)
+    run_detector_with_history::<ForecasterOptions, _, _>(
+        data_schema, data_array,
+        history_schema, history_array,
+        _options_json, result_schema, result_array,
+        |data, history, opts| forecast(data.as_input(), history.as_input(), opts),
+        PRED_COL, true,
+    )
 }
 
 pub extern "C" fn export_dataframe_to_go() -> bool {
@@ -396,10 +396,12 @@ mod tests {
         let options = serde_json::to_string(&options).unwrap();
         let options_cstr = std::ffi::CString::new(options).unwrap();
 
-        // 调用 outlier_fit_predict 函数
+        // 调用 outlier_fit_predict 函数（history 参数传 null，outlier 不使用历史数据）
         let outlier_result = outlier_fit_predict(
             &mut in_schema,
             &mut in_array,
+            std::ptr::null_mut(), // history_schema — not used by outlier
+            std::ptr::null_mut(), // history_array  — not used by outlier
             options_cstr.as_ptr(),
             &mut out_schema,
             &mut out_array,
@@ -490,8 +492,8 @@ mod tests {
         let baseline_result = baseline_fit_predict(
             &mut in_schema,
             &mut in_array,
-            &mut history_array,
             &mut history_schema,
+            &mut history_array,
             options_cstr.as_ptr(),
             &mut out_schema,
             &mut out_array,
@@ -609,8 +611,8 @@ mod tests {
         let forecaster_result = rsod_forecaster(
             &mut in_schema,
             &mut in_array,
-            &mut history_array,
             &mut history_schema,
+            &mut history_array,
             options_cstr.as_ptr(),
             &mut out_schema,
             &mut out_array,

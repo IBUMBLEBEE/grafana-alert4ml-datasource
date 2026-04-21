@@ -120,6 +120,8 @@ func OutlierFitPredict(frame *data.Frame, options OutlierOptions) ([]float64, er
 	success := C.outlier_fit_predict(
 		C.to_arrow_schema(unsafe.Pointer(&inSchema)),
 		C.to_arrow_array(unsafe.Pointer(&inArray)),
+		C.to_arrow_schema(nil), // history_schema — outlier does not use history
+		C.to_arrow_array(nil),  // history_array  — outlier does not use history
 		C.CString(string(optsJson)),
 		C.to_arrow_schema(unsafe.Pointer(&outSchema)),
 		C.to_arrow_array(unsafe.Pointer(&outArray)),
@@ -239,8 +241,8 @@ func BaselineFitPredict(frame *data.Frame, historyFrame *data.Frame, options Bas
 	success := C.baseline_fit_predict(
 		C.to_arrow_schema(unsafe.Pointer(&inSchema)),
 		C.to_arrow_array(unsafe.Pointer(&inArray)),
-		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
 		C.to_arrow_schema(unsafe.Pointer(&historyInSchema)),
+		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
 		cOptsJson,
 		C.to_arrow_schema(unsafe.Pointer(&outSchema)),
 		C.to_arrow_array(unsafe.Pointer(&outArray)),
@@ -258,53 +260,11 @@ func BaselineFitPredict(frame *data.Frame, historyFrame *data.Frame, options Bas
 	}
 	defer imp.Release()
 
-	// fmt.Println("imp: ", imp)
-	dfData, err := data.FromArrowRecord(imp)
+	df, err := data.FromArrowRecord(imp)
 	if err != nil {
 		return nil, err
 	}
-	// dfJson, err := dfData.MarshalJSON()
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// fmt.Println("dfData: ", string(dfJson))
-
-	// // 使用更优雅的方式访问多列数据
-	// // 根据 Arrow 最佳实践，直接使用 Column() 和类型断言
-	// if imp.NumCols() < 3 {
-	// 	return nil, fmt.Errorf("expected at least 3 columns, got %d", imp.NumCols())
-	// }
-
-	// // 获取各列数据
-	// timestampCol := imp.Column(0).(*array.Int64)
-	// fmt.Println("timestampCol: ", timestampCol)
-	// baselineCol := imp.Column(1).(*array.Float64)
-	// lowerBoundCol := imp.Column(2).(*array.Float64)
-	// upperBoundCol := imp.Column(3).(*array.Float64)
-
-	// // 验证列长度一致
-	// length := baselineCol.Len()
-	// if lowerBoundCol.Len() != length || upperBoundCol.Len() != length {
-	// 	return nil, fmt.Errorf("column length mismatch: baseline=%d, lower_bound=%d, upper_bound=%d",
-	// 		length, lowerBoundCol.Len(), upperBoundCol.Len())
-	// }
-
-	// // 提取 baseline 值（保持向后兼容，只返回 baseline）
-	// result := make([]float64, length)
-	// for i := 0; i < length; i++ {
-	// 	result[i] = baselineCol.Value(i)
-	// }
-
-	// // 如果需要返回置信区间，可以在这里添加日志或返回结构体
-	// // 目前保持向后兼容，只返回 baseline 值
-	// // 如果需要返回所有数据，可以考虑返回结构体：
-	// type BaselineResult struct {
-	// 	Baseline   []float64
-	// 	LowerBound []float64
-	// 	UpperBound []float64
-	// }
-
-	return dfData, nil
+	return df, nil
 }
 
 func DynamicsFitPredict(frame *data.Frame, historyFrame *data.Frame, options DynamicsOptions) (*data.Frame, error) {
@@ -374,8 +334,8 @@ func DynamicsFitPredict(frame *data.Frame, historyFrame *data.Frame, options Dyn
 	success := C.dynamics_fit_predict(
 		C.to_arrow_schema(unsafe.Pointer(&inSchema)),
 		C.to_arrow_array(unsafe.Pointer(&inArray)),
-		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
 		C.to_arrow_schema(unsafe.Pointer(&historyInSchema)),
+		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
 		cOptsJson,
 		C.to_arrow_schema(unsafe.Pointer(&outSchema)),
 		C.to_arrow_array(unsafe.Pointer(&outArray)),
@@ -392,12 +352,12 @@ func DynamicsFitPredict(frame *data.Frame, historyFrame *data.Frame, options Dyn
 	}
 	defer imp.Release()
 
-	dfData, err := data.FromArrowRecord(imp)
+	df, err := data.FromArrowRecord(imp)
 	if err != nil {
 		return nil, err
 	}
 
-	return dfData, nil
+	return df, nil
 }
 
 func WriteArrowRecordToCSV(record arrow.RecordBatch, filename string) error {
@@ -486,8 +446,8 @@ func RSODForecaster(frame *data.Frame, historyFrame *data.Frame, options Forecas
 	success := C.rsod_forecaster(
 		C.to_arrow_schema(unsafe.Pointer(&inSchema)),
 		C.to_arrow_array(unsafe.Pointer(&inArray)),
-		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
 		C.to_arrow_schema(unsafe.Pointer(&historyInSchema)),
+		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
 		C.CString(string(optsJson)),
 		C.to_arrow_schema(unsafe.Pointer(&outSchema)),
 		C.to_arrow_array(unsafe.Pointer(&outArray)),
@@ -504,9 +464,9 @@ func RSODForecaster(frame *data.Frame, historyFrame *data.Frame, options Forecas
 	}
 	defer imp.Release()
 
-	dfData, err := data.FromArrowRecord(imp)
+	df, err := data.FromArrowRecord(imp)
 	if err != nil {
 		return nil, err
 	}
-	return dfData, nil
+	return df, nil
 }
