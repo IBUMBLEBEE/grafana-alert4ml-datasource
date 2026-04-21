@@ -26,14 +26,16 @@ extern "C" {
 
 bool outlier_fit_predict(FFI_ArrowSchema *data_schema,
                          FFI_ArrowArray *data_array,
+                         FFI_ArrowSchema *_history_schema,
+                         FFI_ArrowArray *_history_array,
                          const char *_options_json,
                          FFI_ArrowSchema *result_schema,
                          FFI_ArrowArray *result_array);
 
 bool baseline_fit_predict(FFI_ArrowSchema *data_schema,
                           FFI_ArrowArray *data_array,
-                          FFI_ArrowArray *history_array,
                           FFI_ArrowSchema *history_schema,
+                          FFI_ArrowArray *history_array,
                           const char *_options_json,
                           FFI_ArrowSchema *result_schema,
                           FFI_ArrowArray *result_array);
@@ -43,8 +45,8 @@ bool baseline_fit_predict(FFI_ArrowSchema *data_schema,
  */
 bool dynamics_fit_predict(FFI_ArrowSchema *data_schema,
                           FFI_ArrowArray *data_array,
-                          FFI_ArrowArray *history_array,
                           FFI_ArrowSchema *history_schema,
+                          FFI_ArrowArray *history_array,
                           const char *_options_json,
                           FFI_ArrowSchema *result_schema,
                           FFI_ArrowArray *result_array);
@@ -59,8 +61,8 @@ bool rsod_storage_init(bool trial_mode, const char *pg_dsn);
 
 bool rsod_forecaster(FFI_ArrowSchema *data_schema,
                      FFI_ArrowArray *data_array,
-                     FFI_ArrowArray *history_array,
                      FFI_ArrowSchema *history_schema,
+                     FFI_ArrowArray *history_array,
                      const char *_options_json,
                      FFI_ArrowSchema *result_schema,
                      FFI_ArrowArray *result_array);
