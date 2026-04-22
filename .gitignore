@@ -53,9 +53,7 @@ build_target
 *.local
 .config/data/grafana/*
 .vscode/
-*.csv
 *.zip
-*.csv
 *.sha1
 build/
-dataset/
+__pycache__

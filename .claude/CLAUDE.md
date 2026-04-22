@@ -164,6 +164,7 @@ Plugin logs: `GF_LOG_FILTERS=plugin.ibumblebee-alert4ml-datasource:debug`
 
 - 不要把机器学习逻辑移入 Go 或前端。
 - 不要绕过 Arrow C Data Interface 自创 Go-Rust 交换协议。
+- 单元测试使用的时序数据必须来自 `dataset/testdata/` 下的固定测试数据；不要在测试里内联长时序、临时生成独立 CSV，或改用仓库其他目录下的散落数据副本。
 - 不要把 Rust 专项规则分散成并列顶层规范；Rust 顶层基线统一由 `rust-core` 提供。
 - 不要把本文件写成重复的详细规范；详细规则应下沉到对应 skill 中维护。
 - 不允许 agent 自行向 GitHub 执行 `git push` 或任何等效远端发布操作；涉及远端提交、推送、发版前，必须先完成严格审核并获得用户的明确同意。
