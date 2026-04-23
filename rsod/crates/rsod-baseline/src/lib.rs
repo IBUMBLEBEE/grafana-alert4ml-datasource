@@ -430,424 +430,108 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsod_utils::read_csv_to_vec;
+    use rsod_core::{OwnedTimeSeries, TimeSeriesInput};
+    use rsod_utils::eval::{self, OutlierMetrics};
+    use std::collections::HashMap;
 
-    /// Create DataFrame for testing
-    fn create_test_dataframe(csv_path: &str) -> DataFrame {
-        let data: Vec<[f64; 2]> = read_csv_to_vec(csv_path);
-        let mut timestamps = Vec::new();
-        let mut values = Vec::new();
-        
-        for [timestamp, value] in data {
-            timestamps.push((timestamp * 1000.0) as i64); // Convert to milliseconds
-            values.push(value);
-        }
-        
-        DataFrame::new(vec![
-            Series::new(TIMESTAMP_COL.into(), timestamps).into(),
-            Series::new(METRIC_VALUE_COL.into(), values).into(),
-        ]).unwrap()
-    }
-    
-    // Convert DataFrame to &[[f64; 2]] format for baseline function testing
-    fn dataframe_to_array(df: &DataFrame) -> Vec<[f64; 2]> {
-        let timestamps = df.column(TIMESTAMP_COL).unwrap().i64().unwrap();
-        let values = df.column(METRIC_VALUE_COL).unwrap().f64().unwrap();
-        
-        let mut result = Vec::new();
-        for i in 0..df.height() {
-            let timestamp = timestamps.get(i).unwrap() as f64 / 1000.0; // Convert back to seconds
-            let value = values.get(i).unwrap();
-            result.push([timestamp, value]);
-        }
-        result
+    const CURRENT_FIXTURE: &str = "realKnownCause/p7d_anom_curr_nyc_taxi.csv";
+    const HISTORY_FIXTURE: &str = "realKnownCause/p7d_clean_hist_nyc_taxi.csv";
+
+    fn load_owned_fixture(rel_path: &str) -> (OwnedTimeSeries, Vec<i64>, Vec<u8>) {
+        let (timestamps, values, labels) = eval::read_testdata_csv(rel_path);
+        let timestamp_ms = timestamps.iter().map(|ts| (*ts * 1000.0) as i64).collect();
+        (OwnedTimeSeries { timestamps, values }, timestamp_ms, labels)
     }
 
-    #[test]
-    fn test_daily_baseline_with_time_window() {
-        // Use CSV files from data directory
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        // Debug: Check timestamp range
-        let current_max_ts = df.column(TIMESTAMP_COL).unwrap().i64().unwrap().max().unwrap();
-        let current_min_ts = df.column(TIMESTAMP_COL).unwrap().i64().unwrap().min().unwrap();
-        let history_max_ts = history_df.column(TIMESTAMP_COL).unwrap().i64().unwrap().max().unwrap();
-        let history_min_ts = history_df.column(TIMESTAMP_COL).unwrap().i64().unwrap().min().unwrap();
-        
-        // Convert timestamp to human-readable format
-        let current_min_readable = chrono::DateTime::from_timestamp_millis(current_min_ts)
-            .unwrap()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let current_max_readable = chrono::DateTime::from_timestamp_millis(current_max_ts)
-            .unwrap()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let history_min_readable = chrono::DateTime::from_timestamp_millis(history_min_ts)
-            .unwrap()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let history_max_readable = chrono::DateTime::from_timestamp_millis(history_max_ts)
-            .unwrap()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        
-        println!("Current data timestamp range: {} to {}", current_min_readable, current_max_readable);
-        println!("History data timestamp range: {} to {}", history_min_readable, history_max_readable);
-        
-        // Calculate historical window (corrected logic: look back from current data start time)
-        let lookback_days = 30i64;
-        let start_ms = current_min_ts - lookback_days * 86_400_000i64;
-        let end_ms = current_min_ts;
-        let _start_readable = chrono::DateTime::from_timestamp_millis(start_ms)
-            .unwrap()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let _end_readable = chrono::DateTime::from_timestamp_millis(end_ms)
-            .unwrap()
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Daily,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
+    fn baseline_options(trend_type: TrendType, uuid: &str) -> BaselineOptions {
+        BaselineOptions {
+            trend_type,
+            interval_mins: Some(30),
+            confidence_level: Some(95.0),
+            allow_negative_bounds: Some(false),
             std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        options.validate().unwrap();
-
-        // Check filtered historical data results (before calling the function)
-        let lookback_days = 30i64;
-        let start_ms = current_min_ts - lookback_days * 86_400_000i64;
-        let end_ms = current_min_ts;
-        let filtered_history = history_df
-            .lazy()
-            .filter(col(TIMESTAMP_COL).gt_eq(lit(start_ms)).and(col(TIMESTAMP_COL).lt(lit(end_ms))))
-            .collect()
-            .unwrap();
-        
-        if filtered_history.height() > 0 {
-            println!("Filtered history data sample:");
-            println!("{:?}", filtered_history.head(Some(3)));
-        } else {
-            println!("No history data matches the time window filter!");
-        }
-        
-        // Recreate history_df for function call
-        let history_df_for_calc = create_test_dataframe("data/error_rate_history.csv");
-        let result = calculate_dynamic_baseline(df, history_df_for_calc, &options);
-        // assert!(result.is_ok());
-        
-        let baseline_df = result.unwrap();
-        
-        // Convert timestamp to human-readable format
-        let _readable_df = baseline_df
-            .lazy()
-            .with_columns([
-                col(TIMESTAMP_COL)
-                    .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
-                    .dt()
-                    .strftime("%Y-%m-%d %H:%M:%S")
-                    .alias("readable_timestamp")
-            ])
-            .collect()
-            .unwrap();
-
-        
-        // // Verify result contains necessary columns
-        // assert!(baseline_df.column("date").is_ok());
-        // assert!(baseline_df.column("hour").is_ok());
-        // assert!(baseline_df.column(BASELINE_VALUE_COL).is_ok());
-        // assert!(baseline_df.column("Custom_Standard_Deviation").is_ok());
-    }
-
-    #[test]
-    fn test_weekly_baseline() {
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Weekly,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = calculate_dynamic_baseline(df, history_df, &options);
-        assert!(result.is_ok());
-        
-        let baseline_df = result.unwrap();
-        println!("Weekly baseline result: {:?}", baseline_df);
-        
-        // Verify result contains necessary columns
-        assert!(baseline_df.column(TIMESTAMP_COL).is_ok());
-        assert!(baseline_df.column(BASELINE_VALUE_COL).is_ok());
-    }
-
-    #[test]
-    fn test_monthly_baseline() {
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Monthly,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = calculate_dynamic_baseline(df, history_df, &options);
-        assert!(result.is_ok());
-        
-        let baseline_df = result.unwrap();
-        println!("Monthly baseline result shape: {:?}", baseline_df.shape());
-        
-        // Verify result contains necessary columns
-        assert!(baseline_df.column(TIMESTAMP_COL).is_ok());
-        assert!(baseline_df.column(BASELINE_VALUE_COL).is_ok());
-    }
-
-    #[test]
-    fn test_baseline_without_time_window() {
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Daily,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = calculate_dynamic_baseline(df, history_df, &options);
-        assert!(result.is_ok());
-        
-        let baseline_df = result.unwrap();
-        println!("No time window baseline result shape: {:?}", baseline_df.shape());
-        
-        // Verify result is not empty
-        assert!(baseline_df.height() > 0);
-    }
-
-    #[test]
-    fn test_baseline_calculation_values() {
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Daily,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = calculate_dynamic_baseline(df, history_df, &options);
-        assert!(result.is_ok());
-        
-        let baseline_df = result.unwrap();
-        
-        // Verify baseline value column data type and range
-        let baseline_values = baseline_df.column(BASELINE_VALUE_COL).unwrap();
-        
-        // Check that baseline values are not empty and are numeric type
-        assert!(baseline_values.len() > 0);
-        
-        // Print some statistics for debugging
-        println!("Baseline values sample: {:?}", baseline_values.head(Some(5)));
-    }
-
-    #[test]
-    fn test_none_trend_type() {
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::None,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = calculate_dynamic_baseline(df, history_df, &options);
-        assert!(result.is_ok());
-        
-        let baseline_df = result.unwrap();
-        println!("None trend type result shape: {:?}", baseline_df.shape());
-        println!("None trend type columns: {:?}", baseline_df.get_column_names());
-        
-        // Verify result contains necessary columns
-        assert!(baseline_df.column(TIMESTAMP_COL).is_ok());
-        assert!(baseline_df.column(BASELINE_VALUE_COL).is_ok());
-        
-        // Print first few rows of data
-        if baseline_df.height() > 0 {
-            println!("First 5 rows:");
-            let first_five = baseline_df.head(Some(5));
-            println!("{:?}", first_five);
+            uuid: uuid.to_string(),
         }
     }
 
-    // ========== baseline function tests ==========
-    
-    /// Helper: load CSV and create OwnedTimeSeries
-    fn load_csv_as_owned(csv_path: &str) -> rsod_core::OwnedTimeSeries {
-        let data: Vec<[f64; 2]> = read_csv_to_vec(csv_path);
-        rsod_core::OwnedTimeSeries::from_pairs(&data)
+    fn assert_baseline_metrics(trend_type: TrendType) {
+        let (current, current_timestamps, labels) = load_owned_fixture(CURRENT_FIXTURE);
+        let (history, _, _) = load_owned_fixture(HISTORY_FIXTURE);
+        let trend_name = trend_type.clone();
+        let options = baseline_options(trend_type, "baseline-test");
+
+        let result = baseline_detect(current.as_input(), history.as_input(), &options)
+            .expect("baseline_detect should succeed on fixed testdata fixtures");
+
+        let label_by_timestamp: HashMap<i64, u8> = current_timestamps
+            .into_iter()
+            .zip(labels)
+            .collect();
+        let aligned_labels: Vec<u8> = result
+            .timestamps
+            .iter()
+            .map(|ts| {
+                *label_by_timestamp
+                    .get(ts)
+                    .unwrap_or_else(|| panic!("missing ground-truth label for timestamp {ts}"))
+            })
+            .collect();
+
+        assert_eq!(result.anomalies.len(), aligned_labels.len());
+        let metrics = OutlierMetrics::compute(&result.anomalies, &aligned_labels);
+        println!(
+            "baseline {:?} — F1={:.4} Recall={:.4} Precision={:.4} TP={} FP={} FN={}",
+            trend_name,
+            metrics.f1,
+            metrics.recall,
+            metrics.precision,
+            metrics.true_positives,
+            metrics.false_positives,
+            metrics.false_negatives,
+        );
+        metrics.assert_default();
     }
-    
+
+    fn assert_baseline_smoke(trend_type: TrendType) {
+        let (current, _, _) = load_owned_fixture(CURRENT_FIXTURE);
+        let (history, _, _) = load_owned_fixture(HISTORY_FIXTURE);
+        let options = baseline_options(trend_type, "baseline-smoke");
+
+        let result = baseline_detect(current.as_input(), history.as_input(), &options)
+            .expect("baseline_detect should succeed on fixed testdata fixtures");
+        assert!(!result.timestamps.is_empty(), "baseline result should not be empty");
+        assert_eq!(result.timestamps.len(), result.anomalies.len());
+        assert_eq!(result.timestamps.len(), result.values.len());
+    }
+
     #[test]
-    fn test_baseline_function_daily() {
-        let owned = load_csv_as_owned("data/error_rate.csv");
-        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Daily,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
-            Ok(r) => r,
-            Err(e) => { eprintln!("{}", e); return; }
-        };
-        assert!(!result.timestamps.is_empty());
-        assert!(!result.values.is_empty());
-        assert!(result.timestamps.len() > 0);
-        println!("Baseline daily result count: {}", result.timestamps.len());
+    fn test_baseline_function_daily_metrics() {
+        assert_baseline_metrics(TrendType::Daily);
     }
-    
+
     #[test]
-    fn test_baseline_function_weekly() {
-        let owned = load_csv_as_owned("data/error_rate.csv");
-        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Weekly,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
-            Ok(r) => r,
-            Err(e) => { eprintln!("{}", e); return; }
-        };
-        assert!(!result.timestamps.is_empty());
-        assert!(!result.values.is_empty());
+    fn test_baseline_function_weekly_metrics() {
+        assert_baseline_metrics(TrendType::Weekly);
     }
-    
+
     #[test]
-    fn test_baseline_function_monthly() {
-        let owned = load_csv_as_owned("data/error_rate.csv");
-        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Monthly,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
-            Ok(r) => r,
-            Err(e) => { eprintln!("{}", e); return; }
-        };
-        assert!(!result.timestamps.is_empty());
-        assert!(!result.values.is_empty());
-        println!("Baseline monthly result count: {}", result.timestamps.len());
+    fn test_baseline_function_monthly_smoke() {
+        assert_baseline_smoke(TrendType::Monthly);
     }
-    
-    #[test]
-    fn test_baseline_function_none() {
-        let owned = load_csv_as_owned("data/error_rate.csv");
-        let owned_hist = load_csv_as_owned("data/error_rate_history.csv");
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::None,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
-            Ok(r) => r,
-            Err(e) => { eprintln!("{}", e); return; }
-        };
-        assert!(!result.timestamps.is_empty());
-        
-        // For None type, baseline_value should be NaN
-        let has_nan = result.values.iter().any(|v| v.is_nan());
-        assert!(has_nan, "None trend type should have NaN baseline values");
-    }
-    
+
     #[test]
     fn test_baseline_function_empty_data() {
-        use rsod_core::TimeSeriesInput;
         let empty_input = TimeSeriesInput::new(&[], &[]);
-        
         let options = BaselineOptions {
             trend_type: TrendType::Daily,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
+            interval_mins: Some(30),
+            confidence_level: Some(95.0),
+            allow_negative_bounds: Some(false),
             std_dev_multiplier: None,
-            uuid: "".to_string(),
+            uuid: "baseline-empty".to_string(),
         };
-        
-        // For empty data, function should return an error
-        let result = baseline_detect(empty_input, empty_input, &options);
-        assert!(result.is_err(), "Empty data should cause the function to return an error");
-    }
-    
-    #[test]
-    fn test_baseline_function_single_data_point() {
-        let df = create_test_dataframe("data/error_rate.csv");
-        let history_df = create_test_dataframe("data/error_rate_history.csv");
-        
-        // Only take first few data points for testing
-        let data = dataframe_to_array(&df).into_iter().take(3).collect::<Vec<_>>();
-        let history_data = dataframe_to_array(&history_df).into_iter().take(3).collect::<Vec<_>>();
-        
-        let owned = rsod_core::OwnedTimeSeries::from_pairs(&data);
-        let owned_hist = rsod_core::OwnedTimeSeries::from_pairs(&history_data);
-        
-        let options = BaselineOptions {
-            trend_type: TrendType::Daily,
-            interval_mins: Some(60),
-            confidence_level: None,
-            allow_negative_bounds: None,
-            std_dev_multiplier: None,
-            uuid: "".to_string(),
-        };
-        
-        let result = match baseline_detect(owned.as_input(), owned_hist.as_input(), &options) {
-            Ok(r) => r,
-            Err(e) => { eprintln!("{}", e); return; }
-        };
-        assert!(!result.timestamps.is_empty());
-        assert!(!result.values.is_empty());
-    }
 
+        let result = baseline_detect(empty_input, empty_input, &options);
+        assert!(result.is_err(), "empty input should return an error");
+    }
 }

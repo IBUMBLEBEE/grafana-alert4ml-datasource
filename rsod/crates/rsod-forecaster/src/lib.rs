@@ -457,18 +457,28 @@ fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_st
 mod tests {
     use super::*;
     use rsod_core::OwnedTimeSeries;
-    use rsod_utils::read_csv_to_vec;
+    use rsod_utils::eval::{self, ForecastMetrics};
+
+    const CURRENT_FIXTURE: &str = "realAdExchange/p24h7d_anom_curr_exchange2_cpm.csv";
+    const HISTORY_FIXTURE: &str = "realAdExchange/p24h7d_clean_hist_exchange2_cpm.csv";
 
     #[test]
-    fn test_forecast() {
-        // Create historical data for training
-        // Test data comes from CSV file
-        let history_data: Vec<[f64; 2]> = read_csv_to_vec("data/data_history.csv");
-        let current_data: Vec<[f64; 2]> = read_csv_to_vec("data/data1.csv");
-        
+    fn test_forecast_metrics() {
+        let (current_timestamps, current_values, _) = eval::read_testdata_csv(CURRENT_FIXTURE);
+        let (history_timestamps, history_values, _) = eval::read_testdata_csv(HISTORY_FIXTURE);
+
+        let owned_current = OwnedTimeSeries {
+            timestamps: current_timestamps,
+            values: current_values.clone(),
+        };
+        let owned_history = OwnedTimeSeries {
+            timestamps: history_timestamps,
+            values: history_values.clone(),
+        };
+
         let options = ForecasterOptions {
             model_name: "test_model".to_string(),
-            periods: vec![24],
+            periods: vec![24, 168],
             uuid: "test_uuid".to_string(),
             budget: Some(0.5),
             num_threads: Some(1),
@@ -482,24 +492,27 @@ mod tests {
             seed: Some(0),
             log_iterations: Some(0),
         };
-        
-        let owned_current = OwnedTimeSeries::from_pairs(&current_data);
-        let owned_history = OwnedTimeSeries::from_pairs(&history_data);
-        
-        // Predict current_data.len() values
-        let result = forecast(owned_current.as_input(), owned_history.as_input(), &options);
-        println!("result: {:?}", result);
-        assert!(result.is_ok());
-        let det = result.unwrap();
-        
-        // Verify DetectionResult fields
-        assert_eq!(det.timestamps.len(), current_data.len());
-        assert_eq!(det.values.len(), current_data.len());
-        assert_eq!(det.anomalies.len(), current_data.len());
-        assert!(det.upper_bound.is_some());
-        assert!(det.lower_bound.is_some());
-        assert_eq!(det.upper_bound.as_ref().unwrap().len(), current_data.len());
-        
-        println!("DetectionResult timestamps count: {}", det.timestamps.len());
+
+        let result = forecast(owned_current.as_input(), owned_history.as_input(), &options)
+            .expect("forecast should succeed on fixed testdata fixtures");
+
+        assert_eq!(result.timestamps.len(), current_values.len());
+        assert_eq!(result.values.len(), current_values.len());
+        assert_eq!(result.anomalies.len(), current_values.len());
+        assert!(result.upper_bound.is_some());
+        assert!(result.lower_bound.is_some());
+        assert_eq!(result.upper_bound.as_ref().unwrap().len(), current_values.len());
+
+        let (baseline_mae, baseline_rmse) = eval::naive_forecast_baseline_metrics(&current_values);
+        let metrics = ForecastMetrics::compute(&current_values, &result.values, &history_values);
+        println!(
+            "forecast — MAE={:.4} RMSE={:.4} MASE={:.4} baseline_mae={:.4} baseline_rmse={:.4}",
+            metrics.mae,
+            metrics.rmse,
+            metrics.mase,
+            baseline_mae,
+            baseline_rmse,
+        );
+        metrics.assert_default(baseline_mae, baseline_rmse);
     }
 }

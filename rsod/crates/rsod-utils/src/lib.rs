@@ -1,3 +1,5 @@
+pub mod eval;
+
 use chrono::{TimeZone, Utc};
 use csv::ReaderBuilder;
 use std::fs::File;
