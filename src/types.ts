@@ -1,4 +1,20 @@
-import { DataSourceJsonData, SelectableValue, RelativeTimeRange } from '@grafana/data';
+import { DataSourceJsonData, SelectableValue } from '@grafana/data';
+
+/**
+ * History time range storage model.
+ *
+ * Only the duration (in milliseconds) is stored because the `to` anchor is always
+ * derived at runtime from the current panel's `timeRange.from`. That is:
+ *
+ *   history.to   = panel.timeRange.from
+ *   history.from = panel.timeRange.from - durationMs
+ *
+ * Storing only `durationMs` guarantees that the history window stays glued to the
+ * panel window and makes the backend anchor explicit.
+ */
+export interface HistoryDuration {
+  durationMs: number;
+}
 import { DataQuery } from '@grafana/schema';
 
 export const ALERT4ML_DATA_SOURCE_TYPE = 'ibumblebee-alert4ml-datasource';
@@ -103,9 +119,9 @@ export const DEFAULT_FORECAST_PARAMS: ForecastParams = {
   logIterations: 0,
 };
 
-export const DEFAULT_TIME_RANGE: RelativeTimeRange = {
-  from: 300,
-  to: 0,
+// Default history window: 5 minutes before panel.timeRange.from
+export const DEFAULT_TIME_RANGE: HistoryDuration = {
+  durationMs: 5 * 60 * 1000,
 };
 
 export const DEFAULT_RSOD_PARAMS: RsodParams = {
@@ -140,7 +156,7 @@ export interface Alert4MLQuery extends DataQuery {
   detectType: string;
   hyperParams: RsodParams | DynamicsParams | ForecastParams;
   targets: DataQuery[];
-  historyTimeRange: RelativeTimeRange;
+  historyTimeRange: HistoryDuration;
   showAnomalyPoints: boolean;
   uniqueKeys: UniqueKeys;
   baseDsUid?: string;

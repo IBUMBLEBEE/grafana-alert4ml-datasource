@@ -40,28 +40,40 @@ func ParsePeriods(durations string, intervalMs int64) ([]uint, error) {
 	return periods, nil
 }
 
+// GetRecalculateTimeRange extends the base data-source fetch range backwards
+// by the history duration so the downstream query returns enough history for
+// training. The evaluation window (`to`) is unchanged.
 func GetRecalculateTimeRange(from, to time.Time, htr HistoryTimeRange) (time.Time, time.Time) {
-	duration := htr.To - htr.From
-	return from.Add(time.Duration(duration) * time.Second), to
+	return from.Add(-time.Duration(htr.DurationMs) * time.Millisecond), to
 }
 
+// GetHistoryTimeRange returns the absolute [historyFrom, historyTo) window,
+// pinned to end at the current panel's `from`.
 func GetHistoryTimeRange(currentFrom time.Time, htr HistoryTimeRange) (time.Time, time.Time) {
-	duration := htr.To - htr.From
-	historyTo := currentFrom.Add(-time.Duration(duration) * time.Second)
-	return currentFrom, historyTo
+	historyFrom := currentFrom.Add(-time.Duration(htr.DurationMs) * time.Millisecond)
+	return historyFrom, currentFrom
 }
 
-func splitFrames(frame *data.Frame, currentFrom, currentTo time.Time, htr HistoryTimeRange) (currentFrame *data.Frame, historyFrame *data.Frame, err error) {
+// splitFrames cuts `frame` into (currentFrame, historyFrame) where:
+//
+//	historyFrame covers [extendedFrom,                    panelFrom)
+//	currentFrame covers [panelFrom,                       extendedTo)
+//
+// `extendedFrom` and `extendedTo` are the bounds used for the upstream fetch
+// (see GetRecalculateTimeRange); `extendedFrom = panelFrom - htr.DurationMs`,
+// so the history/current boundary is reconstructed as
+// `boundary = extendedFrom + htr.DurationMs`.
+func splitFrames(frame *data.Frame, extendedFrom, extendedTo time.Time, htr HistoryTimeRange) (currentFrame *data.Frame, historyFrame *data.Frame, err error) {
 	if frame == nil || len(frame.Fields) == 0 {
 		return nil, nil, errors.New("frame is nil or has no fields")
 	}
-	historyFrom, historyTo := GetHistoryTimeRange(currentFrom, htr)
-	historyFrame, err = splitFrameByTime(frame, historyFrom, historyTo)
+	boundary := extendedFrom.Add(time.Duration(htr.DurationMs) * time.Millisecond)
+	historyFrame, err = splitFrameByTime(frame, extendedFrom, boundary)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	currentFrame, err = splitFrameByTime(frame, historyTo, currentTo)
+	currentFrame, err = splitFrameByTime(frame, boundary, extendedTo)
 	if err != nil {
 		return nil, nil, err
 	}

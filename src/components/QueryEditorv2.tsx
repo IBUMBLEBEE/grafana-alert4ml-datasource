@@ -5,10 +5,10 @@ import {
   Combobox,
   Collapse,
   InlineSwitch,
-  RelativeTimeRangePicker,
+  TimeRangePicker,
 } from '@grafana/ui';
 import type { ComboboxOption } from '@grafana/ui';
-import { QueryEditorProps, RelativeTimeRange, DataSourceApi } from '@grafana/data';
+import { QueryEditorProps, DataSourceApi, TimeRange, dateTime, getTimeZone } from '@grafana/data';
 import {getTemplateSrv, getDataSourceSrv} from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { DataSource } from '../datasource';
@@ -28,6 +28,7 @@ import {
   DEFAULT_FORECAST_PARAMS,
   DynamicsParams,
   DEFAULT_DYNAMICS_PARAMS,
+  HistoryDuration,
 } from '../types';
 import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
@@ -259,11 +260,39 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   };
 
-  const onHistoryTimeRangeChange = (v: RelativeTimeRange) => {
-    if (v && typeof v.from === 'number' && typeof v.to === 'number') {
-      runDebouncedQueryWithTempTargets({ historyTimeRange: v });
+  const onHistoryTimeRangeChange = (v: TimeRange) => {
+    // Only the width of the picked window is meaningful — the `to` anchor is always
+    // pinned to panel.timeRange.from on render, so users may pick any absolute range
+    // and we keep the duration they intended.
+    const fromMs = v?.from?.valueOf?.();
+    const toMs = v?.to?.valueOf?.();
+    if (typeof fromMs !== 'number' || typeof toMs !== 'number') {
+      return;
     }
+    const durationMs = Math.max(0, Math.abs(toMs - fromMs));
+    if (durationMs === 0) {
+      return;
+    }
+    const next: HistoryDuration = { durationMs };
+    runDebouncedQueryWithTempTargets({ historyTimeRange: next });
   };
+
+  // Derive a TimeRange to display in the picker.
+  // Anchor: history.to = panel.timeRange.from; history.from = history.to - durationMs.
+  // Falls back to `now` when the panel range is not yet available (initial mount).
+  const historyTimeZone = useMemo(() => getTimeZone(), []);
+  const historyDisplayRange: TimeRange = useMemo(() => {
+    const panelFromMs = data?.timeRange?.from?.valueOf?.();
+    const anchor = typeof panelFromMs === 'number' ? panelFromMs : Date.now();
+    const durationMs = historyTimeRange?.durationMs ?? DEFAULT_TIME_RANGE.durationMs;
+    const toDate = dateTime(anchor);
+    const fromDate = dateTime(anchor - durationMs);
+    return {
+      from: fromDate,
+      to: toDate,
+      raw: { from: fromDate, to: toDate },
+    };
+  }, [data, historyTimeRange]);
 
   const debouncedRunQuery = useCallback(
     debounce(() => {
@@ -330,10 +359,18 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         </InlineField>
       </Stack>
       <Stack gap={0}>
-        <InlineField label="History TimeRange" tooltip="Select observable historical data">
-          <RelativeTimeRangePicker
-            timeRange={historyTimeRange || DEFAULT_TIME_RANGE}
+        <InlineField
+          label="History TimeRange"
+          tooltip="Historical window is pinned to end at the panel's start time. Picking a range only adjusts the duration (from = panelStart - duration)."
+        >
+          <TimeRangePicker
+            timeZone={historyTimeZone}
+            value={historyDisplayRange}
             onChange={(range) => range && onHistoryTimeRangeChange(range)}
+            onChangeTimeZone={() => undefined}
+            onMoveBackward={() => undefined}
+            onMoveForward={() => undefined}
+            onZoom={() => undefined}
           />
         </InlineField>
         <InlineSwitch

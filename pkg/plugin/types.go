@@ -22,9 +22,46 @@ type Alert4MLQueryJson struct {
 	UniqueKeys        UniqueKeys        `json:"uniqueKeys"`
 }
 
+// HistoryTimeRange stores only the length of the history window.
+// The history window's upper bound is always anchored at the current panel's
+// timeRange.From (derived at query time, not stored here), so:
+//
+//	history.to   = panel.timeRange.From
+//	history.from = panel.timeRange.From - DurationMs
+//
+// A custom UnmarshalJSON handles legacy dashboards that stored
+// `{from, to}` relative-seconds pairs.
 type HistoryTimeRange struct {
-	From uint `json:"from"`
-	To   uint `json:"to"`
+	DurationMs uint64 `json:"durationMs"`
+}
+
+// UnmarshalJSON accepts three wire formats:
+//   - modern: {"durationMs": 300000}
+//   - legacy-rel-seconds: {"from": 300, "to": 0}  -> duration = |to-from| * 1000 ms
+//   - picker-style: {"mode": "relative", "relativeDuration": "5m"} -> ignored (duration stays 0)
+func (h *HistoryTimeRange) UnmarshalJSON(data []byte) error {
+	var modern struct {
+		DurationMs *uint64 `json:"durationMs"`
+	}
+	if err := json.Unmarshal(data, &modern); err == nil && modern.DurationMs != nil {
+		h.DurationMs = *modern.DurationMs
+		return nil
+	}
+	var legacy struct {
+		From *int64 `json:"from"`
+		To   *int64 `json:"to"`
+	}
+	if err := json.Unmarshal(data, &legacy); err == nil && legacy.From != nil && legacy.To != nil {
+		diff := *legacy.From - *legacy.To
+		if diff < 0 {
+			diff = -diff
+		}
+		h.DurationMs = uint64(diff) * 1000
+		return nil
+	}
+	// Unknown shape (e.g. picker mode object) — leave DurationMs as zero.
+	h.DurationMs = 0
+	return nil
 }
 
 // HyperParams 是所有超参数的接口
