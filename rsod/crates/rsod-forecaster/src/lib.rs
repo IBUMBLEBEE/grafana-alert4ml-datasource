@@ -146,43 +146,57 @@ fn extract_time_features(timestamp: f64) -> Vec<f64> {
         timestamp as i64
     };
     
-    let mut features = Vec::with_capacity(8);
+    let mut features = Vec::with_capacity(14);
     
     if let Some(dt) = DateTime::from_timestamp_millis(timestamp_millis) {
         let hour = dt.hour() as f64;
         let day_of_week = dt.weekday().num_days_from_monday() as f64;
         let day_of_month = dt.day() as f64;
         let month = dt.month() as f64;
-        // Normalize to [0, 1] range, use clamp to ensure values are within valid range
-        // Hour: 0-23 -> [0, 1]
+        // Quarter: 1-4 derived from month
+        let quarter = ((dt.month() - 1) / 3 + 1) as f64;
+        // Weekend indicator: Saturday(5) or Sunday(6) -> 1.0, otherwise 0.0
+        let is_weekend = if dt.weekday().num_days_from_monday() >= 5 { 1.0 } else { 0.0 };
+
+        // Linear normalized features [0, 1]
         let hour_norm = (hour / 23.0).clamp(0.0, 1.0);
-        // Weekday: 0-6 -> [0, 1]
         let day_of_week_norm = (day_of_week / 6.0).clamp(0.0, 1.0);
-        // Day of month: 1-31 -> [0, 1] (Note: day_of_month needs to be decremented by 1 before normalization to ensure values are in [0, 1] range
         let day_of_month_norm = ((day_of_month - 1.0) / 30.0).clamp(0.0, 1.0);
         let month_norm = ((month - 1.0) / 11.0).clamp(0.0, 1.0);
-        
-        // Normalize to [0, 1] range
-        features.push(hour_norm);           // Hour (0-1)
-        features.push(day_of_week_norm);      // Weekday (0-1)
-        features.push(day_of_month_norm);    // Day of month (0-1)
-        features.push(month_norm);           // Month (0-1)
-        
-        // Periodic features (sine/cosine encoding, used to capture periodic patterns)
+        let quarter_norm = ((quarter - 1.0) / 3.0).clamp(0.0, 1.0);
+
+        features.push(hour_norm);
+        features.push(day_of_week_norm);
+        features.push(day_of_month_norm);
+        features.push(month_norm);
+        features.push(quarter_norm);        // Quarter (0-1)
+        features.push(is_weekend);          // Weekend indicator (0 or 1)
+
+        // Periodic features (sine/cosine encoding for cyclic calendar variables)
         let hour_rad = hour * 2.0 * std::f64::consts::PI / 24.0;
         features.push(hour_rad.sin());
         features.push(hour_rad.cos());
-        
+
         let week_rad = day_of_week * 2.0 * std::f64::consts::PI / 7.0;
         features.push(week_rad.sin());
         features.push(week_rad.cos());
+
+        // Periodic encoding for month (captures annual seasonality)
+        let month_rad = (month - 1.0) * 2.0 * std::f64::consts::PI / 12.0;
+        features.push(month_rad.sin());
+        features.push(month_rad.cos());
+
+        // Periodic encoding for day-of-month (captures monthly sub-patterns)
+        let dom_rad = (day_of_month - 1.0) * 2.0 * std::f64::consts::PI / 31.0;
+        features.push(dom_rad.sin());
+        features.push(dom_rad.cos());
     } else {
         // If timestamp is invalid, fill with zeros
-        for _ in 0..8 {
+        for _ in 0..14 {
             features.push(0.0);
         }
     }
-    
+
     features
 }
 
@@ -268,21 +282,68 @@ fn moving_std(data: &[f64], window_size: usize) -> Vec<f64> {
     result
 }
 
+/// Rolling minimum over a sliding window (same edge semantics as moving_average)
+fn moving_min(data: &[f64], window_size: usize) -> Vec<f64> {
+    if data.is_empty() || window_size == 0 {
+        return vec![];
+    }
+    let mut result = Vec::with_capacity(data.len());
+    for i in 0..data.len() {
+        let start = if window_size == 1 || i < window_size - 1 { 0 } else { i + 1 - window_size };
+        let min = data[start..=i].iter().cloned().fold(f64::INFINITY, f64::min);
+        result.push(min);
+    }
+    result
+}
+
+/// Rolling maximum over a sliding window (same edge semantics as moving_average)
+fn moving_max(data: &[f64], window_size: usize) -> Vec<f64> {
+    if data.is_empty() || window_size == 0 {
+        return vec![];
+    }
+    let mut result = Vec::with_capacity(data.len());
+    for i in 0..data.len() {
+        let start = if window_size == 1 || i < window_size - 1 { 0 } else { i + 1 - window_size };
+        let max = data[start..=i].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        result.push(max);
+    }
+    result
+}
+
+/// Exponential weighted moving average with smoothing factor `alpha`.
+/// The first value is seeded with `data[0]` (no warm-up needed).
+fn ewm(data: &[f64], alpha: f64) -> Vec<f64> {
+    if data.is_empty() {
+        return vec![];
+    }
+    let mut result = Vec::with_capacity(data.len());
+    let mut prev = data[0];
+    result.push(prev);
+    for &val in &data[1..] {
+        prev = alpha * val + (1.0 - alpha) * prev;
+        result.push(prev);
+    }
+    result
+}
+
 fn extract_features(timestamps: &[f64], values: &[f64], periods: &[usize]) -> (Vec<f64>, Vec<f64>, usize) {
     // Extract time features and statistical features from time series historical data
     // Changed to directly predict absolute values instead of differences, so the model can better learn the relationship between time features and values
     // Ensure data and history_data use the same time feature extraction method (both use extract_time_features function)
     
     let n_samples = timestamps.len();
-    let n_time_features = 8; // Number of time features: 4 normalized features + 4 periodic features
-    let n_stat_features = 2; // Number of statistical features: moving average + moving standard deviation
+    let n_time_features = 14; // 6 linear-normalized + 8 periodic (hour, weekday, dom, month, quarter, is_weekend + sin/cos for hour/week/month/dom)
+    let n_stat_features = 5; // moving avg, moving std, rolling min, rolling max, EWM
     let n_lag_features = periods.len(); // Number of lag features: dynamically determined based on periods
     let n_features = n_time_features + n_stat_features + n_lag_features;
 
-    // Calculate moving average and moving standard deviation
+    // Calculate rolling statistics
     let window_size = 5;
     let moving_avg = moving_average(values, window_size);
     let moving_std_dev = moving_std(values, window_size);
+    let rolling_min_vals = moving_min(values, window_size);
+    let rolling_max_vals = moving_max(values, window_size);
+    let ewm_vals = ewm(values, 0.3);
 
     let mut targets = Vec::with_capacity(n_samples);
 
@@ -294,19 +355,22 @@ fn extract_features(timestamps: &[f64], values: &[f64], periods: &[usize]) -> (V
     for i in 0..n_samples {
         let time_features = extract_time_features(timestamps[i]);
 
-        // Time features (8 columns)
-        for j in 0..8 {
+        // Time features (14 columns)
+        for j in 0..14 {
             columns[j].push(time_features[j]);
         }
 
-        // Statistical features (2 columns)
-        columns[8].push(moving_avg[i]);
-        columns[9].push(moving_std_dev[i]);
+        // Statistical features (5 columns)
+        columns[14].push(moving_avg[i]);
+        columns[15].push(moving_std_dev[i]);
+        columns[16].push(rolling_min_vals[i]);
+        columns[17].push(rolling_max_vals[i]);
+        columns[18].push(ewm_vals[i]);
 
         // Lag features
         for (lag_idx, &period) in periods.iter().enumerate() {
             let lag_val = if i >= period { values[i - period] } else { values[0] };
-            columns[10 + lag_idx].push(lag_val);
+            columns[19 + lag_idx].push(lag_val);
         }
 
         // Target value is current absolute value (not difference)
@@ -357,7 +421,7 @@ pub fn forecast(
     let std_dev_multiplier = options.std_dev_multiplier.unwrap_or(2.0);
     let allow_negative_bounds = options.allow_negative_bounds.unwrap_or(false);
 
-    let (data_features, data_targets, data_n_features) = extract_features(data.timestamps, data.values, &options.periods);
+    let (data_features, _data_targets, data_n_features) = extract_features(data.timestamps, data.values, &options.periods);
     let (history_features, history_targets, history_n_features) = extract_features(history_data.timestamps, history_data.values, &options.periods);
 
     // Create matrix (created at caller to maintain lifetime)
@@ -367,9 +431,11 @@ pub fn forecast(
     // First try to load model from database
     if !options.uuid.is_empty() {
         if let Ok(model) = load_model_from_db(&options.uuid) {
-            // Calculate residual standard deviation (using training set)
+            // Residual std must be computed on the training set (history), not on the
+            // current evaluation window — using current-data residuals would be data leakage.
+            let history_pred = model.predict(&matrix_history, true);
+            let residual_std = calculate_residual_std(&history_targets, &history_pred);
             let pred = model.predict(&matrix, true);
-            let residual_std = calculate_residual_std(&data_targets, &pred);
             return Ok(compute_anomaly(data.timestamps, data.values, &pred, residual_std, std_dev_multiplier, allow_negative_bounds));
         }
         // Model doesn't exist, continue training new model
@@ -397,8 +463,11 @@ pub fn forecast(
     if !options.uuid.is_empty() {
         save_model_to_db(&options.uuid, &model)?;
     }
+    // Residual std must be computed on the training set (history), not on the
+    // current evaluation window — using current-data residuals would be data leakage.
+    let history_pred = model.predict(&matrix_history, true);
+    let residual_std = calculate_residual_std(&history_targets, &history_pred);
     let pred = model.predict(&matrix, true);
-    let residual_std = calculate_residual_std(&data_targets, &pred);
 
     // Predict data.len() future values
     // Use the last n_lags points of history_data as the starting point for prediction

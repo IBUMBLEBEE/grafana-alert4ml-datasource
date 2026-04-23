@@ -8,7 +8,7 @@ mod skew;
 mod stl;
 mod preprocessing; 
 
-use augurs::changepoint::{DefaultArgpcpDetector, Detector};
+use anofox_forecast::changepoint::{Pelt, CostFunction};
 use auto_mstl::auto_mstl;
 pub use ext_iforest::{
     iforest, load_iforest_model, predict_with_saved_model, save_iforest_model, EIFOptions,
@@ -20,6 +20,29 @@ use std::error::Error;
 
 pub use rsod_core::TIMESTAMP_COL;
 pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
+
+/// Detect changepoints using PELT algorithm from anofox-forecast
+///
+/// # Arguments
+///
+/// * `data` - Input time series values
+///
+/// # Returns
+///
+/// Vector of changepoint indices (>= 5 to filter out unstable leading points)
+fn detect_changepoints_pelt(data: &[f64]) -> Vec<usize> {
+    // Use PELT with L2 cost function and automatic penalty selection (CROPS + elbow)
+    // min_size=5 ensures we don't detect changepoints in very short segments
+    let result = Pelt::new(CostFunction::L2)
+        .min_size(5)
+        .auto_detect(data);
+
+    // Extract changepoint indices from the result
+    result.result.changepoints
+        .iter()
+        .map(|&cp| cp as usize)
+        .collect()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutlierOptions {
@@ -107,7 +130,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
                     .enumerate()
                     .map(|(i, (&t, &r))| [i as f64, t as f64 + r as f64])
                     .collect();
-                DefaultArgpcpDetector::default().detect_changepoints(
+                detect_changepoints_pelt(
                     &deseasonalized_2d.iter().map(|x| x[1]).collect::<Vec<f64>>(),
                 )
             },
@@ -119,11 +142,11 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
             outlier_threshold(&residual_2d.clone(), &eif_scores).unwrap();
         // Merge results
         let mut outlier_result = eif_scores_threshold;
-        // Remove changepoints with values less than 5
-        let mut changepoints = changepoints;
-        changepoints.retain(|&cp| cp >= 5);
+        // Mark changepoints as anomalies
         for cp in changepoints {
-            outlier_result[cp as usize] = 1.0;
+            if cp < outlier_result.len() {
+                outlier_result[cp] = 1.0;
+            }
         }
         return Ok(DetectionResult {
             timestamps: time_cols,
@@ -155,8 +178,7 @@ fn ensemble_detect(data: &[[f64; 2]], uuid: &str, eif_opts: EIFOptions) -> Resul
     let (eif_scores, changepoints) = rayon::join(
         || iforest(uuid_clone, eif_opts, &data_clone),
         || {
-            DefaultArgpcpDetector::default()
-                .detect_changepoints(&data.iter().map(|x| x[1]).collect::<Vec<f64>>())
+            detect_changepoints_pelt(&data.iter().map(|x| x[1]).collect::<Vec<f64>>())
         },
     );
 
@@ -164,11 +186,11 @@ fn ensemble_detect(data: &[[f64; 2]], uuid: &str, eif_opts: EIFOptions) -> Resul
     let eif_scores = eif_scores?;
     let eif_scores_threshold = outlier_threshold(&data, &eif_scores).unwrap();
     let mut outlier_result = eif_scores_threshold;
-    // Remove changepoints with values less than 5, because in changepoint detection, the first few points have no context reference and cannot determine if they are anomalies
-    let mut changepoints = changepoints;
-    changepoints.retain(|&cp| cp >= 5);
+    // Mark changepoints as anomalies
     for cp in changepoints {
-        outlier_result[cp as usize] = 1.0;
+        if cp < outlier_result.len() {
+            outlier_result[cp] = 1.0;
+        }
     }
     return Ok(outlier_result);
 }

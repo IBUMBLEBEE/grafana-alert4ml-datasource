@@ -21,6 +21,7 @@ num-complex.workspace = true
 chrono.workspace = true
 stlrs.workspace = true
 itertools.workspace = true
+anofox-forecast.workspace = true
 
 rsod-utils.workspace = true
 rsod-storage.workspace = true
