@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Validates commit message format: Conventional Commits
+# Usage: called automatically by git via core.hooksPath
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Strip comments and leading/trailing whitespace
+MSG=$(echo "$COMMIT_MSG" | sed '/^#/d' | sed '/^$/d' | head -n 1)
+
+PATTERN='^(feat|fix|perf|refactor|docs|style|test|ci|chore)(\(.+\))?(!)?: .+'
+
+if ! echo "$MSG" | grep -qE "$PATTERN"; then
+  echo ""
+  echo "  ✗ Invalid commit message format."
+  echo ""
+  echo "  Expected: <type>[optional scope][optional !]: <description>"
+  echo "  Example:  feat(forecast): add MASE evaluation metric"
+  echo ""
+  echo "  Allowed types: feat | fix | perf | refactor | docs | style | test | ci | chore"
+  echo ""
+  echo "  Your message: \"$MSG\""
+  echo ""
+  exit 1
+fi
