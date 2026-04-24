@@ -5,19 +5,18 @@
 header = "# Changelog\n"
 body = """
 {% if version %}\
-## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+# {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
 {% else %}\
-## [Unreleased]
+# Unreleased
 {% endif %}\
 {% for group, commits in commits | group_by(attribute="group") %}
-### {{ group | upper_first }}
+### {{ group }}
 {% for commit in commits %}\
-- {% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}{% if commit.breaking %} **(BREAKING CHANGE)**{% endif %}
+- {% if commit.scope %}**{{ commit.scope | upper_first }}:** {% endif %}{{ commit.message | upper_first }}{% if commit.breaking %} **[BREAKING CHANGE]**{% endif %}
 {% endfor %}\
 {% endfor %}\
 {% if version and previous.version %}\
 
----
 **Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/{{ previous.version }}...{{ version }}
 {% endif %}\n"""
 footer = ""
@@ -30,20 +29,25 @@ filter_unconventional = false
 split_commits = false
 
 commit_parsers = [
-  # Conventional commit prefixes -> grouped sections with emoji
-  { message = "^feat",               group = "✨ Features" },
-  { message = "^fix",                group = "🐛 Bug Fixes" },
-  { message = "^perf",               group = "⚡ Performance" },
-  { message = "^refactor",           group = "♻️ Refactoring" },
-  { message = "^docs",               group = "📚 Documentation" },
-  { message = "^style",              group = "🎨 Styling" },
-  { message = "^test",               group = "🧪 Testing" },
-  { message = "^ci",                 group = "👷 CI/CD" },
+  # Breaking changes get their own section (highest priority)
+  { message = ".*!:",                group = "Breaking changes" },
+  { body = ".*BREAKING CHANGE",      group = "Breaking changes" },
+  # Feature / enhancement commits
+  { message = "^feat",               group = "Features and enhancements" },
+  { message = "^perf",               group = "Features and enhancements" },
+  { message = "^refactor",           group = "Features and enhancements" },
+  # Bug fixes
+  { message = "^fix",                group = "Bug fixes" },
+  # Infra / housekeeping
+  { message = "^docs",               group = "Features and enhancements" },
+  { message = "^style",              group = "Features and enhancements" },
+  { message = "^test",               group = "Features and enhancements" },
+  { message = "^ci",                 group = "Features and enhancements" },
   # Skip release-bump commits to avoid noise
   { message = "^chore\\(release\\)", skip = true },
-  { message = "^chore",              group = "🔧 Miscellaneous" },
-  # Fallback: everything else goes into Changes
-  { body = ".*",                     group = "📦 Changes" },
+  { message = "^chore",              group = "Features and enhancements" },
+  # Fallback: everything else
+  { body = ".*",                     group = "Features and enhancements" },
 ]
 
 filter_commits = false
