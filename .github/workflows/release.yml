@@ -7,8 +7,29 @@ on:
   workflow_dispatch:  # Allow manual triggering from GitHub UI
 
 jobs:
+  # ── Step 0: Validate tag matches package.json version ────────
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG_VERSION="${{ github.ref_name }}"
+          TAG_VERSION="${TAG_VERSION#v}"
+          PKG_VERSION="$(npm pkg get version | tr -d '"')"
+          if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+            echo "ERROR: tag version ($TAG_VERSION) != package.json version ($PKG_VERSION)"
+            echo "Run: ./scripts/release-pre.sh $TAG_VERSION  and commit before tagging."
+            exit 1
+          fi
+          echo "✓ Tag ${{ github.ref_name }} matches package.json version $PKG_VERSION"
+
   # ── Step 1: Build frontend once ─────────────────────────────
   build-frontend:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +112,24 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@git-cliff
+
+      - name: Generate release notes
+        shell: bash
+        run: |
+          # --strip all removes "# Changelog" header; tail -n +3 removes the
+          # redundant "## [version] - date" line (GitHub Release already shows
+          # the tag as the title) and the blank line that follows it.
+          git cliff --latest --strip all | tail -n +3 > release-notes.md
+          echo "=== Release notes ==="
+          cat release-notes.md
+
       - name: Download all package artifacts
         uses: actions/download-artifact@v4
         with:
@@ -100,6 +139,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           files: |
             *.zip
             *.tar.gz
