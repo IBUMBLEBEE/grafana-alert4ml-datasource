@@ -1,32 +1,76 @@
-#!/bin/bash
-# Script to update plugin version across all configuration files
+#!/usr/bin/env bash
+# Prepare a release: bump version and regenerate CHANGELOG via git-cliff.
+# Usage: ./scripts/release-pre.sh <X.Y.Z>
 
-if [ -z "$1" ]; then
-  echo "Usage: $0 <version>"
-  echo "Example: $0 0.1.5"
-  exit 1
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+usage() {
+  cat <<EOF
+Usage: $0 <version>
+Example: $0 0.2.8
+
+Prepares a release by:
+  1. Updating package.json and package-lock.json to <version>
+  2. Regenerating CHANGELOG.md from git history via git-cliff
+  3. Printing the commands to commit, tag, and push
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage; exit 0
+fi
+
+if [[ -z "${1:-}" ]]; then
+  usage; exit 1
 fi
 
 VERSION="$1"
 
-# Validate version format
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Error: Version must be in format X.Y.Z (e.g., 0.1.5)"
+  echo "Error: version must be X.Y.Z (e.g. 0.2.8)"
   exit 1
 fi
 
-echo "Updating plugin version to $VERSION..."
-
-# Update package.json
-if [ -f package.json ]; then
-  sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" package.json
-  echo "✓ Updated package.json"
+# ── Prerequisite checks ──────────────────────────────────────
+if ! command -v npm >/dev/null 2>&1; then
+  echo "Error: npm is required"
+  exit 1
 fi
 
-echo "Version update complete! New version: $VERSION"
-echo ""
-echo "Next steps:"
-echo "1. Review changes: git diff"
-echo "2. Commit changes: git add . && git commit -m 'chore: bump version to $VERSION'"
-echo "3. Create tag: git tag -a v$VERSION -m 'Release v$VERSION'"
-echo "4. Push: git push origin main && git push origin v$VERSION"
+if ! command -v git-cliff >/dev/null 2>&1; then
+  echo "Error: git-cliff is not installed"
+  echo "  cargo install git-cliff"
+  echo "  or: npm install -g @git-cliff/git-cliff"
+  exit 1
+fi
+
+cd "$REPO_ROOT"
+
+# ── 1. Bump version in package.json + package-lock.json ──────
+CURRENT="$(npm pkg get version | tr -d '"')"
+if [[ "$CURRENT" == "$VERSION" ]]; then
+  echo "package.json is already at $VERSION"
+else
+  echo "Bumping version: $CURRENT → $VERSION"
+  npm version --no-git-tag-version "$VERSION" >/dev/null
+  echo "✓ package.json and package-lock.json updated"
+fi
+
+# ── 2. Regenerate full CHANGELOG.md ──────────────────────────
+echo "Generating CHANGELOG.md for tag v${VERSION}..."
+git cliff --tag "v${VERSION}" --output CHANGELOG.md
+echo "✓ CHANGELOG.md updated"
+
+# ── 3. Print next steps ──────────────────────────────────────
+echo
+echo "Release v${VERSION} is ready. Next steps:"
+echo
+echo "  git diff                          # review"
+echo "  git add package.json package-lock.json CHANGELOG.md"
+echo "  git commit -m 'chore(release): v${VERSION}'"
+echo "  git tag -a v${VERSION} -m 'Release v${VERSION}'"
+echo "  git push origin HEAD"
+echo "  git push origin v${VERSION}       # triggers CI release workflow"
