@@ -41,6 +41,7 @@ type Props = QueryEditorProps<DataSource, Alert4MLQuery, Alert4MLDataSourceOptio
 export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app, datasource }: Props) {
   console.log('query variables', getTemplateSrv().replace("${__dashboard.uid}"));
   const [isHyperParamsOpen, setIsHyperParamsOpen] = useState<boolean>(false);
+  const isAlertingApp = typeof app === 'string' && app.toLowerCase().includes('alert');
 
   // --- Base DataSource nested QueryEditor ---
   const baseDsUid = query.baseDsUid;
@@ -105,6 +106,10 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       return;
     }
 
+    // 切换 Base DataSource 时先清空旧实例，避免旧原生编辑器短暂复用。
+    setBaseDsInstance(null);
+    setNativeQueryEditor(null);
+
     let cancelled = false;
     (async () => {
       try {
@@ -129,6 +134,11 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     return () => { cancelled = true; };
   }, [baseDsUid]);
 
+  // queryRef 确保 onRawQueryChange 不因 query 变化而产生新引用，
+  // 避免原生编辑器收到新 onChange prop 后重置内部状态。
+  const queryRef = useRef(query);
+  queryRef.current = query;
+
   const onRawQueryChange = useCallback((rawQuery: DataQuery) => {
     // Ensure datasource info is attached so Grafana /api/ds/query can route the query
     const enrichedQuery = {
@@ -141,18 +151,30 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     if (baseDsUid) {
       rawQueryCacheRef.current[baseDsUid] = enrichedQuery;
     }
-    onChange({ ...query, rawQuery: enrichedQuery, targets: [enrichedQuery] });
-  }, [query, onChange, baseDsInstance, baseDsUid]);
+    onChange({ ...queryRef.current, rawQuery: enrichedQuery, targets: [enrichedQuery] });
+  }, [onChange, baseDsInstance, baseDsUid]);
+
+  const nativeQuery = useMemo(() => {
+    const raw = query.rawQuery as DataQuery | undefined;
+    const baseQuery: DataQuery = raw?.refId ? raw : { ...(raw ?? {}), refId: query.refId };
+    if (!baseDsInstance) {
+      return baseQuery;
+    }
+    return {
+      ...baseQuery,
+      datasource: { uid: baseDsInstance.uid, type: baseDsInstance.type },
+    };
+  }, [query.rawQuery, query.refId, baseDsInstance]);
 
   // --- End Base DataSource nested QueryEditor ---
 
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
     detectType = Alert4MLDetectType.Outlier,
-    showAnomalyPoints = false,
     hyperParams = DEFAULT_RSOD_PARAMS,
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
+  const { alertMode = false } = query;
   
   // 使用 useRef 来跟踪是否是首次执行
   const isInitialized = useRef(false);
@@ -173,6 +195,14 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     debouncedQueryWithCleanup();
   }, [data, query]);
 
+  useEffect(() => {
+    // Guardrail: in non-alert contexts (panel/explore), force alertMode off
+    // even if an old saved query had it enabled.
+    if (!isAlertingApp && alertMode) {
+      runDebouncedQueryWithTempTargets({ alertMode: false });
+    }
+  }, [isAlertingApp, alertMode, runDebouncedQueryWithTempTargets]);
+
 
   useEffect(() => {
     if (!isInitialized.current) {
@@ -186,6 +216,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         detectType: detectType || Alert4MLDetectType.Outlier,
         hyperParams: hyperParams || DEFAULT_RSOD_PARAMS,
         historyTimeRange: historyTimeRange,
+        alertMode: alertMode,
         uniqueKeys: newUniqueKeys,
       });
       runDebouncedQueryWithTempTargets({...query});
@@ -254,9 +285,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   };
 
-  const onShowAnomalyPointsChange = (checked: boolean) => {
+  const onAlertModeChange = (checked: boolean) => {
     if (typeof checked === 'boolean') {
-      runDebouncedQueryWithTempTargets({ showAnomalyPoints: checked });
+      runDebouncedQueryWithTempTargets({ alertMode: checked });
     }
   };
 
@@ -324,10 +355,14 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           </InlineField>
           {NativeQueryEditor && baseDsInstance && (
             <NativeQueryEditor
+              key={`${baseDsUid ?? 'none'}:${baseDsInstance.type ?? 'unknown'}`}
               datasource={baseDsInstance}
-              query={query.rawQuery || { refId: query.refId }}
+              query={nativeQuery}
               onChange={onRawQueryChange}
               onRunQuery={onRunQuery}
+              data={data}
+              queries={queries}
+              app={app}
             />
           )}
           {baseDsUid && !NativeQueryEditor && !baseDsInstance && (
@@ -373,12 +408,17 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
             onZoom={() => undefined}
           />
         </InlineField>
-        <InlineSwitch
-          label="Only Anomaly Points"
-          showLabel={true}
-          value={showAnomalyPoints || false}
-          onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
-        />
+          {isAlertingApp && (
+            <InlineField
+              label="Alert Mode"
+              tooltip="Returns a single anomaly_count scalar per query. Use this when configuring a Grafana Alert Rule: Reduce(Last, anomaly_count) → Threshold > 0."
+            >
+              <InlineSwitch
+                value={alertMode}
+                onChange={(e) => e && onAlertModeChange(e.currentTarget.checked)}
+              />
+            </InlineField>
+          )}
 
       </Stack>
       <Stack gap={0}>

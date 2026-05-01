@@ -164,9 +164,6 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 
 					newframe := RenderFrameWithBaseline(resultDynamicsDF, selfRefID)
-					if queryJson.ShowAnomalyPoints {
-						removeNonAnomalyFields(newframe)
-					}
 					newframes = append(newframes, newframe)
 
 				case constant.DetectTypeForecast:
@@ -233,16 +230,14 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 						return nil, err
 					}
 					newframe := RenderFrameWithForecast(resultForecastDF, selfRefID, f.Name)
-					if queryJson.ShowAnomalyPoints {
-						removeNonAnomalyFields(newframe)
-					}
 					newframes = append(newframes, newframe)
 				}
 			}
 			existingResponse := rsp.Responses[selfRefID]
-			if queryJson.ShowAnomalyPoints {
-				// 仅显示异常点：丢弃原始数据帧，只返回检测结果帧
-				existingResponse.Frames = newframes
+			if queryJson.AlertMode {
+				// Alert mode: return a single-row scalar frame suitable for Grafana Alert Rule evaluation.
+				// Users configure: Reduce(Last, anomaly_count) → Threshold > 0.
+				existingResponse.Frames = []*data.Frame{BuildAlertSummaryFrame(newframes, selfRefID)}
 			} else {
 				existingResponse.Frames = append(existingResponse.Frames, newframes...)
 			}

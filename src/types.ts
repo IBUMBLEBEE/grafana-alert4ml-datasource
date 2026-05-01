@@ -157,7 +157,7 @@ export interface Alert4MLQuery extends DataQuery {
   hyperParams: RsodParams | DynamicsParams | ForecastParams;
   targets: DataQuery[];
   historyTimeRange: HistoryDuration;
-  showAnomalyPoints: boolean;
+  alertMode: boolean;
   uniqueKeys: UniqueKeys;
   baseDsUid?: string;
   rawQuery?: Record<string, any>;
@@ -168,7 +168,7 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
   seriesRefId: 'A',
   supportDetect: Alert4MLSupportDetect.MachineLearning,
   detectType: Alert4MLDetectType.Outlier,
-  showAnomalyPoints: false,
+  alertMode: false,
   hyperParams: DEFAULT_RSOD_PARAMS,
   targets: [],
   historyTimeRange: DEFAULT_TIME_RANGE,
