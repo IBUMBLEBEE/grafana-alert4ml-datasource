@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -202,15 +203,60 @@ func removeAnomalyField(df *data.Frame) {
 	df.Fields = fields
 }
 
-// removeNonAnomalyFields keeps only Time and Anomaly fields, removing baseline/bounds/forecast etc.
-func removeNonAnomalyFields(df *data.Frame) {
-	fields := make([]*data.Field, 0, len(df.Fields))
-	for _, field := range df.Fields {
-		name := field.Name
-		if name == constant.GF_FRAME_RESULT_NAME_TIME || field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime ||
-			strings.EqualFold(name, constant.GF_FRAME_RESULT_NAME_ANOMALY) || strings.EqualFold(name, "anomaly") {
-			fields = append(fields, field)
+// BuildAlertSummaryFrame counts non-null anomaly values across all provided frames and
+// returns a single-point wide time series for Grafana Alert Rule evaluation.
+//
+//	anomaly_count [float64] – total anomalous data points across all series
+//
+// Alert Rule setup:
+//   - Preferred: Threshold on A > 0 (when UI supports direct threshold).
+//   - Alternative: Reduce(Last) on A then Threshold > 0.
+func BuildAlertSummaryFrame(frames []*data.Frame, refID string) *data.Frame {
+	var anomalyCount int64
+
+	for _, df := range frames {
+		if df == nil {
+			continue
+		}
+		for _, field := range df.Fields {
+			name := field.Name
+			isAnomaly := strings.EqualFold(name, constant.GF_FRAME_RESULT_NAME_ANOMALY) || strings.EqualFold(name, "anomaly")
+			if !isAnomaly {
+				continue
+			}
+			for i := range field.Len() {
+				val := field.At(i)
+				if val == nil {
+					continue
+				}
+				switch v := val.(type) {
+				case float64:
+					if !math.IsNaN(v) {
+						anomalyCount++
+					}
+				case *float64:
+					if v != nil && !math.IsNaN(*v) {
+						anomalyCount++
+					}
+				case int64:
+					anomalyCount++
+				case *int64:
+					if v != nil {
+						anomalyCount++
+					}
+				}
+			}
 		}
 	}
-	df.Fields = fields
+
+	timeField := data.NewField(constant.GF_FRAME_RESULT_NAME_TIME, nil, []time.Time{time.Now()})
+	timeField.Config = &data.FieldConfig{DisplayName: constant.GF_FRAME_RESULT_NAME_TIME}
+
+	countField := data.NewField("anomaly_count", nil, []float64{float64(anomalyCount)})
+	countField.Config = &data.FieldConfig{DisplayName: "Anomaly Count"}
+
+	summary := data.NewFrame("alert_summary", timeField, countField)
+	summary.RefID = refID
+	summary.Meta = &data.FrameMeta{Type: data.FrameTypeTimeSeriesWide}
+	return summary
 }

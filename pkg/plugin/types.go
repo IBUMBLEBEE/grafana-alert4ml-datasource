@@ -12,14 +12,14 @@ import (
 )
 
 type Alert4MLQueryJson struct {
-	DetectType        string            `json:"detectType"`
-	SupportDetect     string            `json:"supportDetect"`
-	SeriesRefId       string            `json:"seriesRefId"`
-	HyperParams       json.RawMessage   `json:"hyperParams"`
-	Targets           []json.RawMessage `json:"targets,omitempty"`
-	ShowAnomalyPoints bool              `json:"showAnomalyPoints"`
-	HistoryTimeRange  HistoryTimeRange  `json:"historyTimeRange"`
-	UniqueKeys        UniqueKeys        `json:"uniqueKeys"`
+	DetectType       string            `json:"detectType"`
+	SupportDetect    string            `json:"supportDetect"`
+	SeriesRefId      string            `json:"seriesRefId"`
+	HyperParams      json.RawMessage   `json:"hyperParams"`
+	Targets          []json.RawMessage `json:"targets,omitempty"`
+	AlertMode        bool              `json:"alertMode"`
+	HistoryTimeRange HistoryTimeRange  `json:"historyTimeRange"`
+	UniqueKeys       UniqueKeys        `json:"uniqueKeys"`
 }
 
 // HistoryTimeRange stores only the length of the history window.
