@@ -14,7 +14,6 @@ impl Model {
     }
 
     pub fn write(&self) -> Result<(), std::io::Error> {
-        println!("Model::write called for uuid: {}", self.uuid);
         crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let backend = get_backend();
@@ -25,7 +24,6 @@ impl Model {
     }
 
     pub fn read(&mut self) -> Result<(), std::io::Error> {
-        println!("Model::read called for uuid: {}", self.uuid);
         crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let backend = get_backend();

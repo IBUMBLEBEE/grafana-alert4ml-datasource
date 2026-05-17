@@ -1,12 +1,13 @@
 [package]
 name = "rsod-forecaster"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 
 [dependencies]
 rsod-core.workspace = true
 rsod-utils.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 perpetual.workspace = true
 rsod-storage.workspace = true
 chrono.workspace = true

@@ -1,11 +1,8 @@
 use serde::{Deserialize, Serialize};
 use perpetual::{objective::Objective, Matrix, PerpetualBooster};
-use perpetual::booster::config::BoosterIO;
 use std::error::Error;
-use std::io::Write;
-use std::fs;
 use rsod_storage::model::Model;
-use rsod_core::{DetectionResult, TimeSeriesInput};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use chrono::{DateTime, Datelike, Timelike};
 
 // Re-export shared column constants from rsod-core
@@ -83,20 +80,8 @@ fn load_model_from_db(uuid: &str) -> Result<PerpetualBooster, Box<dyn Error>> {
         return Err("Model does not exist".into());
     }
 
-    // Write byte data to temporary file
-    let temp_path = std::env::temp_dir().join(format!("perpetual_model_{}.json", uuid));
-    let mut file = fs::File::create(&temp_path)
-        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
-    file.write_all(&model.artifacts)
-        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
-    drop(file);
-
-    // Load model from temporary file
-    let booster = PerpetualBooster::load_booster(temp_path.to_str().unwrap())
-        .map_err(|e| format!("Failed to load model: {}", e))?;
-
-    // Clean up temporary file
-    let _ = fs::remove_file(&temp_path);
+    let booster: PerpetualBooster = serde_json::from_slice(&model.artifacts)
+        .map_err(|e| format!("Failed to deserialize model: {}", e))?;
 
     Ok(booster)
 }
@@ -106,19 +91,9 @@ fn save_model_to_db(
     uuid: &str,
     model: &PerpetualBooster,
 ) -> Result<(), Box<dyn Error>> {
-    // Save to temporary file
-    let temp_path = std::env::temp_dir().join(format!("perpetual_model_{}.json", uuid));
-    model.save_booster(temp_path.to_str().unwrap())
-        .map_err(|e| format!("Failed to save model to temporary file: {}", e))?;
+    let artifacts = serde_json::to_vec(model)
+        .map_err(|e| format!("Failed to serialize model: {}", e))?;
 
-    // Read file content
-    let artifacts = fs::read(&temp_path)
-        .map_err(|e| format!("Failed to read temporary file: {}", e))?;
-
-    // Clean up temporary file
-    let _ = fs::remove_file(&temp_path);
-
-    // Save to SQLite database
     let storage_model = Model::new(uuid.to_string(), artifacts);
     storage_model.write().map_err(|e| format!("Failed to write to database: {}", e))?;
 
@@ -416,7 +391,7 @@ pub fn forecast(
     data: TimeSeriesInput<'_>,
     history_data: TimeSeriesInput<'_>,
     options: &ForecasterOptions,
-) -> Result<DetectionResult, Box<dyn Error>> {
+) -> rsod_core::Result<DetectionResult> {
     let n_lags = options.n_lags.unwrap_or(24);
     let std_dev_multiplier = options.std_dev_multiplier.unwrap_or(2.0);
     let allow_negative_bounds = options.allow_negative_bounds.unwrap_or(false);
@@ -458,10 +433,12 @@ pub fn forecast(
     // Third parameter is training weights (f64 array), must match full dataset length
     // Fourth parameter is validation set indices (u64 array)
     // Note: Here we use the full matrix and targets, perpetual library will automatically split based on valid_indices
-    model.fit(&matrix_history, &history_targets, None, None)?;
+    model.fit(&matrix_history, &history_targets, None, None)
+        .map_err(|e| RsodError::Detection(e.to_string()))?;
     // After training, save model to database
     if !options.uuid.is_empty() {
-        save_model_to_db(&options.uuid, &model)?;
+        save_model_to_db(&options.uuid, &model)
+            .map_err(|e| RsodError::Storage(e.to_string()))?;
     }
     // Residual std must be computed on the training set (history), not on the
     // current evaluation window — using current-data residuals would be data leakage.
@@ -472,11 +449,10 @@ pub fn forecast(
     // Predict data.len() future values
     // Use the last n_lags points of history_data as the starting point for prediction
     if history_data.len() < n_lags {
-        return Err(format!(
-            "Historical data length ({}) is insufficient for prediction, need at least {} data points",
-            history_data.len(),
-            n_lags
-        ).into());
+        return Err(RsodError::InsufficientData {
+            need: n_lags,
+            got: history_data.len(),
+        });
     }
 
     Ok(compute_anomaly(data.timestamps, data.values, &pred, residual_std, std_dev_multiplier, allow_negative_bounds))

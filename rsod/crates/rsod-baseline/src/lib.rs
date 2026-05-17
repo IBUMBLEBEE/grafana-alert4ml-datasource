@@ -2,7 +2,7 @@ pub mod dynamics;
 
 use polars::prelude::*;
 use polars::datatypes::DataType;
-use rsod_core::{DetectionResult, TimeSeriesInput};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use serde::{Serialize, Deserialize};
 use std::error::Error;
 
@@ -51,8 +51,8 @@ pub struct BaselineOptions {
     pub uuid: String,
 }
 
-impl BaselineOptions {
-    pub fn default() -> Self {
+impl Default for BaselineOptions {
+    fn default() -> Self {
         Self {
             trend_type: TrendType::Daily,
             interval_mins: Some(60),
@@ -62,6 +62,9 @@ impl BaselineOptions {
             uuid: "".to_string(),
         }
     }
+}
+
+impl BaselineOptions {
 
     pub fn interval_mins(&self) -> u32 {
         self.interval_mins.unwrap_or(60) 
@@ -100,20 +103,15 @@ impl BaselineOptions {
     }
 }
 
-impl Default for BaselineOptions {
-    fn default() -> Self {
-        Self::default()
-    }
-}
-
-
-pub fn baseline_detect(data: TimeSeriesInput<'_>, history_data: TimeSeriesInput<'_>, options: &BaselineOptions) -> Result<DetectionResult, Box<dyn Error>> {
+pub fn baseline_detect(data: TimeSeriesInput<'_>, history_data: TimeSeriesInput<'_>, options: &BaselineOptions) -> rsod_core::Result<DetectionResult> {
     // Convert TimeSeriesInput to internal Polars DataFrames
     let df = input_to_dataframe(&data);
     let history_df = input_to_dataframe(&history_data);
-    
-    let result_df = calculate_dynamic_baseline(df, history_df, options)?;
-    Ok(dataframe_to_result(&result_df)?)
+
+    let result_df = calculate_dynamic_baseline(df, history_df, options)
+        .map_err(|e| RsodError::Detection(e.to_string()))?;
+    dataframe_to_result(&result_df)
+        .map_err(|e| RsodError::Detection(e.to_string()))
 }
 
 /// Convert TimeSeriesInput to Polars DataFrame (internal bridge).

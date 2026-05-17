@@ -3,12 +3,10 @@ use crate::types::*;
 use crate::traits::ClassifierInput;
 use crate::{preprocessing, stationarity, trend, seasonality};
 use rsod_core::{Result, SeriesCharacteristic, TrendDirection, RsodError};
-use std::cell::RefCell;
 
 /// Complete time series classifier pipeline
 pub struct TimeSeriesClassifierPipeline {
     config: ClassifierConfig,
-    results: RefCell<Option<ClassificationResult>>,
 }
 
 impl TimeSeriesClassifierPipeline {
@@ -16,16 +14,12 @@ impl TimeSeriesClassifierPipeline {
     pub fn new() -> Self {
         Self {
             config: ClassifierConfig::default(),
-            results: RefCell::new(None),
         }
     }
 
     /// Create with custom configuration
     pub fn with_config(config: ClassifierConfig) -> Self {
-        Self {
-            config,
-            results: RefCell::new(None),
-        }
+        Self { config }
     }
 
     /// Classify time series data
@@ -103,8 +97,6 @@ impl TimeSeriesClassifierPipeline {
             confidence,
             reasoning,
         };
-
-        *self.results.borrow_mut() = Some(result.clone());
 
         Ok(result)
     }
@@ -239,11 +231,6 @@ impl TimeSeriesClassifierPipeline {
                 (SeriesCharacteristic::Stationary, confidence, reasoning)
             }
         }
-    }
-
-    /// Get last classification result
-    pub fn last_result(&self) -> Option<ClassificationResult> {
-        self.results.borrow().clone()
     }
 }
 

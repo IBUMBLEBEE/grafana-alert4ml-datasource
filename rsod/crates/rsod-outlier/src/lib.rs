@@ -14,7 +14,7 @@ pub use ext_iforest::{
     iforest, load_iforest_model, predict_with_saved_model, save_iforest_model, EIFOptions,
     SavedIForestModel,
 };
-use rsod_core::{DetectionResult, TimeSeriesInput};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -80,11 +80,11 @@ impl OutlierOptions {
 /// * `uuid` - Unique identifier for the model, used for saving and loading models
 ///
 /// Returns outlier scores (0 or 1), where 1 indicates an outlier
-pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<DetectionResult, Box<dyn Error>> {
+pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_core::Result<DetectionResult> {
     let periods = &options.periods;
     let uuid = &options.uuid;
     if input.is_empty() {
-        return Err("data is empty".into());
+        return Err(RsodError::EmptyData);
     }
 
     // Reconstruct AoS for internal modules that still require it
@@ -137,9 +137,9 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
         );
 
         // Apply threshold processing to eif_scores
-        let eif_scores = eif_scores?;
+        let eif_scores = eif_scores.map_err(|e| RsodError::Detection(e.to_string()))?;
         let eif_scores_threshold =
-            outlier_threshold(&residual_2d.clone(), &eif_scores).unwrap();
+            outlier_threshold(&residual_2d.clone(), &eif_scores).map_err(|e| RsodError::Detection(e))?;
         // Merge results
         let mut outlier_result = eif_scores_threshold;
         // Mark changepoints as anomalies
@@ -157,10 +157,8 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
         });
     } else {
         // No periodicity, data stationarity is unknown
-        let result = match ensemble_detect(&data, uuid, options.eif_options()) {
-            Ok(v) => v,
-            Err(e) => return Err(e.into()),
-        };
+        let result = ensemble_detect(&data, uuid, options.eif_options())
+            .map_err(|e| RsodError::Detection(e.to_string()))?;
         return Ok(DetectionResult {
             timestamps: time_cols,
             values: input.values.to_vec(),

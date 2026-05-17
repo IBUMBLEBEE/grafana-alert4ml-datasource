@@ -3987,7 +3987,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-baseline"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "arrow",
  "chrono",
@@ -4000,7 +4000,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-classifier"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anofox-forecast",
  "augurs",
@@ -4046,7 +4046,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-forecaster"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "perpetual",
@@ -4054,11 +4054,12 @@ dependencies = [
  "rsod-storage",
  "rsod-utils",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "rsod-outlier"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anofox-forecast",
  "approx 0.5.1",
@@ -4085,7 +4086,7 @@ dependencies = [
 
 [[package]]
 name = "rsod-storage"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "postgres",
  "rsod-core",

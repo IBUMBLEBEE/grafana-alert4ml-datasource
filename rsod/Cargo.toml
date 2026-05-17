@@ -6,13 +6,12 @@ resolver = "2"
 
 [workspace.dependencies]
 rsod-core = { path = "crates/rsod-core", version="0.1.2" }
-rsod-outlier = { path = "crates/rsod-outlier", version="0.1.2" }
-rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.2" }
-rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }
+rsod-outlier = { path = "crates/rsod-outlier", version="0.1.3" }
+rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.3" }
+rsod-baseline = { path = "crates/rsod-baseline", version="0.1.3" }
 rsod-utils = { path = "crates/rsod-utils", version="0.1.2" }
-rsod-storage = { path = "crates/rsod-storage", version="0.1.2" }
-rsod-ffi = { path = "crates/rsod-storage", version="0.1.1" }
-rsod-classifier = { path = "crates/rsod-classifier", version="0.1.2" }
+rsod-storage = { path = "crates/rsod-storage", version="0.1.3" }
+rsod-classifier = { path = "crates/rsod-classifier", version="0.1.3" }
 
 ndarray = "0.16.1"
 rand = "0.8"
