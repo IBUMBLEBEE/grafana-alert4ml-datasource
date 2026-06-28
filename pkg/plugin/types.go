@@ -94,6 +94,13 @@ func ParseHyperParams(detectType string, data json.RawMessage) (HyperParams, err
 		}
 		params.SetDefaults()
 		return &params, nil
+	case constant.DetectTypeFunnel:
+		var params FunnelHyperParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return nil, fmt.Errorf("failed to parse FunnelHyperParams: %w", err)
+		}
+		params.SetDefaults()
+		return &params, nil
 	default:
 		return nil, fmt.Errorf("unknown detect type: %s", detectType)
 	}
@@ -217,5 +224,61 @@ func (p *ForecastHyperParams) SetDefaults() {
 	}
 	if p.MaxBin == 0 {
 		p.MaxBin = 255
+	}
+}
+
+// FunnelHyperParams configures funnel (L1 + optional L2) detection.
+type FunnelHyperParams struct {
+	ModelName            string  `json:"modelName,omitempty"`
+	Periods              string  `json:"periods,omitempty"`
+	Trend                string  `json:"trend,omitempty"`
+	AutoTrend            bool    `json:"autoTrend,omitempty"`
+	KOuter               float64 `json:"kOuter,omitempty"`
+	KInner               float64 `json:"kInner,omitempty"`
+	MinSamples           uint64  `json:"minSamples,omitempty"`
+	StdDevMultiplier     float64 `json:"stdDevMultiplier,omitempty"`
+	EnableL2             bool    `json:"enableL2,omitempty"`
+	PersistProfile       *bool   `json:"persistProfile,omitempty"`
+	LookbackDays         uint32  `json:"lookbackDays,omitempty"`
+	EvalWindowSecs       uint32  `json:"evalWindowSecs,omitempty"`
+	AlertOutputMode      string  `json:"alertOutputMode,omitempty"`
+	MaxSparseBucketRatio float64 `json:"maxSparseBucketRatio,omitempty"`
+}
+
+func (p *FunnelHyperParams) GetType() string {
+	return constant.DetectTypeFunnel
+}
+
+func (p *FunnelHyperParams) SetDefaults() {
+	if p.ModelName == "" {
+		p.ModelName = "funnel"
+	}
+	if p.Trend == "" {
+		p.Trend = "daily"
+	}
+	if p.KOuter == 0 {
+		p.KOuter = 2.5
+	}
+	if p.KInner == 0 {
+		p.KInner = 1.5
+	}
+	if p.MinSamples == 0 {
+		p.MinSamples = 5
+	}
+	if p.StdDevMultiplier == 0 {
+		p.StdDevMultiplier = 2.0
+	}
+	if p.LookbackDays == 0 {
+		p.LookbackDays = 90
+	}
+	if p.AlertOutputMode == "" {
+		p.AlertOutputMode = "dedupe"
+	}
+	if p.MaxSparseBucketRatio == 0 {
+		p.MaxSparseBucketRatio = 0.3
+	}
+	if p.PersistProfile == nil {
+		t := true
+		p.PersistProfile = &t
 	}
 }

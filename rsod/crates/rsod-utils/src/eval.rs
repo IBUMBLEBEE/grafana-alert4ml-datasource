@@ -207,6 +207,16 @@ impl ForecastMetrics {
     }
 }
 
+// ─── Funnel helpers ──────────────────────────────────────────────────────────
+
+/// Convert Grafana display-format anomaly column (raw value or NaN) to binary 0/1.
+pub fn funnel_display_to_binary(anomalies: &[f64]) -> Vec<f64> {
+    anomalies
+        .iter()
+        .map(|a| if a.is_finite() { 1.0 } else { 0.0 })
+        .collect()
+}
+
 // ─── Testdata helpers (test-only) ────────────────────────────────────────────
 
 /// Load a time-series fixture from `dataset/testdata/<rel_path>`.

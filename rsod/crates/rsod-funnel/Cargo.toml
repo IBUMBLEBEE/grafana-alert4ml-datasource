@@ -1,0 +1,33 @@
+[package]
+name = "rsod-funnel"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Funnel anomaly detection: L1 statistical filter + L2 ML escalation"
+
+[dependencies]
+rsod-core.workspace = true
+rsod-utils.workspace = true
+rsod-storage.workspace = true
+rsod-outlier.workspace = true
+rsod-forecaster.workspace = true
+rsod-baseline.workspace = true
+rsod-classifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[example]]
+name = "funnel_viz"
+path = "examples/funnel_viz.rs"
+
+[[example]]
+name = "funnel_bench"
+path = "examples/funnel_bench.rs"
+
+[dev-dependencies]
+plotters = "0.3.7"
+rsod-utils.workspace = true
+chrono.workspace = true

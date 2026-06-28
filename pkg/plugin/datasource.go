@@ -84,6 +84,8 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 			// 注意：不同 DetectType 对应不同的 HyperParams 类型，避免在此处做通用断言
 
+			htr := effectiveHistoryTimeRange(queryJson.DetectType, queryJson.HistoryTimeRange)
+
 			newframes := make([]*data.Frame, 0)
 			for frameIdx, f := range queryResponse.Frames {
 				if f == nil || len(f.Fields) == 0 {
@@ -144,7 +146,7 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
-					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
+					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, htr)
 					if err != nil {
 						return nil, err
 					}
@@ -164,6 +166,63 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 
 					newframe := RenderFrameWithBaseline(resultDynamicsDF, selfRefID)
+					if queryJson.ShowAnomalyPoints {
+						removeNonAnomalyFields(newframe)
+					}
+					newframes = append(newframes, newframe)
+
+				case constant.DetectTypeFunnel:
+					fp := hyperParams.(*FunnelHyperParams)
+					periods, err := ParsePeriods(fp.Periods, queryAlert4MLQueryBody.IntervalMs)
+					if err != nil {
+						return nil, err
+					}
+
+					persistProfile := true
+					if fp.PersistProfile != nil {
+						persistProfile = *fp.PersistProfile
+					}
+
+					options := rsod.FunnelOptions{
+						UUID:                 ukUUID,
+						Trend:                funnelTrendForRust(fp.Trend),
+						AutoTrend:            fp.AutoTrend,
+						KOuter:               fp.KOuter,
+						KInner:               fp.KInner,
+						MinSamples:           fp.MinSamples,
+						StdDevMultiplier:     fp.StdDevMultiplier,
+						EnableL2:             false, // L1-only until L2 is production-ready
+						PersistProfile:       persistProfile,
+						Periods:              periods,
+						ModelName:            fp.ModelName,
+						MaxSparseBucketRatio: fp.MaxSparseBucketRatio,
+						LookbackDays:         fp.LookbackDays,
+						EvalWindowSecs:       fp.EvalWindowSecs,
+						AlertOutputMode:      fp.AlertOutputMode,
+					}
+
+					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
+					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, htr)
+					if err != nil {
+						return nil, err
+					}
+					historyFrame, currentFrame, err = ensureFunnelFrames(rawFrame, historyFrame, currentFrame)
+					if err != nil {
+						return nil, err
+					}
+					if err = TransformDataFrame(currentFrame); err != nil {
+						return nil, err
+					}
+					if err = TransformDataFrame(historyFrame); err != nil {
+						return nil, err
+					}
+
+					resultFunnelDF, err := rsod.FunnelFitPredict(currentFrame, historyFrame, options)
+					if err != nil {
+						return nil, err
+					}
+
+					newframe := RenderFrameWithBaseline(resultFunnelDF, selfRefID)
 					if queryJson.ShowAnomalyPoints {
 						removeNonAnomalyFields(newframe)
 					}
@@ -214,7 +273,7 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 
 					// Prepare frames
 					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
-					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, queryJson.HistoryTimeRange)
+					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, htr)
 					if err != nil {
 						return nil, err
 					}
@@ -381,7 +440,7 @@ func ParseAlert4MLQueryTargets(queries []backend.DataQuery) ([]*Alert4MLQueryBod
 			queryJson.Targets[idx] = []byte(queryStr)
 			queriesJson = append(queriesJson, queryJson.Targets[idx])
 		}
-		from, to := GetRecalculateTimeRange(query.TimeRange.From, query.TimeRange.To, queryJson.HistoryTimeRange)
+		from, to := GetRecalculateTimeRange(query.TimeRange.From, query.TimeRange.To, effectiveHistoryTimeRange(queryJson.DetectType, queryJson.HistoryTimeRange))
 		queryBodies = append(queryBodies, &Alert4MLQueryBody{
 			Queries:    queriesJson,
 			From:       from,

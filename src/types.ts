@@ -27,6 +27,7 @@ export enum Alert4MLUseCase {
 export enum Alert4MLDetectType {
   Outlier = "outlier",
   Forecast = "forecast",
+  Funnel = "funnel",
 }
 
 export enum Alert4MLSupportDetect {
@@ -53,6 +54,7 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
     value: Alert4MLSupportDetect.MachineLearning,
     description: "Unsupervised ML-based anomaly detection",
     detectTypes: [
+      { label: "Funnel (L1)", value: Alert4MLDetectType.Funnel, description: "Seasonal L1 statistical filter for panels and Grafana Alerting (L2 ML escalation coming later)" },
       { label: "Outlier (EIF + MSTL)", value: Alert4MLDetectType.Outlier, description: "Extended Isolation Forest with seasonal decomposition" },
       { label: "Forecast (Gradient Boosting)", value: Alert4MLDetectType.Forecast, description: "PerpetualBooster time series forecasting with confidence intervals" },
     ],
@@ -67,6 +69,47 @@ export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue[] = [
   { label: '7d', value: '7d' },
   { label: '30d', value: '30d' },
 ];
+
+export type AlertOutputMode = 'full' | 'latest_only' | 'dedupe';
+
+export interface FunnelParams {
+  modelName?: string;
+  periods?: string;
+  trend?: string;
+  autoTrend?: boolean;
+  kOuter?: number;
+  kInner?: number;
+  minSamples?: number;
+  stdDevMultiplier?: number;
+  enableL2?: boolean;
+  persistProfile?: boolean;
+  lookbackDays?: number;
+  evalWindowSecs?: number;
+  alertOutputMode?: AlertOutputMode;
+  maxSparseBucketRatio?: number;
+}
+
+export const DEFAULT_FUNNEL_PARAMS: FunnelParams = {
+  modelName: 'funnel',
+  periods: '',
+  trend: 'daily',
+  autoTrend: true,
+  kOuter: 2.5,
+  kInner: 1.5,
+  minSamples: 5,
+  stdDevMultiplier: 2.0,
+  enableL2: false,
+  persistProfile: true,
+  lookbackDays: 90,
+  evalWindowSecs: 0,
+  alertOutputMode: 'full',
+  maxSparseBucketRatio: 0.3,
+};
+
+/** Recommended history window for funnel profile building (7 days). */
+export const DEFAULT_FUNNEL_HISTORY: HistoryDuration = {
+  durationMs: 7 * 24 * 60 * 60 * 1000,
+};
 
 export interface DynamicsParams {
   trend?: string;
@@ -154,7 +197,7 @@ export interface Alert4MLQuery extends DataQuery {
   seriesRefId: string;
   supportDetect: string;
   detectType: string;
-  hyperParams: RsodParams | DynamicsParams | ForecastParams;
+  hyperParams: RsodParams | DynamicsParams | ForecastParams | FunnelParams;
   targets: DataQuery[];
   historyTimeRange: HistoryDuration;
   showAnomalyPoints: boolean;

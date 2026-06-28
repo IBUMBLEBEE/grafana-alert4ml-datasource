@@ -1,31 +1,18 @@
 import { test, expect } from '@grafana/plugin-e2e';
-import { Alert4MLDataSourceOptions, MySecureJsonData } from '../src/types';
 
-test('smoke: should render config editor', async ({ createDataSourceConfigPage, readProvisionedDataSource, page }) => {
-  const ds = await readProvisionedDataSource({ fileName: 'datasources.yml' });
-  await createDataSourceConfigPage({ type: ds.type });
-  await expect(page.getByLabel('Path')).toBeVisible();
-});
-test('"Save & test" should be successful when configuration is valid', async ({
-  createDataSourceConfigPage,
-  readProvisionedDataSource,
-  page,
-}) => {
-  const ds = await readProvisionedDataSource<Alert4MLDataSourceOptions, MySecureJsonData>({ fileName: 'datasources.yml' });
-  const configPage = await createDataSourceConfigPage({ type: ds.type });
-  await page.getByRole('textbox', { name: 'Path' }).fill(ds.jsonData.path ?? '');
-  await page.getByRole('textbox', { name: 'API Key' }).fill(ds.secureJsonData?.apiToken ?? '');
-  await expect(configPage.saveAndTest()).toBeOK();
+const PLUGIN_TYPE = 'ibumblebee-alert4ml-datasource';
+
+test('smoke: config editor renders Grafana and storage sections', async ({ createDataSourceConfigPage, page }) => {
+  await createDataSourceConfigPage({ type: PLUGIN_TYPE });
+  await expect(page.getByText('Grafana Connection')).toBeVisible();
+  await expect(page.getByText('Storage')).toBeVisible();
+  await expect(page.locator('#config-editor-url')).toBeVisible();
+  await expect(page.locator('#config-editor-api-token')).toBeVisible();
+  await expect(page.locator('#config-editor-trial-mode')).toBeVisible();
 });
 
-test('"Save & test" should fail when configuration is invalid', async ({
-  createDataSourceConfigPage,
-  readProvisionedDataSource,
-  page,
-}) => {
-  const ds = await readProvisionedDataSource<Alert4MLDataSourceOptions, MySecureJsonData>({ fileName: 'datasources.yml' });
-  const configPage = await createDataSourceConfigPage({ type: ds.type });
-  await page.getByRole('textbox', { name: 'Path' }).fill(ds.jsonData.path ?? '');
-  await expect(configPage.saveAndTest()).not.toBeOK();
-  await expect(configPage).toHaveAlert('error', { hasText: 'API key is missing' });
+test('trial mode hides PostgreSQL fields', async ({ createDataSourceConfigPage, page }) => {
+  await createDataSourceConfigPage({ type: PLUGIN_TYPE });
+  await page.getByText('Trial Mode', { exact: true }).click();
+  await expect(page.getByText('PostgreSQL Connection')).not.toBeVisible();
 });

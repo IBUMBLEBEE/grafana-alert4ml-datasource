@@ -59,6 +59,17 @@ bool dynamics_fit_predict(FFI_ArrowSchema *data_schema,
  */
 bool rsod_storage_init(bool trial_mode, const char *pg_dsn);
 
+/**
+ * FFI function for funnel (L1 statistical + L2 ML) detection.
+ */
+bool funnel_fit_predict(FFI_ArrowSchema *data_schema,
+                        FFI_ArrowArray *data_array,
+                        FFI_ArrowSchema *history_schema,
+                        FFI_ArrowArray *history_array,
+                        const char *options_json,
+                        FFI_ArrowSchema *result_schema,
+                        FFI_ArrowArray *result_array);
+
 bool rsod_forecaster(FFI_ArrowSchema *data_schema,
                      FFI_ArrowArray *data_array,
                      FFI_ArrowSchema *history_schema,

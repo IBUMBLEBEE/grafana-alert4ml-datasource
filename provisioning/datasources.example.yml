@@ -1,0 +1,17 @@
+apiVersion: 1
+
+# Copy to datasources/datasources.yml for local dev only (not loaded from this path).
+datasources:
+  - name: alert4ml
+    uid: alert4ml
+    type: ibumblebee-alert4ml-datasource
+    access: proxy
+    isDefault: false
+    orgId: 1
+    version: 1
+    editable: true
+    jsonData:
+      url: http://127.0.0.1:3000
+      trialMode: true
+    secureJsonData:
+      apiToken: replace-with-grafana-api-token

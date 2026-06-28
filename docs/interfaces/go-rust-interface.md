@@ -117,9 +117,10 @@ Rust FFI 通过 [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.r
 
 - `baseline_fit_predict`
 - `dynamics_fit_predict`
+- `funnel_fit_predict`
 - `rsod_forecaster`
 
-这 3 个入口要求同时提供 `data_*` 与 `history_*` 两组 Arrow 指针。
+这 4 个入口要求同时提供 `data_*` 与 `history_*` 两组 Arrow 指针。
 
 - Go 侧包装函数会先校验 `historyFrame != nil`
 - Rust 侧 `import_ffi_struct_array` 若收到空指针会直接返回 `None`，进而让 FFI 返回 `false`
@@ -335,7 +336,57 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 - `baseline` / `lower_bound` / `upper_bound` / `anomaly` 为 `NaN`
 - FFI 导出时这些 `NaN` 会变成 `null`
 
-## 6.4 rsod_forecaster
+## 6.4 funnel_fit_predict
+
+### Rust 目标函数
+
+- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `funnel_fit_predict`
+- 内部委派到 `rsod_funnel::funnel_detect`（L1 统计预筛 + 可选 L2 ML 升级）
+
+### 输入
+
+- `data_schema` / `data_array`: 当前窗口，必填
+- `history_schema` / `history_array`: 历史窗口，必填（用于构建 `SeasonalProfile`）
+- `options_json`: `FunnelOptions`
+
+### JSON 参数（主要字段）
+
+```json
+{
+  "uuid": "string",
+  "trend": "Daily",
+  "auto_trend": true,
+  "k_outer": 3.0,
+  "k_inner": 2.0,
+  "min_samples": 5,
+  "std_dev_multiplier": 2.0,
+  "enable_l2": false,
+  "persist_profile": true,
+  "lookback_days": 90,
+  "eval_window_secs": 600,
+  "alert_output_mode": "dedupe",
+  "periods": [24],
+  "model_name": "funnel"
+}
+```
+
+`eval_window_secs` limits L1/L2 to the trailing slice of `current` (e.g. `600` for a 10-minute alerting interval). Points before that slice still appear in the output frame with `anomaly = 0`. When `0`, the entire current window is evaluated (legacy behaviour).
+
+`alert_output_mode` shapes how anomaly flags are returned for repeated Grafana Alerting evals:
+
+| 值 | 含义 |
+|----|------|
+| `full`（默认） | 保留所有检测到的异常点 |
+| `latest_only` | eval 切片内仅最右侧（最新）异常点 `anomaly = 1` |
+| `dedupe` | 已在上次 eval 输出过的时间戳不再重复告警（状态持久化在 profile 中） |
+
+推荐 Alerting 组合：`eval_window_secs` = 评估间隔秒数 + `alert_output_mode` = `dedupe` 或 `latest_only`。
+
+### 输出
+
+与 `dynamics_fit_predict` 相同：5 列 `time`, `baseline`, `lower_bound`, `upper_bound`, `anomaly`（timestamp 为 `Int64` 毫秒）。
+
+## 6.5 rsod_forecaster
 
 ### Go 包装函数
 
@@ -406,7 +457,7 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 
 与 baseline/dynamics 一样，Rust FFI 在导出前会把 `NaN` 转为 `null`。
 
-## 6.5 rsod_storage_init
+## 6.6 rsod_storage_init
 
 ### Go 包装函数
 

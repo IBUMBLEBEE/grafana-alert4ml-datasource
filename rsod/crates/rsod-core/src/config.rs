@@ -18,7 +18,7 @@ pub enum DetectionMethod {
 }
 
 /// Trend type for baseline calculation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrendType {
     Daily,
     Weekly,
