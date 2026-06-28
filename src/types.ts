@@ -72,11 +72,75 @@ export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue[] = [
 
 export type AlertOutputMode = 'full' | 'latest_only' | 'dedupe';
 
+/** UI preset for funnel alert/normal band multipliers (maps to kOuter / kInner). */
+export type FunnelSensitivityPreset = 'strict' | 'balanced' | 'relaxed' | 'custom';
+
+/** Default ratio kInner/kOuter (1.5 / 2.5) when inner band is auto-derived. */
+export const FUNNEL_INNER_OUTER_RATIO = 0.6;
+
+export const FUNNEL_SENSITIVITY_PRESETS: Record<
+  Exclude<FunnelSensitivityPreset, 'custom'>,
+  { label: string; description: string; kOuter: number; kInner: number }
+> = {
+  strict: {
+    label: 'Strict',
+    description: 'Narrow bands — fewer alerts (2.0σ / 1.2σ)',
+    kOuter: 2.0,
+    kInner: 1.2,
+  },
+  balanced: {
+    label: 'Balanced',
+    description: 'Default for most metrics (2.5σ / 1.5σ)',
+    kOuter: 2.5,
+    kInner: 1.5,
+  },
+  relaxed: {
+    label: 'Relaxed',
+    description: 'Wide bands — tolerate more noise (3.0σ / 2.0σ)',
+    kOuter: 3.0,
+    kInner: 2.0,
+  },
+};
+
+export function funnelInnerFromOuter(kOuter: number): number {
+  return Math.round(kOuter * FUNNEL_INNER_OUTER_RATIO * 10) / 10;
+}
+
+export function inferFunnelSensitivityPreset(
+  kOuter?: number,
+  kInner?: number
+): Exclude<FunnelSensitivityPreset, 'custom'> | 'custom' {
+  const o = kOuter ?? DEFAULT_FUNNEL_PARAMS.kOuter!;
+  const i = kInner ?? DEFAULT_FUNNEL_PARAMS.kInner!;
+  for (const [key, preset] of Object.entries(FUNNEL_SENSITIVITY_PRESETS)) {
+    if (Math.abs(o - preset.kOuter) < 0.05 && Math.abs(i - preset.kInner) < 0.05) {
+      return key as Exclude<FunnelSensitivityPreset, 'custom'>;
+    }
+  }
+  return 'custom';
+}
+
+export function validateFunnelThresholds(kOuter: number, kInner: number): string | null {
+  if (!Number.isFinite(kOuter) || !Number.isFinite(kInner)) {
+    return 'Enter valid numbers for both σ multipliers';
+  }
+  if (kOuter <= 0 || kInner <= 0) {
+    return 'Both σ multipliers must be greater than 0';
+  }
+  if (kInner >= kOuter) {
+    return 'Normal band (σ) must be less than alert threshold (σ)';
+  }
+  return null;
+}
+
 export interface FunnelParams {
   modelName?: string;
   periods?: string;
   trend?: string;
+  bucketSlotSecs?: number;
   autoTrend?: boolean;
+  /** UI-only; kOuter/kInner are what the backend uses. */
+  sensitivityPreset?: FunnelSensitivityPreset;
   kOuter?: number;
   kInner?: number;
   minSamples?: number;
@@ -93,7 +157,9 @@ export const DEFAULT_FUNNEL_PARAMS: FunnelParams = {
   modelName: 'funnel',
   periods: '',
   trend: 'daily',
+  bucketSlotSecs: 0,
   autoTrend: true,
+  sensitivityPreset: 'balanced',
   kOuter: 2.5,
   kInner: 1.5,
   minSamples: 5,

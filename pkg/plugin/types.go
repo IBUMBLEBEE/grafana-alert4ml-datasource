@@ -231,6 +231,7 @@ func (p *ForecastHyperParams) SetDefaults() {
 type FunnelHyperParams struct {
 	ModelName            string  `json:"modelName,omitempty"`
 	Periods              string  `json:"periods,omitempty"`
+	BucketSlotSecs       uint32  `json:"bucketSlotSecs,omitempty"`
 	Trend                string  `json:"trend,omitempty"`
 	AutoTrend            bool    `json:"autoTrend,omitempty"`
 	KOuter               float64 `json:"kOuter,omitempty"`

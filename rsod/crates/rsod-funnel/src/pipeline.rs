@@ -41,9 +41,11 @@ pub fn funnel_detect(
 
     let mut profile = resolve_profile(&history, options)?;
     profile.sync_from_options(options);
+    profile.purge_bucket_outliers(options.effective_profile_outlier_k());
 
     if !history.is_empty() {
         profile.ingest_windowed(history.timestamps, history.values, None);
+        profile.purge_bucket_outliers(options.effective_profile_outlier_k());
     }
 
     // L1 must not see current-window points (they may be in a persisted profile from the last refresh).
@@ -147,9 +149,10 @@ pub fn funnel_detect(
         eval_start,
     );
 
-    format_anomalies_for_display(&mut result.anomalies, current.values);
+    let skip_ts = profile_skip_timestamps(current.timestamps, eval_start, &result.anomalies);
+    update_profile_from_query(&mut profile, current, options, &skip_ts);
 
-    update_profile_from_query(&mut profile, current, options);
+    format_anomalies_for_display(&mut result.anomalies, current.values);
     Ok(result)
 }
 
@@ -169,7 +172,9 @@ fn resolve_profile(
 ) -> rsod_core::Result<SeasonalProfile> {
     if options.persist_profile && !options.uuid.is_empty() {
         if let Some(p) = load_profile(&options.uuid) {
-            return Ok(p);
+            if !profile_slot_mismatch(&p, options) {
+                return Ok(p);
+            }
         }
     }
 
@@ -181,6 +186,14 @@ fn resolve_profile(
     }
 
     Ok(build_profile(history.timestamps, history.values, options))
+}
+
+/// Rebuild when the user explicitly changes bucket slot width.
+fn profile_slot_mismatch(profile: &SeasonalProfile, options: &FunnelOptions) -> bool {
+    if options.bucket_slot_secs == 0 {
+        return false;
+    }
+    rsod_core::normalize_bucket_slot_secs(options.bucket_slot_secs) != profile.bucket_slot_secs
 }
 
 /// Convert internal 0/1 anomaly flags to Grafana display values (dynamics-compatible):
@@ -195,11 +208,30 @@ fn format_anomalies_for_display(anomalies: &mut [f64], raw_values: &[f64]) {
     }
 }
 
+/// Timestamps in the eval slice flagged as anomalies — excluded from persisted profile.
+fn profile_skip_timestamps(
+    timestamps: &[f64],
+    eval_start: usize,
+    anomalies: &[f64],
+) -> Vec<f64> {
+    timestamps
+        .iter()
+        .enumerate()
+        .skip(eval_start)
+        .zip(anomalies.iter())
+        .filter(|(_, &a)| a > 0.0)
+        .map(|((_, &ts), _)| ts)
+        .collect()
+}
+
 /// Ingest current-window points (deduped, windowed) and persist.
+///
+/// Detected anomalies and Hampel outliers are scrubbed so the profile stays clean.
 fn update_profile_from_query(
     profile: &mut SeasonalProfile,
     current: TimeSeriesInput<'_>,
     options: &FunnelOptions,
+    skip_timestamps: &[f64],
 ) {
     if !options.persist_profile || options.uuid.is_empty() {
         return;
@@ -207,6 +239,8 @@ fn update_profile_from_query(
 
     if !current.is_empty() {
         profile.ingest_windowed(current.timestamps, current.values, None);
+        profile.remove_samples_at_timestamps(skip_timestamps);
+        profile.purge_bucket_outliers(options.effective_profile_outlier_k());
     }
 
     let _ = save_profile(&options.uuid, profile);
@@ -376,6 +410,43 @@ mod tests {
         assert!(result.is_ok());
         let det = result.unwrap();
         assert_eq!(det.anomalies.len(), cvs.len());
+    }
+
+    /// Historical spikes in the same seasonal bucket must not skew baseline and cause false alarms.
+    #[test]
+    fn history_spike_does_not_false_alarm_normal_current() {
+        init_storage();
+        let hour = 86_400.0 * 1000.0 + 15.0 * 3600.0;
+        let step = 3600.0;
+        let mut history_ts = Vec::new();
+        let mut history_vals = Vec::new();
+        for day in 0..10 {
+            history_ts.push(hour + f64::from(day) * 86_400.0);
+            history_vals.push(if day == 5 { 500.0 } else { 100.0 });
+        }
+
+        let current_ts: Vec<f64> = (0..6).map(|i| hour + 10.0 * 86_400.0 + i as f64 * step).collect();
+        let current_vals = vec![100.0; 6];
+
+        let mut opts = FunnelOptions::default();
+        opts.uuid = "history_spike_fp".to_string();
+        opts.trend = Some(TrendType::Daily);
+        opts.enable_l2 = false;
+        opts.persist_profile = false;
+        opts.min_samples = 3;
+
+        let det = funnel_detect(
+            TimeSeriesInput::new(&current_ts, &current_vals),
+            TimeSeriesInput::new(&history_ts, &history_vals),
+            &opts,
+        )
+        .unwrap();
+
+        let anomaly_count = det.anomalies.iter().filter(|&&a| a > 0.0).count();
+        assert_eq!(
+            anomaly_count, 0,
+            "normal current at ~100 should not alert when history had one spike"
+        );
     }
 
     fn f64_slice_eq(a: &[f64], b: &[f64]) -> bool {

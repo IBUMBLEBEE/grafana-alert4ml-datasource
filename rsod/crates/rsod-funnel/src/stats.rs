@@ -71,6 +71,37 @@ pub fn median_and_mad(values: &[f64]) -> Option<(f64, f64)> {
     Some((median, scale))
 }
 
+/// Hampel inlier mask: keep points within `k × MAD` of the bucket median.
+pub fn hampel_inlier_mask(values: &[f64], k: f64) -> Vec<bool> {
+    let Some((med, scale)) = median_and_mad(values) else {
+        return vec![true; values.len()];
+    };
+    if scale <= 1e-12 {
+        return vec![true; values.len()];
+    }
+    let threshold = k * scale;
+    values
+        .iter()
+        .map(|x| (x - med).abs() <= threshold)
+        .collect()
+}
+
+/// Median/MAD computed on Hampel-filtered inliers (ignores obvious spikes in history).
+pub fn median_and_mad_hampel(values: &[f64], k: f64) -> Option<(f64, f64)> {
+    let inliers: Vec<f64> = values
+        .iter()
+        .copied()
+        .zip(hampel_inlier_mask(values, k))
+        .filter(|(_, keep)| *keep)
+        .map(|(v, _)| v)
+        .collect();
+    if inliers.len() >= 3 {
+        median_and_mad(&inliers)
+    } else {
+        median_and_mad(values)
+    }
+}
+
 /// L1 threshold algorithm selected from data skewness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThresholdMethod {
@@ -126,9 +157,19 @@ mod tests {
     }
 
     #[test]
-    fn median_and_mad_symmetric() {
-        let (med, scale) = median_and_mad(&[1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
-        assert!((med - 3.0).abs() < 1e-10);
-        assert!(scale > 0.0);
+    fn median_and_mad_hampel_ignores_spike() {
+        let values = vec![10.0, 10.0, 11.0, 10.0, 10.0, 100.0];
+        let mask = hampel_inlier_mask(&values, 3.5);
+        assert!(!mask[5]);
+        let (clean_med, _) = median_and_mad_hampel(&values, 3.5).unwrap();
+        assert!((clean_med - 10.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn hampel_masks_obvious_outlier() {
+        let values = vec![1.0, 1.0, 1.0, 1.0, 50.0];
+        let mask = hampel_inlier_mask(&values, 3.5);
+        assert!(!mask[4]);
+        assert!(mask.iter().take(4).all(|&m| m));
     }
 }

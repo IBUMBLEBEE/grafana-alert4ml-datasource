@@ -55,6 +55,7 @@ type DynamicsOptions struct {
 type FunnelOptions struct {
 	UUID                 string  `json:"uuid"`
 	Trend                *string `json:"trend,omitempty"`
+	BucketSlotSecs       uint32  `json:"bucket_slot_secs"`
 	AutoTrend            bool    `json:"auto_trend"`
 	KOuter               float64 `json:"k_outer"`
 	KInner               float64 `json:"k_inner"`

@@ -38,6 +38,9 @@ pub struct FunnelOptions {
     /// Manual seasonal trend override. When `None`, trend is inferred from history.
     #[serde(default)]
     pub trend: Option<TrendType>,
+    /// Sub-hour bucket width in seconds (`60`, `300`, …, `3600`). `0` = infer from scrape interval.
+    #[serde(default)]
+    pub bucket_slot_secs: u32,
     /// Infer trend from history when `trend` is absent.
     #[serde(default = "default_true")]
     pub auto_trend: bool,
@@ -78,6 +81,13 @@ pub struct FunnelOptions {
     /// Alert output shaping for repeated Grafana Alerting evals.
     #[serde(default)]
     pub alert_output_mode: AlertOutputMode,
+    /// Hampel multiplier when scrubbing outlier samples from profile buckets.
+    #[serde(default = "default_profile_outlier_k")]
+    pub profile_outlier_k: f64,
+}
+
+fn default_profile_outlier_k() -> f64 {
+    3.5
 }
 
 fn default_sparse_ratio() -> f64 {
@@ -93,6 +103,7 @@ impl Default for FunnelOptions {
         Self {
             uuid: String::new(),
             trend: None,
+            bucket_slot_secs: 0,
             auto_trend: true,
             k_outer: default_k_outer(),
             k_inner: default_k_inner(),
@@ -106,11 +117,17 @@ impl Default for FunnelOptions {
             lookback_days: default_lookback_days(),
             eval_window_secs: 0,
             alert_output_mode: AlertOutputMode::default(),
+            profile_outlier_k: default_profile_outlier_k(),
         }
     }
 }
 
 impl FunnelOptions {
+    /// Effective Hampel k for profile scrubbing (never tighter than alert outer band).
+    pub fn effective_profile_outlier_k(&self) -> f64 {
+        self.profile_outlier_k.max(self.k_outer)
+    }
+
     /// Lookback duration in seconds for profile sample retention.
     pub fn lookback_secs(&self) -> i64 {
         self.lookback_days as i64 * 86_400
@@ -130,6 +147,20 @@ impl FunnelOptions {
         if self.min_samples == 0 {
             return Err(rsod_core::RsodError::InvalidConfig(
                 "min_samples must be > 0".into(),
+            ));
+        }
+        if self.bucket_slot_secs != 0
+            && !rsod_core::ALLOWED_BUCKET_SLOTS.contains(&self.bucket_slot_secs)
+        {
+            return Err(rsod_core::RsodError::InvalidConfig(format!(
+                "bucket_slot_secs must be one of {:?}, got {}",
+                rsod_core::ALLOWED_BUCKET_SLOTS,
+                self.bucket_slot_secs
+            )));
+        }
+        if self.profile_outlier_k <= 0.0 {
+            return Err(rsod_core::RsodError::InvalidConfig(
+                "profile_outlier_k must be > 0".into(),
             ));
         }
         Ok(())

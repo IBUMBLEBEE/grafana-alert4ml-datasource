@@ -1,6 +1,9 @@
 use rsod_core::{
     TrendType,
-    season::{bucket_count, downgrade_trend, season_key_scalar},
+    season::{
+        bucket_count_with_slot, coarsen_bucket_slot, downgrade_trend, infer_bucket_slot_secs,
+        normalize_bucket_slot_secs, season_key_with_slot,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,9 +24,15 @@ pub struct SeasonalProfile {
     pub trend: TrendType,
     /// Trend after sparse-bucket downgrade.
     pub effective_trend: TrendType,
+    /// Effective sub-hour slot width (seconds) used for bucket keys.
+    #[serde(default = "default_bucket_slot_secs")]
+    pub bucket_slot_secs: u32,
     pub buckets: Vec<BucketStat>,
     pub k_outer: f64,
     pub k_inner: f64,
+    /// Hampel k for profile scrubbing / robust_bucket (synced from options).
+    #[serde(default = "default_profile_outlier_k")]
+    pub profile_outlier_k: f64,
     pub min_samples: u64,
     /// Sliding window length for retained samples (seconds).
     pub lookback_secs: i64,
@@ -38,15 +47,26 @@ pub struct SeasonalProfile {
     alerted_ts: Vec<i64>,
 }
 
+fn default_bucket_slot_secs() -> u32 {
+    rsod_core::DEFAULT_BUCKET_SLOT_SECS
+}
+
+fn default_profile_outlier_k() -> f64 {
+    3.5
+}
+
 impl SeasonalProfile {
-    pub fn new(trend: TrendType, options: &FunnelOptions) -> Self {
-        let n = bucket_count(trend);
+    pub fn new(trend: TrendType, bucket_slot_secs: u32, options: &FunnelOptions) -> Self {
+        let slot = normalize_bucket_slot_secs(bucket_slot_secs);
+        let n = bucket_count_with_slot(trend, slot);
         let mut profile = Self {
             trend,
             effective_trend: trend,
+            bucket_slot_secs: slot,
             buckets: vec![BucketStat::default(); n],
             k_outer: options.k_outer,
             k_inner: options.k_inner,
+            profile_outlier_k: options.profile_outlier_k,
             min_samples: options.min_samples,
             lookback_secs: options.lookback_secs(),
             samples: vec![Vec::new(); n],
@@ -64,8 +84,14 @@ impl SeasonalProfile {
     pub fn sync_from_options(&mut self, options: &FunnelOptions) {
         self.k_outer = options.k_outer;
         self.k_inner = options.k_inner;
+        self.profile_outlier_k = options.profile_outlier_k;
         self.min_samples = options.min_samples;
         self.lookback_secs = options.lookback_secs();
+    }
+
+    /// Hampel multiplier for profile cleaning (never tighter than alert outer band).
+    pub fn effective_hampel_k(&self) -> f64 {
+        self.profile_outlier_k.max(self.k_outer)
     }
 
     /// Incrementally ingest points: dedupe by timestamp, evict outside lookback.
@@ -96,7 +122,8 @@ impl SeasonalProfile {
                 continue;
             }
             let ts_secs = ts as i64;
-            let key = season_key_scalar(ts_secs, self.effective_trend) as usize;
+            let key =
+                season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
             if key >= self.samples.len() {
                 continue;
             }
@@ -159,13 +186,14 @@ impl SeasonalProfile {
     /// Clears buckets when granularity changes — caller must re-ingest if needed.
     pub fn set_effective_trend(&mut self, trend: TrendType) {
         self.effective_trend = trend;
-        let n = bucket_count(trend);
+        let n = bucket_count_with_slot(trend, self.bucket_slot_secs);
         self.buckets = vec![BucketStat::default(); n];
         self.samples = vec![Vec::new(); n];
     }
 
     pub fn bucket(&self, ts_secs: i64) -> Option<&BucketStat> {
-        let key = season_key_scalar(ts_secs, self.effective_trend) as usize;
+        let key =
+            season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
         self.buckets.get(key)
     }
 
@@ -174,13 +202,46 @@ impl SeasonalProfile {
         if self.effective_trend == TrendType::None {
             return None;
         }
-        let key = season_key_scalar(ts_secs, self.effective_trend) as usize;
+        let key =
+            season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
         let samples = self.samples.get(key)?;
         if samples.len() < self.min_samples as usize {
             return None;
         }
         let values: Vec<f64> = samples.iter().map(|s| s.value).collect();
-        crate::stats::median_and_mad(&values)
+        crate::stats::median_and_mad_hampel(&values, self.effective_hampel_k())
+    }
+
+    /// Remove obvious outlier samples from each bucket (Hampel filter).
+    ///
+    /// Skips buckets that would fall below `min_samples` after purge.
+    pub fn purge_bucket_outliers(&mut self, k: f64) {
+        let min = self.min_samples as usize;
+        let mut changed = false;
+        for bucket_samples in &mut self.samples {
+            if bucket_samples.len() <= min {
+                continue;
+            }
+            let values: Vec<f64> = bucket_samples.iter().map(|s| s.value).collect();
+            let mask = crate::stats::hampel_inlier_mask(&values, k);
+            let inlier_count = mask.iter().filter(|&&m| m).count();
+            if inlier_count < min {
+                continue;
+            }
+            let before = bucket_samples.len();
+            let mut idx = 0;
+            bucket_samples.retain(|_| {
+                let keep = mask[idx];
+                idx += 1;
+                keep
+            });
+            if bucket_samples.len() != before {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_all_bucket_stats();
+        }
     }
 
     /// Total retained samples across all buckets.
@@ -199,7 +260,8 @@ impl SeasonalProfile {
                 continue;
             }
             let ts_secs = ts as i64;
-            let key = season_key_scalar(ts_secs, self.effective_trend) as usize;
+            let key =
+                season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
             if key >= self.samples.len() {
                 continue;
             }
@@ -285,29 +347,50 @@ fn estimate_hour_of_day_effect(timestamps: &[f64], values: &[f64]) -> f64 {
     }, 24)
 }
 
-/// Build profile from history, inferring trend and applying downgrade.
+/// Resolve bucket slot: explicit option, else infer from timestamps, else hour buckets.
+pub fn effective_bucket_slot(options_slot: u32, timestamps: &[f64]) -> u32 {
+    if options_slot != 0 {
+        normalize_bucket_slot_secs(options_slot)
+    } else if timestamps.len() >= 2 {
+        infer_bucket_slot_secs(timestamps)
+    } else {
+        rsod_core::DEFAULT_BUCKET_SLOT_SECS
+    }
+}
+
+/// Build profile from history, inferring trend and applying slot/trend downgrade.
 pub fn build_profile(
     timestamps: &[f64],
     values: &[f64],
     options: &FunnelOptions,
 ) -> SeasonalProfile {
+    let base_slot = effective_bucket_slot(options.bucket_slot_secs, timestamps);
     let mut attempt = compute_trend(timestamps, values, options);
+    let mut attempt_slot = base_slot;
 
     loop {
-        let mut profile = SeasonalProfile::new(attempt, options);
+        let mut profile = SeasonalProfile::new(attempt, attempt_slot, options);
         profile.ingest_windowed(timestamps, values, None);
 
         if profile.sparse_ratio() <= options.max_sparse_bucket_ratio
             || attempt == TrendType::None
         {
+            profile.purge_bucket_outliers(options.effective_profile_outlier_k());
             return profile;
+        }
+
+        if let Some(coarser) = coarsen_bucket_slot(attempt_slot) {
+            attempt_slot = coarser;
+            continue;
         }
 
         let next = downgrade_trend(attempt);
         if next == attempt {
+            profile.purge_bucket_outliers(options.effective_profile_outlier_k());
             return profile;
         }
         attempt = next;
+        attempt_slot = base_slot;
     }
 }
 
@@ -443,7 +526,7 @@ mod tests {
     fn remove_samples_at_timestamps_strips_eval_window() {
         let mut opts = FunnelOptions::default();
         opts.lookback_days = 7;
-        let mut profile = SeasonalProfile::new(TrendType::Daily, &opts);
+        let mut profile = SeasonalProfile::new(TrendType::Daily, 3600, &opts);
 
         let t0 = 86400 * 1000 + 14 * 3600;
         let (ts, vals) = make_series(t0, 10, 15, 42.0);
@@ -467,7 +550,7 @@ mod tests {
     fn ingest_dedupes_same_timestamps() {
         let mut opts = FunnelOptions::default();
         opts.lookback_days = 7;
-        let mut profile = SeasonalProfile::new(TrendType::Daily, &opts);
+        let mut profile = SeasonalProfile::new(TrendType::Daily, 3600, &opts);
 
         let t0 = 86400 * 1000 + 14 * 3600;
         let (ts, vals) = make_series(t0, 100, 15, 42.0);
@@ -483,7 +566,7 @@ mod tests {
     fn ingest_overlapping_windows_only_adds_new_points() {
         let mut opts = FunnelOptions::default();
         opts.lookback_days = 7;
-        let mut profile = SeasonalProfile::new(TrendType::Daily, &opts);
+        let mut profile = SeasonalProfile::new(TrendType::Daily, 3600, &opts);
 
         // Window 1: T..T+3600 (240 points @ 15s)
         let t0 = 1_728_000_000_i64;
@@ -502,7 +585,7 @@ mod tests {
     fn lookback_evicts_old_samples() {
         let mut opts = FunnelOptions::default();
         opts.lookback_days = 1;
-        let mut profile = SeasonalProfile::new(TrendType::Daily, &opts);
+        let mut profile = SeasonalProfile::new(TrendType::Daily, 3600, &opts);
 
         let old_start = 1_000_000_i64;
         let (ts_old, vals_old) = make_series(old_start, 10, 15, 50.0);
@@ -522,6 +605,26 @@ mod tests {
     }
 
     #[test]
+    fn purge_bucket_outliers_removes_spike() {
+        let mut opts = FunnelOptions::default();
+        opts.lookback_days = 7;
+        opts.min_samples = 3;
+        let mut profile = SeasonalProfile::new(TrendType::Daily, 3600, &opts);
+
+        let hour = 86_400_i64 * 1000 + 15 * 3600;
+        for day in 0..6 {
+            profile.ingest_windowed(&[(hour + day * 86_400) as f64], &[100.0], None);
+        }
+        profile.ingest_windowed(&[(hour + 6 * 86_400) as f64], &[500.0], None);
+        assert_eq!(profile.samples[15].len(), 7);
+
+        profile.purge_bucket_outliers(3.5);
+        assert_eq!(profile.samples[15].len(), 6);
+        let (med, _) = profile.robust_bucket(hour).unwrap();
+        assert!((med - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn upsert_updates_value_at_same_timestamp() {
         let mut samples = Vec::new();
         upsert_sample(&mut samples, 100, 10.0);
@@ -529,5 +632,51 @@ mod tests {
         upsert_sample(&mut samples, 100, 99.0);
         assert_eq!(samples.len(), 2);
         assert!((samples[0].value - 99.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sub_hour_buckets_vary_within_same_hour() {
+        let mut opts = FunnelOptions::default();
+        opts.lookback_days = 7;
+        opts.min_samples = 3;
+        opts.bucket_slot_secs = 300;
+        let mut profile = SeasonalProfile::new(TrendType::Daily, 300, &opts);
+
+        let day_base = 86_400_i64 * 1000;
+        let hour15 = day_base + 15 * 3600;
+        for day in 0..5 {
+            let base = hour15 + day * 86_400;
+            let ts: Vec<f64> = (0..12)
+                .map(|i| (base + i * 300) as f64)
+                .collect();
+            let vals: Vec<f64> = (0..12).map(|i| 100.0 + i as f64).collect();
+            profile.ingest_windowed(&ts, &vals, None);
+        }
+
+        let b0 = profile.robust_bucket(hour15).unwrap().0;
+        let b1 = profile.robust_bucket(hour15 + 300).unwrap().0;
+        assert!((b0 - 100.0).abs() < 1e-9);
+        assert!((b1 - 101.0).abs() < 1e-9);
+        assert_ne!(b0, b1);
+    }
+
+    #[test]
+    fn effective_bucket_slot_auto_infers_5m() {
+        let ts: Vec<f64> = (0..100).map(|i| i as f64 * 300.0).collect();
+        assert_eq!(effective_bucket_slot(0, &ts), 300);
+    }
+
+    #[test]
+    fn build_profile_uses_sub_hour_with_enough_history() {
+        // 7 days @ 5m → ~7 samples per daily slot on average
+        let ts: Vec<f64> = (0..2016).map(|i| i as f64 * 300.0).collect();
+        let vals: Vec<f64> = ts
+            .iter()
+            .map(|t| ((t / 300.0) as i64 % 12) as f64 + 10.0)
+            .collect();
+        let opts = FunnelOptions::default();
+        let p = build_profile(&ts, &vals, &opts);
+        assert_eq!(p.bucket_slot_secs, 300);
+        assert_eq!(p.buckets.len(), 288);
     }
 }

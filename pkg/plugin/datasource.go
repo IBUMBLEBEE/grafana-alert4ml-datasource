@@ -186,6 +186,7 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					options := rsod.FunnelOptions{
 						UUID:                 ukUUID,
 						Trend:                funnelTrendForRust(fp.Trend),
+						BucketSlotSecs:       fp.BucketSlotSecs,
 						AutoTrend:            fp.AutoTrend,
 						KOuter:               fp.KOuter,
 						KInner:               fp.KInner,

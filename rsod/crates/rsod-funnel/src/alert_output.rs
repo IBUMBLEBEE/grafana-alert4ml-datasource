@@ -81,7 +81,7 @@ mod tests {
     }
 
     fn profile() -> SeasonalProfile {
-        SeasonalProfile::new(TrendType::Daily, &FunnelOptions::default())
+        SeasonalProfile::new(TrendType::Daily, 3600, &FunnelOptions::default())
     }
 
     #[test]
