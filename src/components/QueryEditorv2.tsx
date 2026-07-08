@@ -160,9 +160,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
-    detectType = Alert4MLDetectType.Outlier,
+    detectType = Alert4MLDetectType.Funnel,
     showAnomalyPoints = false,
-    hyperParams = DEFAULT_RSOD_PARAMS,
+    hyperParams = defaultFunnelParams(app),
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
   
@@ -195,8 +195,8 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       };
       onChange({...query, 
         supportDetect: supportDetect || Alert4MLSupportDetect.MachineLearning,
-        detectType: detectType || Alert4MLDetectType.Outlier,
-        hyperParams: hyperParams || DEFAULT_RSOD_PARAMS,
+        detectType: detectType || Alert4MLDetectType.Funnel,
+        hyperParams: hyperParams || defaultFunnelParams(app),
         historyTimeRange: historyTimeRange,
         uniqueKeys: newUniqueKeys,
       });
@@ -255,7 +255,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   useEffect(() => {
     const sd_options = SUPPORT_DETECT_OPTIONS.find((option) => option.value === supportDetect)?.detectTypes || [];
     if (isInitialized.current) {
-      const newDetectType = sd_options[0]?.value || Alert4MLDetectType.Outlier;
+      const newDetectType = sd_options[0]?.value || Alert4MLDetectType.Funnel;
       const defaultParams = getDefaultHyperParamsByDetectType(newDetectType);
       onChange({...query, detectType: newDetectType, hyperParams: defaultParams});
     }

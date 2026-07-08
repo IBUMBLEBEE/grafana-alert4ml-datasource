@@ -8,6 +8,12 @@ use rsod_outlier::{outlier, OutlierOptions};
 use crate::config::FunnelOptions;
 use crate::l1::FilterVerdict;
 
+#[derive(Debug, Clone)]
+pub struct L2Output {
+    pub result: DetectionResult,
+    pub method: DetectionMethod,
+}
+
 /// Run L2 detector based on decision engine routing; returns full-window result.
 pub fn run_l2(
     current: TimeSeriesInput<'_>,
@@ -17,10 +23,11 @@ pub fn run_l2(
     characteristic: &SeriesCharacteristic,
     skewness: f64,
     confidence: f64,
-) -> rsod_core::Result<DetectionResult> {
+) -> rsod_core::Result<L2Output> {
     let decision = decide(characteristic, skewness, confidence);
+    let method = decision.method.clone();
 
-    match decision.method {
+    let result = match decision.method {
         DetectionMethod::Outlier => {
             let out_opts = OutlierOptions {
                 model_name: options.model_name.clone(),
@@ -62,7 +69,9 @@ pub fn run_l2(
             dynamics_detect(current, history, &cfg)
                 .map_err(|e| rsod_core::RsodError::Detection(e.to_string()))
         }
-    }
+    }?;
+
+    Ok(L2Output { result, method })
 }
 
 /// Train outlier on history + current, return scores aligned to `current` only.
@@ -82,8 +91,8 @@ fn outlier_with_history(
     vs.extend_from_slice(current.values);
 
     let combined = TimeSeriesInput::new(&ts, &vs);
-    let full = outlier(combined, options)
-        .map_err(|e| rsod_core::RsodError::Detection(e.to_string()))?;
+    let full =
+        outlier(combined, options).map_err(|e| rsod_core::RsodError::Detection(e.to_string()))?;
 
     let n = current.len();
     let start = full.anomalies.len().saturating_sub(n);

@@ -217,29 +217,38 @@ impl SeasonalProfile {
     /// Skips buckets that would fall below `min_samples` after purge.
     pub fn purge_bucket_outliers(&mut self, k: f64) {
         let min = self.min_samples as usize;
-        let mut changed = false;
-        for bucket_samples in &mut self.samples {
-            if bucket_samples.len() <= min {
-                continue;
+        let mut any_changed = false;
+
+        loop {
+            let mut changed = false;
+            for bucket_samples in &mut self.samples {
+                if bucket_samples.len() <= min {
+                    continue;
+                }
+                let values: Vec<f64> = bucket_samples.iter().map(|s| s.value).collect();
+                let mask = crate::stats::hampel_inlier_mask(&values, k);
+                let inlier_count = mask.iter().filter(|&&m| m).count();
+                if inlier_count < min {
+                    continue;
+                }
+                let before = bucket_samples.len();
+                let mut idx = 0;
+                bucket_samples.retain(|_| {
+                    let keep = mask[idx];
+                    idx += 1;
+                    keep
+                });
+                if bucket_samples.len() != before {
+                    changed = true;
+                }
             }
-            let values: Vec<f64> = bucket_samples.iter().map(|s| s.value).collect();
-            let mask = crate::stats::hampel_inlier_mask(&values, k);
-            let inlier_count = mask.iter().filter(|&&m| m).count();
-            if inlier_count < min {
-                continue;
+            if !changed {
+                break;
             }
-            let before = bucket_samples.len();
-            let mut idx = 0;
-            bucket_samples.retain(|_| {
-                let keep = mask[idx];
-                idx += 1;
-                keep
-            });
-            if bucket_samples.len() != before {
-                changed = true;
-            }
+            any_changed = true;
         }
-        if changed {
+
+        if any_changed {
             self.rebuild_all_bucket_stats();
         }
     }

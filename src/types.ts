@@ -55,7 +55,6 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
     description: "Unsupervised ML-based anomaly detection",
     detectTypes: [
       { label: "Funnel (L1)", value: Alert4MLDetectType.Funnel, description: "Seasonal L1 statistical filter for panels and Grafana Alerting (L2 ML escalation coming later)" },
-      { label: "Outlier (EIF + MSTL)", value: Alert4MLDetectType.Outlier, description: "Extended Isolation Forest with seasonal decomposition" },
       { label: "Forecast (Gradient Boosting)", value: Alert4MLDetectType.Forecast, description: "PerpetualBooster time series forecasting with confidence intervals" },
     ],
   },
@@ -276,11 +275,11 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
   refId: 'B',
   seriesRefId: 'A',
   supportDetect: Alert4MLSupportDetect.MachineLearning,
-  detectType: Alert4MLDetectType.Outlier,
+  detectType: Alert4MLDetectType.Funnel,
   showAnomalyPoints: false,
-  hyperParams: DEFAULT_RSOD_PARAMS,
+  hyperParams: DEFAULT_FUNNEL_PARAMS,
   targets: [],
-  historyTimeRange: DEFAULT_TIME_RANGE,
+  historyTimeRange: DEFAULT_FUNNEL_HISTORY,
   uniqueKeys: DEFAULT_UNIQUE_KEYS,
 };
 

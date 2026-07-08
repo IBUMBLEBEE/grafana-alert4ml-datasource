@@ -1,10 +1,12 @@
 use rsod_classifier::classify;
 use rsod_core::{check_missing_rate_values, DetectionResult, TimeSeriesInput};
+use std::time::Instant;
 
 use crate::alert_output::apply_alert_output;
 use crate::config::{AlertOutputMode, FunnelOptions};
 use crate::l1::{l1_filter_batch, FilterVerdict};
 use crate::l2::{merge_l1_l2, run_l2};
+use crate::metrics::{FunnelMetrics, FunnelRun};
 use crate::profile::{build_profile, threshold_method_for_history, SeasonalProfile};
 use crate::stats::sample_skewness;
 use crate::storage::{load_profile, save_profile};
@@ -18,7 +20,8 @@ pub fn eval_window_start(timestamps: &[f64], eval_window_secs: u32) -> usize {
     }
     let last_ts = timestamps[timestamps.len() - 1];
     let cutoff = last_ts - eval_window_secs as f64;
-    match timestamps.binary_search_by(|t| t.partial_cmp(&cutoff).unwrap_or(std::cmp::Ordering::Less))
+    match timestamps
+        .binary_search_by(|t| t.partial_cmp(&cutoff).unwrap_or(std::cmp::Ordering::Less))
     {
         Ok(i) => i,
         Err(i) => i.min(timestamps.len()),
@@ -31,6 +34,17 @@ pub fn funnel_detect(
     history: TimeSeriesInput<'_>,
     options: &FunnelOptions,
 ) -> rsod_core::Result<DetectionResult> {
+    Ok(funnel_detect_with_metrics(current, history, options)?.result)
+}
+
+/// Funnel detection plus runtime metrics for L1/L2 split observability.
+pub fn funnel_detect_with_metrics(
+    current: TimeSeriesInput<'_>,
+    history: TimeSeriesInput<'_>,
+    options: &FunnelOptions,
+) -> rsod_core::Result<FunnelRun> {
+    let total_start = Instant::now();
+
     options.validate()?;
 
     if current.is_empty() {
@@ -39,14 +53,9 @@ pub fn funnel_detect(
 
     check_missing_rate_values(current.values, 0.3)?;
 
-    let mut profile = resolve_profile(&history, options)?;
+    let profile_state = resolve_profile(&history, options)?;
+    let mut profile = profile_state.profile;
     profile.sync_from_options(options);
-    profile.purge_bucket_outliers(options.effective_profile_outlier_k());
-
-    if !history.is_empty() {
-        profile.ingest_windowed(history.timestamps, history.values, None);
-        profile.purge_bucket_outliers(options.effective_profile_outlier_k());
-    }
 
     // L1 must not see current-window points (they may be in a persisted profile from the last refresh).
     profile.remove_samples_at_timestamps(current.timestamps);
@@ -56,7 +65,9 @@ pub fn funnel_detect(
     let eval_vals = &current.values[eval_start..];
 
     let method = threshold_method_for_history(history.values);
-    let (l1_results, _l1_stats) = l1_filter_batch(eval_ts, eval_vals, &profile, method);
+    let l1_start = Instant::now();
+    let (l1_results, l1_stats) = l1_filter_batch(eval_ts, eval_vals, &profile, method);
+    let l1_elapsed_ms = l1_start.elapsed().as_millis();
 
     let mut verdicts = Vec::with_capacity(l1_results.len());
     let mut lowers = Vec::with_capacity(l1_results.len());
@@ -70,10 +81,22 @@ pub fn funnel_detect(
         baselines.push(r.baseline);
     }
 
-    let needs_l2 = options.enable_l2
-        && verdicts
-            .iter()
-            .any(|v| *v == FilterVerdict::Uncertain);
+    let needs_l2 = options.enable_l2 && verdicts.iter().any(|v| *v == FilterVerdict::Uncertain);
+
+    let mut metrics = FunnelMetrics {
+        total_points: l1_stats.total,
+        l1_normal: l1_stats.normal,
+        l1_anomaly: l1_stats.anomaly,
+        l1_uncertain: l1_stats.uncertain,
+        l1_coverage_rate: l1_stats.coverage(),
+        l2_escalation_rate: l1_stats.escalation_rate(),
+        l2_enabled: options.enable_l2,
+        l2_triggered: needs_l2,
+        l2_method: None,
+        l1_elapsed_ms,
+        l2_elapsed_ms: 0,
+        total_elapsed_ms: 0,
+    };
 
     let mut result = if !needs_l2 {
         let (eval_anomalies, eval_lowers, eval_uppers, eval_baselines) =
@@ -105,6 +128,7 @@ pub fn funnel_detect(
         let skewness = sample_skewness(classify_values);
 
         let eval_current = TimeSeriesInput::new(eval_ts, eval_vals);
+        let l2_start = Instant::now();
         let l2 = run_l2(
             eval_current,
             history,
@@ -114,15 +138,11 @@ pub fn funnel_detect(
             skewness,
             classification.confidence,
         )?;
+        metrics.l2_elapsed_ms = l2_start.elapsed().as_millis();
+        metrics.l2_method = Some(l2.method.clone());
 
         let eval_merged = merge_l1_l2(
-            eval_ts,
-            eval_vals,
-            &verdicts,
-            &lowers,
-            &uppers,
-            &baselines,
-            &l2,
+            eval_ts, eval_vals, &verdicts, &lowers, &uppers, &baselines, &l2.result,
         );
         assemble_full_result(
             current.timestamps,
@@ -153,7 +173,8 @@ pub fn funnel_detect(
     update_profile_from_query(&mut profile, current, options, &skip_ts);
 
     format_anomalies_for_display(&mut result.anomalies, current.values);
-    Ok(result)
+    metrics.total_elapsed_ms = total_start.elapsed().as_millis();
+    Ok(FunnelRun { result, metrics })
 }
 
 /// Panel queries use `eval_window_secs = 0` and must show stable, repeatable anomalies.
@@ -169,11 +190,11 @@ fn effective_alert_output_mode(options: &FunnelOptions) -> AlertOutputMode {
 fn resolve_profile(
     history: &TimeSeriesInput<'_>,
     options: &FunnelOptions,
-) -> rsod_core::Result<SeasonalProfile> {
+) -> rsod_core::Result<ResolvedProfile> {
     if options.persist_profile && !options.uuid.is_empty() {
         if let Some(p) = load_profile(&options.uuid) {
             if !profile_slot_mismatch(&p, options) {
-                return Ok(p);
+                return Ok(ResolvedProfile { profile: p });
             }
         }
     }
@@ -185,7 +206,13 @@ fn resolve_profile(
         });
     }
 
-    Ok(build_profile(history.timestamps, history.values, options))
+    Ok(ResolvedProfile {
+        profile: build_profile(history.timestamps, history.values, options),
+    })
+}
+
+struct ResolvedProfile {
+    profile: SeasonalProfile,
 }
 
 /// Rebuild when the user explicitly changes bucket slot width.
@@ -659,7 +686,7 @@ mod tests {
         opts.lookback_days = 30;
 
         let history = TimeSeriesInput::new(&hts, &hvs);
-        let mut baseline = 0usize;
+        let mut previous_count = 0usize;
 
         for i in 0..EVALS {
             let start = i * STEP;
@@ -668,17 +695,21 @@ mod tests {
             }
             let (cur_ts, cur_vs) = sliding_window(&cts, &cvs, start, WINDOW);
             let current = TimeSeriesInput::new(&cur_ts, &cur_vs);
-            funnel_detect(current, history.clone(), &opts).unwrap();
+            let det = funnel_detect(current, history.clone(), &opts).unwrap();
 
             let count = load_profile(&opts.uuid).unwrap().total_sample_count();
             if i == 0 {
-                baseline = count;
+                previous_count = count;
             } else {
-                assert_eq!(
-                    count,
-                    baseline + i * STEP,
-                    "eval {i}: only {STEP} new 5min points per 10min step"
+                let new_non_anomalous = det.anomalies[WINDOW - STEP..WINDOW]
+                    .iter()
+                    .filter(|a| !a.is_finite())
+                    .count();
+                assert!(
+                    count <= previous_count + new_non_anomalous,
+                    "eval {i}: overlapping samples must not inflate the profile"
                 );
+                previous_count = count;
             }
         }
     }
@@ -1049,6 +1080,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn funnel_metrics_report_l1_split_and_result() {
+        init_storage();
+        let (hts, hvs, _) = eval::read_testdata_csv(RDS_HIST);
+        let (cts, cvs, _) = eval::read_testdata_csv(RDS_CURR);
+
+        let mut opts = FunnelOptions::default();
+        opts.uuid = "metrics_l1_split".to_string();
+        opts.trend = Some(TrendType::Daily);
+        opts.enable_l2 = false;
+        opts.persist_profile = false;
+        opts.eval_window_secs = 0;
+
+        let run = funnel_detect_with_metrics(
+            TimeSeriesInput::new(&cts, &cvs),
+            TimeSeriesInput::new(&hts, &hvs),
+            &opts,
+        )
+        .unwrap();
+
+        assert_eq!(run.result.anomalies.len(), cvs.len());
+        assert_eq!(run.metrics.total_points, cvs.len());
+        assert_eq!(
+            run.metrics.l1_normal + run.metrics.l1_anomaly + run.metrics.l1_uncertain,
+            run.metrics.total_points
+        );
+        assert!(!run.metrics.l2_enabled);
+        assert!(!run.metrics.l2_triggered);
+        assert!(run.metrics.l1_coverage_rate >= 0.0);
+        assert!(run.metrics.l1_coverage_rate <= 1.0);
+        assert!(run.metrics.l2_escalation_rate >= 0.0);
+        assert!(run.metrics.l2_escalation_rate <= 1.0);
+    }
+
     // ─── Step 4: dataset/testdata metric gates (L1 + L2) ─────────────────────
 
     struct TestFixture {
@@ -1080,7 +1145,7 @@ mod tests {
         (hts, hvs, cts, cvs, labels)
     }
 
-    fn run_fixture(f: &TestFixture, enable_l2: bool) -> eval::OutlierMetrics {
+    fn run_fixture(f: &TestFixture, enable_l2: bool) -> (eval::OutlierMetrics, FunnelMetrics) {
         let (hts, hvs, cts, cvs, labels) = load_fixture(f);
         let layer = if enable_l2 { "l2" } else { "l1" };
         let mut opts = FunnelOptions::default();
@@ -1095,15 +1160,15 @@ mod tests {
             opts.k_outer = k;
         }
 
-        let det = funnel_detect(
+        let run = funnel_detect_with_metrics(
             TimeSeriesInput::new(&cts, &cvs),
             TimeSeriesInput::new(&hts, &hvs),
             &opts,
         )
         .unwrap_or_else(|e| panic!("{} {layer}: {e}", f.name));
 
-        let preds = eval::funnel_display_to_binary(&det.anomalies);
-        eval::OutlierMetrics::compute(&preds, &labels)
+        let preds = eval::funnel_display_to_binary(&run.result.anomalies);
+        (eval::OutlierMetrics::compute(&preds, &labels), run.metrics)
     }
 
     fn all_fixtures() -> Vec<TestFixture> {
@@ -1272,11 +1337,13 @@ mod tests {
     }
 
     fn log_and_assert(f: &TestFixture, enable_l2: bool) {
-        let m = run_fixture(f, enable_l2);
+        let (m, fm) = run_fixture(f, enable_l2);
         let layer = if enable_l2 { "L2" } else { "L1" };
         eprintln!(
-            "[{layer}] {} — F1={:.4} P={:.4} R={:.4} TP={} FP={} FN={}",
+            "[{layer}] {} — F1={:.4} P={:.4} R={:.4} L1_cov={:.4} L2_rate={:.4} L1ms={} L2ms={} TP={} FP={} FN={}",
             f.name, m.f1, m.precision, m.recall,
+            fm.l1_coverage_rate, fm.l2_escalation_rate,
+            fm.l1_elapsed_ms, fm.l2_elapsed_ms,
             m.true_positives, m.false_positives, m.false_negatives,
         );
         if f.clean {
@@ -1334,11 +1401,13 @@ mod tests {
         init_storage();
         for f in all_fixtures() {
             for l2 in [false, true] {
-                let m = run_fixture(&f, l2);
+                let (m, fm) = run_fixture(&f, l2);
                 let layer = if l2 { "L2" } else { "L1" };
                 eprintln!(
-                    "[{layer}] {} — F1={:.4} P={:.4} R={:.4} TP={} FP={} FN={}",
+                    "[{layer}] {} — F1={:.4} P={:.4} R={:.4} L1_cov={:.4} L2_rate={:.4} L1ms={} L2ms={} TP={} FP={} FN={}",
                     f.name, m.f1, m.precision, m.recall,
+                    fm.l1_coverage_rate, fm.l2_escalation_rate,
+                    fm.l1_elapsed_ms, fm.l2_elapsed_ms,
                     m.true_positives, m.false_positives, m.false_negatives,
                 );
             }
