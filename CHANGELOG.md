@@ -1,4 +1,27 @@
 # Changelog
+# 0.3.0 (2026-07-08)
+
+### Features and enhancements
+- Merge pull request #14 from IBUMBLEBEE/feat/algo-funnel
+
+Feat/algo funnel
+- Feat(rust): add funnel algo
+- Feat: add docs
+- Feat(funnel): sub-hour buckets, profile scrubbing, and clearer threshold UI
+
+Add configurable bucket slots for finer baselines, Hampel-based profile
+cleaning (robust stats, sample purge, skip persisted anomalies), and
+Sensitivity/Std Dev Multiplier controls aligned with Dynamics.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+- Feat(funnel): add L1 seasonal funnel for Grafana panel and alerting
+
+Introduce rsod-funnel with median/MAD bucket stats, profile persistence,
+panel-safe anomaly sync, and Go/FFI/UI wiring so funnel can run in production
+as L1-only while L2 remains deferred.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+**Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/v0.2.8...v0.3.0
 # 0.2.8 (2026-04-24)
 
 ### Features and enhancements
