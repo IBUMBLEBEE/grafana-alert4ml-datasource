@@ -16,9 +16,10 @@ const pluginE2eAuth = `${dirname(require.resolve('@grafana/plugin-e2e'))}/auth`;
 export default defineConfig<PluginOptions>({
   testDir: './tests',
   /* Run tests in files in parallel */
-  fullyParallel: true,
+  fullyParallel: false,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
+  workers: 1,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
@@ -26,7 +27,7 @@ export default defineConfig<PluginOptions>({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: process.env.GRAFANA_URL || 'http://localhost:3000',
+    baseURL: process.env.GRAFANA_URL || 'http://127.0.0.1:3000',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
@@ -40,11 +41,18 @@ export default defineConfig<PluginOptions>({
       testDir: pluginE2eAuth,
       testMatch: [/.*\.js/],
     },
-    // 2. Run tests in Google Chrome. Every test will start authenticated as admin user.
+    // 2. Create Grafana API token for backend plugin integration tests.
+    {
+      name: 'e2e-setup',
+      testMatch: /.*\.setup\.ts/,
+      dependencies: ['auth'],
+    },
+    // 3. Run tests in Google Chrome. Every test will start authenticated as admin user.
     {
       name: 'chromium',
+      testMatch: /.*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/admin.json' },
-      dependencies: ['auth'],
+      dependencies: ['auth', 'e2e-setup'],
     },
   ],
 });

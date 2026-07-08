@@ -1,14 +1,6 @@
 apiVersion: 1
 
-datasources:
-  - name: 'alert4ml'
-    type: 'ibumblebee-alert4ml-datasource'
-    access: proxy
-    isDefault: false
-    orgId: 1
-    version: 1
-    editable: true
-    jsonData:
-      path: '/resources'
-    secureJsonData:
-      apiKey: 'api-key'
+# Intentionally empty — provisioning custom plugin datasources at startup can race
+# plugin registration and crash Grafana. Copy ../datasources.example.yml to
+# datasources.yml for local dev, or let E2E tests create datasources via createDataSource().
+datasources: []

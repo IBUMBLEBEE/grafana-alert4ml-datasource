@@ -51,6 +51,26 @@ type DynamicsOptions struct {
 	StdDevMultiplier float64 `json:"std_dev_multiplier"`
 }
 
+// FunnelOptions configures L1 statistical pre-filter + optional L2 ML (rsod-funnel).
+type FunnelOptions struct {
+	UUID                 string  `json:"uuid"`
+	Trend                *string `json:"trend,omitempty"`
+	BucketSlotSecs       uint32  `json:"bucket_slot_secs"`
+	AutoTrend            bool    `json:"auto_trend"`
+	KOuter               float64 `json:"k_outer"`
+	KInner               float64 `json:"k_inner"`
+	MinSamples           uint64  `json:"min_samples"`
+	StdDevMultiplier     float64 `json:"std_dev_multiplier"`
+	EnableL2             bool    `json:"enable_l2"`
+	PersistProfile       bool    `json:"persist_profile"`
+	Periods              []uint  `json:"periods"`
+	ModelName            string  `json:"model_name"`
+	MaxSparseBucketRatio float64 `json:"max_sparse_bucket_ratio"`
+	LookbackDays         uint32  `json:"lookback_days"`
+	EvalWindowSecs       uint32  `json:"eval_window_secs"`
+	AlertOutputMode      string  `json:"alert_output_mode"`
+}
+
 type ForecasterOptions struct {
 	ModelName           string   `json:"model_name"`
 	Periods             []uint   `json:"periods"`
@@ -358,6 +378,81 @@ func DynamicsFitPredict(frame *data.Frame, historyFrame *data.Frame, options Dyn
 	}
 
 	return df, nil
+}
+
+func FunnelFitPredict(frame *data.Frame, historyFrame *data.Frame, options FunnelOptions) (*data.Frame, error) {
+	if frame == nil {
+		return nil, errors.New("frame is null")
+	}
+	if historyFrame == nil {
+		return nil, errors.New("historyFrame is null")
+	}
+
+	table, err := data.FrameToArrowTable(frame)
+	if err != nil {
+		return nil, err
+	}
+	historyTable, err := data.FrameToArrowTable(historyFrame)
+	if err != nil {
+		return nil, err
+	}
+
+	record := tableToRecord(table)
+	historyRecord := tableToRecord(historyTable)
+
+	optsJson, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+
+	var inArray cdata.CArrowArray
+	var inSchema cdata.CArrowSchema
+	cdata.ExportArrowRecordBatch(record, &inArray, &inSchema)
+	defer cdata.ReleaseCArrowArray(&inArray)
+	defer cdata.ReleaseCArrowSchema(&inSchema)
+
+	var historyInArray cdata.CArrowArray
+	var historyInSchema cdata.CArrowSchema
+	cdata.ExportArrowRecordBatch(historyRecord, &historyInArray, &historyInSchema)
+	defer cdata.ReleaseCArrowArray(&historyInArray)
+	defer cdata.ReleaseCArrowSchema(&historyInSchema)
+
+	var outSchema cdata.CArrowSchema
+	var outArray cdata.CArrowArray
+	defer cdata.ReleaseCArrowArray(&outArray)
+	defer cdata.ReleaseCArrowSchema(&outSchema)
+
+	if len(frame.Fields) < 2 || frame.Fields[0].Len() == 0 {
+		return nil, fmt.Errorf("current frame has no rows; expand the panel time range or verify upstream data covers the evaluation window")
+	}
+	if len(historyFrame.Fields) < 2 || historyFrame.Fields[0].Len() == 0 {
+		return nil, fmt.Errorf("historyFrame has no rows; set historyTimeRange to 7d or ensure upstream data covers the period before the panel starts")
+	}
+
+	cOptsJson := C.CString(string(optsJson))
+	defer C.free(unsafe.Pointer(cOptsJson))
+
+	tnow := time.Now()
+	success := C.funnel_fit_predict(
+		C.to_arrow_schema(unsafe.Pointer(&inSchema)),
+		C.to_arrow_array(unsafe.Pointer(&inArray)),
+		C.to_arrow_schema(unsafe.Pointer(&historyInSchema)),
+		C.to_arrow_array(unsafe.Pointer(&historyInArray)),
+		cOptsJson,
+		C.to_arrow_schema(unsafe.Pointer(&outSchema)),
+		C.to_arrow_array(unsafe.Pointer(&outArray)),
+	)
+	if !success {
+		return nil, fmt.Errorf("funnel fit predict failed (duration: %v)", time.Since(tnow))
+	}
+
+	imp, err := cdata.ImportCRecordBatch(&outArray, &outSchema)
+	if err != nil {
+		return nil, err
+	}
+	defer imp.Release()
+
+	return data.FromArrowRecord(imp)
 }
 
 func WriteArrowRecordToCSV(record arrow.RecordBatch, filename string) error {

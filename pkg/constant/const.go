@@ -10,6 +10,7 @@ const (
 const (
 	DetectTypeOutlier     = "outlier"
 	DetectTypeForecast    = "forecast"
+	DetectTypeFunnel      = "funnel"
 	DetectTypeChangePoint = "changepoint"
 )
 
@@ -82,6 +83,7 @@ var SUPPORT_DETECT_OPTIONS = []SupportDetectOption{
 		},
 		DetectTypes: []CommKV{
 			{Label: DetectTypeOutlier, Value: DetectTypeOutlier},
+			{Label: DetectTypeFunnel, Value: DetectTypeFunnel},
 			{Label: DetectTypeChangePoint, Value: DetectTypeChangePoint},
 			{Label: DetectTypeForecast, Value: DetectTypeForecast},
 		},

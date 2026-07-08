@@ -56,6 +56,9 @@ func convertTimeField(field *data.Field) *data.Field {
 func RenderFrameWithBaseline(df *data.Frame, refID string) *data.Frame {
 	df.RefID = refID
 	df.Name = constant.GF_FRAME_RESULT_NAME_BASELINE
+	df.Meta = &data.FrameMeta{
+		Type: data.FrameTypeTimeSeriesWide,
+	}
 	log.DefaultLogger.Info("df.Fields: ", df.Fields)
 	for idx, field := range df.Fields {
 		switch field.Name {

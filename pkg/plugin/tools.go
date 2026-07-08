@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,16 +29,61 @@ func UniqueSlice[T comparable](s []T) []T {
 	return result
 }
 
+// funnelTrendForRust maps UI trend strings to rsod_core TrendType JSON ("Daily", "Weekly", …).
+func funnelTrendForRust(trend string) *string {
+	switch strings.ToLower(strings.TrimSpace(trend)) {
+	case "daily":
+		s := "Daily"
+		return &s
+	case "weekly":
+		s := "Weekly"
+		return &s
+	case "monthly":
+		s := "Monthly"
+		return &s
+	case "none":
+		s := "None"
+		return &s
+	default:
+		return nil
+	}
+}
+
 func ParsePeriods(durations string, intervalMs int64) ([]uint, error) {
 	periods := make([]uint, 0)
-	for _, dStr := range strings.FieldsFunc(durations, func(r rune) bool { return r == ',' }) {
+	for _, dStr := range strings.FieldsFunc(durations, func(r rune) bool { return r == ',' || r == ' ' }) {
+		dStr = strings.TrimSpace(dStr)
+		if dStr == "" {
+			continue
+		}
+		// Accept bare integers as hours (e.g. funnel UI "24" → "24h").
+		if _, err := strconv.ParseUint(dStr, 10, 64); err == nil {
+			dStr = dStr + "h"
+		}
 		d, err := str2duration.ParseDuration(dStr)
 		if err != nil {
 			return nil, err
 		}
+		if intervalMs <= 0 {
+			return nil, fmt.Errorf("intervalMs must be > 0, got %d", intervalMs)
+		}
 		periods = append(periods, uint(d.Milliseconds()/intervalMs))
 	}
 	return periods, nil
+}
+
+// DefaultFunnelHistoryDurationMs matches frontend DEFAULT_FUNNEL_HISTORY (7 days).
+const DefaultFunnelHistoryDurationMs uint64 = 7 * 24 * 60 * 60 * 1000
+
+// effectiveHistoryTimeRange applies detect-type defaults when durationMs is unset (zero).
+func effectiveHistoryTimeRange(detectType string, htr HistoryTimeRange) HistoryTimeRange {
+	if htr.DurationMs > 0 {
+		return htr
+	}
+	if detectType == constant.DetectTypeFunnel {
+		return HistoryTimeRange{DurationMs: DefaultFunnelHistoryDurationMs}
+	}
+	return htr
 }
 
 // GetRecalculateTimeRange extends the base data-source fetch range backwards
@@ -86,7 +132,7 @@ func splitFrameByTime(frame *data.Frame, from, to time.Time) (*data.Frame, error
 	}
 
 	filteredFrame, err := frame.FilterRowsByField(0, func(i any) (bool, error) {
-		tv, ok := i.(time.Time)
+		tv, ok := fieldTime(i)
 		if !ok {
 			return false, nil
 		}
@@ -97,6 +143,126 @@ func splitFrameByTime(frame *data.Frame, from, to time.Time) (*data.Frame, error
 	}
 
 	return filteredFrame, nil
+}
+
+func fieldTime(v any) (time.Time, bool) {
+	switch tv := v.(type) {
+	case time.Time:
+		return tv, true
+	case float64:
+		return time.Unix(int64(tv), 0), true
+	case int64:
+		return time.Unix(tv, 0), true
+	default:
+		return time.Time{}, false
+	}
+}
+
+func frameRowCount(frame *data.Frame) int {
+	if frame == nil || len(frame.Fields) == 0 {
+		return 0
+	}
+	return frame.Fields[0].Len()
+}
+
+const (
+	funnelColdStartMinRows   = 20
+	funnelColdStartHistRatio = 0.7
+)
+
+// ensureFunnelFrames guarantees non-empty history and current slices for funnel.
+// Handles Alerting cases where time-based split yields history-only or current-only data.
+func ensureFunnelFrames(raw, history, current *data.Frame) (*data.Frame, *data.Frame, error) {
+	histLen := frameRowCount(history)
+	curLen := frameRowCount(current)
+
+	if histLen > 0 && curLen > 0 {
+		return history, current, nil
+	}
+
+	// Time split dropped all rows (e.g. unexpected timestamp type) — rebuild from raw.
+	if histLen == 0 && curLen == 0 && frameRowCount(raw) > 0 {
+		return splitFrameForFunnelColdStart(raw)
+	}
+
+	if histLen == 0 && curLen > 0 {
+		return splitFrameForFunnelColdStart(current)
+	}
+
+	if histLen > 0 && curLen == 0 {
+		return splitHistoryTailForEval(history)
+	}
+
+	return history, current, fmt.Errorf("funnel: no data in history or current frame")
+}
+
+func splitFrameForFunnelColdStart(frame *data.Frame) (*data.Frame, *data.Frame, error) {
+	n := frameRowCount(frame)
+	if n < 2 {
+		return nil, nil, fmt.Errorf("funnel: need at least 2 points, got %d", n)
+	}
+	if n < funnelColdStartMinRows {
+		return splitFrameByIndex(frame, n/2)
+	}
+	splitAt := int(float64(n) * funnelColdStartHistRatio)
+	if splitAt < 1 {
+		splitAt = 1
+	}
+	if splitAt >= n {
+		splitAt = n - 1
+	}
+	return splitFrameByIndex(frame, splitAt)
+}
+
+// splitHistoryTailForEval uses the trailing portion of history as the eval window
+// when the panel/current range contains no data points (common in Alerting).
+func splitHistoryTailForEval(history *data.Frame) (*data.Frame, *data.Frame, error) {
+	n := frameRowCount(history)
+	if n < 2 {
+		return nil, nil, fmt.Errorf("funnel: only %d point(s) before panel start; expand panel time range or check upstream data", n)
+	}
+	splitAt := int(float64(n) * funnelColdStartHistRatio)
+	if splitAt < 1 {
+		splitAt = 1
+	}
+	if splitAt >= n {
+		splitAt = n - 1
+	}
+	return splitFrameByIndex(history, splitAt)
+}
+
+func splitFrameByIndex(frame *data.Frame, splitAt int) (*data.Frame, *data.Frame, error) {
+	if frame == nil || len(frame.Fields) == 0 {
+		return nil, nil, errors.New("frame is nil or has no fields")
+	}
+	n := frame.Fields[0].Len()
+	if splitAt <= 0 || splitAt >= n {
+		return nil, nil, fmt.Errorf("invalid split index %d for %d rows", splitAt, n)
+	}
+
+	history := data.NewFrame(frame.Name)
+	history.RefID = frame.RefID
+	history.Meta = frame.Meta
+	current := data.NewFrame(frame.Name)
+	current.RefID = frame.RefID
+	current.Meta = frame.Meta
+
+	for _, field := range frame.Fields {
+		hField := data.NewField(field.Name, field.Labels, nil)
+		hField.SetConfig(field.Config)
+		cField := data.NewField(field.Name, field.Labels, nil)
+		cField.SetConfig(field.Config)
+		for i := 0; i < n; i++ {
+			if i < splitAt {
+				hField.Append(field.At(i))
+			} else {
+				cField.Append(field.At(i))
+			}
+		}
+		history.Fields = append(history.Fields, hField)
+		current.Fields = append(current.Fields, cField)
+	}
+	return history, current, nil
 }
 
 func DebugFrameHead(frame *data.Frame, n int) string {

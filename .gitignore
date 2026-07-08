@@ -57,3 +57,5 @@ build_target
 *.sha1
 build/
 __pycache__
+.cache/
+dataset/NAB/*

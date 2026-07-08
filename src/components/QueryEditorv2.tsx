@@ -8,7 +8,7 @@ import {
   TimeRangePicker,
 } from '@grafana/ui';
 import type { ComboboxOption } from '@grafana/ui';
-import { QueryEditorProps, DataSourceApi, TimeRange, dateTime, getTimeZone } from '@grafana/data';
+import { QueryEditorProps, DataSourceApi, TimeRange, dateTime, getTimeZone, CoreApp } from '@grafana/data';
 import {getTemplateSrv, getDataSourceSrv} from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { DataSource } from '../datasource';
@@ -26,6 +26,9 @@ import {
   UniqueKeys,
   ForecastParams,
   DEFAULT_FORECAST_PARAMS,
+  FunnelParams,
+  DEFAULT_FUNNEL_PARAMS,
+  DEFAULT_FUNNEL_HISTORY,
   DynamicsParams,
   DEFAULT_DYNAMICS_PARAMS,
   HistoryDuration,
@@ -34,12 +37,21 @@ import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
 import { Dynamics } from './Dynamics';
 import { Forecast } from './Forecast';
+import { Funnel } from './Funnel';
 
 type Props = QueryEditorProps<DataSource, Alert4MLQuery, Alert4MLDataSourceOptions>;
-                                                                                
+
+function defaultFunnelParams(app?: CoreApp): FunnelParams {
+  const params = { ...DEFAULT_FUNNEL_PARAMS };
+  if (app === CoreApp.UnifiedAlerting) {
+    params.evalWindowSecs = 600;
+    params.alertOutputMode = 'dedupe';
+  }
+  return params;
+}
+
 // query 是 <Alert4MLQuery | AlertDataQuery>  类型， 需要根据 query 的类型来判断是 Alert4MLQuery 还是 AlertDataQuery
 export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app, datasource }: Props) {
-  console.log('query variables', getTemplateSrv().replace("${__dashboard.uid}"));
   const [isHyperParamsOpen, setIsHyperParamsOpen] = useState<boolean>(false);
 
   // --- Base DataSource nested QueryEditor ---
@@ -148,9 +160,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
-    detectType = Alert4MLDetectType.Outlier,
+    detectType = Alert4MLDetectType.Funnel,
     showAnomalyPoints = false,
-    hyperParams = DEFAULT_RSOD_PARAMS,
+    hyperParams = defaultFunnelParams(app),
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
   
@@ -183,8 +195,8 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       };
       onChange({...query, 
         supportDetect: supportDetect || Alert4MLSupportDetect.MachineLearning,
-        detectType: detectType || Alert4MLDetectType.Outlier,
-        hyperParams: hyperParams || DEFAULT_RSOD_PARAMS,
+        detectType: detectType || Alert4MLDetectType.Funnel,
+        hyperParams: hyperParams || defaultFunnelParams(app),
         historyTimeRange: historyTimeRange,
         uniqueKeys: newUniqueKeys,
       });
@@ -202,7 +214,12 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   const onSupportDetectChange = (opt: ComboboxOption<string>) => {
     if (opt.value === Alert4MLSupportDetect.MachineLearning) {
-      runDebouncedQueryWithTempTargets({ supportDetect: opt.value, hyperParams: DEFAULT_RSOD_PARAMS });
+      runDebouncedQueryWithTempTargets({
+        supportDetect: opt.value,
+        detectType: Alert4MLDetectType.Funnel,
+        hyperParams: defaultFunnelParams(app),
+        historyTimeRange: DEFAULT_FUNNEL_HISTORY,
+      });
     } else {
       runDebouncedQueryWithTempTargets({ supportDetect: opt.value });
     }
@@ -218,9 +235,12 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   }, [supportDetect]);
 
   // 根据 detectType 获取对应的默认 hyperParams
-  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams => {
+  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams | FunnelParams => {
     if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
       return DEFAULT_DYNAMICS_PARAMS;
+    }
+    if (detectTypeValue === Alert4MLDetectType.Funnel) {
+      return defaultFunnelParams(app);
     }
     if (detectTypeValue === Alert4MLDetectType.Outlier) {
       return DEFAULT_RSOD_PARAMS;
@@ -228,15 +248,14 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     if (detectTypeValue === Alert4MLDetectType.Forecast) {
       return DEFAULT_FORECAST_PARAMS;
     }
-    // 默认返回 RsodParams
     return DEFAULT_RSOD_PARAMS;
-  }, []);
+  }, [app]);
 
   // loadDetectTypesOptions 和 onSupportDetectChange 需要联动
   useEffect(() => {
     const sd_options = SUPPORT_DETECT_OPTIONS.find((option) => option.value === supportDetect)?.detectTypes || [];
     if (isInitialized.current) {
-      const newDetectType = sd_options[0]?.value || Alert4MLDetectType.Outlier;
+      const newDetectType = sd_options[0]?.value || Alert4MLDetectType.Funnel;
       const defaultParams = getDefaultHyperParamsByDetectType(newDetectType);
       onChange({...query, detectType: newDetectType, hyperParams: defaultParams});
     }
@@ -245,10 +264,14 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   const onDetectTypeChange = (opt: ComboboxOption<string>) => {
     const defaultParams = getDefaultHyperParamsByDetectType(opt.value);
-    runDebouncedQueryWithTempTargets({ detectType: opt.value, hyperParams: defaultParams });
+    const updates: Partial<Alert4MLQuery> = { detectType: opt.value, hyperParams: defaultParams };
+    if (opt.value === Alert4MLDetectType.Funnel) {
+      updates.historyTimeRange = DEFAULT_FUNNEL_HISTORY;
+    }
+    runDebouncedQueryWithTempTargets(updates);
   };
 
-  const onHyperParamsChange = (params: RsodParams | DynamicsParams | ForecastParams) => {
+  const onHyperParamsChange = (params: RsodParams | DynamicsParams | ForecastParams | FunnelParams) => {
     if (params) {
       runDebouncedQueryWithTempTargets({ hyperParams: params });
     }
@@ -391,6 +414,12 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
             {detectType === Alert4MLBaselineDetectType.Dynamics && (
               <Dynamics
                 params={(hyperParams as DynamicsParams) || DEFAULT_DYNAMICS_PARAMS}
+                onParamsChange={(params) => params && onHyperParamsChange(params)}
+              />
+            )}
+            {detectType === Alert4MLDetectType.Funnel && (
+              <Funnel
+                params={(hyperParams as FunnelParams) || DEFAULT_FUNNEL_PARAMS}
                 onParamsChange={(params) => params && onHyperParamsChange(params)}
               />
             )}

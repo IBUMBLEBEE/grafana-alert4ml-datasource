@@ -11,8 +11,9 @@ rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.2" }
 rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }
 rsod-utils = { path = "crates/rsod-utils", version="0.1.2" }
 rsod-storage = { path = "crates/rsod-storage", version="0.1.2" }
-rsod-ffi = { path = "crates/rsod-storage", version="0.1.1" }
+rsod-ffi = { path = "crates/rsod-ffi", version="0.1.1" }
 rsod-classifier = { path = "crates/rsod-classifier", version="0.1.2" }
+rsod-funnel = { path = "crates/rsod-funnel", version="0.1.0" }
 
 ndarray = "0.16.1"
 rand = "0.8"

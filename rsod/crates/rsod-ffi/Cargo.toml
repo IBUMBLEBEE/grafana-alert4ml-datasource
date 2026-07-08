@@ -12,6 +12,7 @@ rsod-baseline = { workspace = true }
 rsod-storage = { workspace = true }
 rsod-utils = { workspace = true }
 rsod-classifier = { workspace = true }
+rsod-funnel = { workspace = true }
 csv.workspace = true
 chrono.workspace = true
 arrow.workspace = true

@@ -25,6 +25,23 @@ pub fn check_missing_rate(data: &TimeSeriesData, threshold: f64) -> Result<f64> 
     Ok(rate)
 }
 
+/// Check missing-data rate for columnar value slice.
+pub fn check_missing_rate_values(values: &[f64], threshold: f64) -> Result<f64> {
+    if values.is_empty() {
+        return Err(RsodError::EmptyData);
+    }
+    let total = values.len();
+    let missing = values.iter().filter(|v| v.is_nan()).count();
+    let rate = missing as f64 / total as f64;
+    if rate > threshold {
+        return Err(RsodError::MissingRateTooHigh {
+            rate: rate * 100.0,
+            threshold: threshold * 100.0,
+        });
+    }
+    Ok(rate)
+}
+
 /// Check whether NaN values exist in the value column.
 pub fn has_nan(data: &TimeSeriesData) -> bool {
     data.iter().any(|p| p[1].is_nan())

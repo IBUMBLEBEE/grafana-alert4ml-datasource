@@ -13,6 +13,7 @@ use rsod_storage::init_db_with_config;
 use rsod_outlier::{outlier, OutlierOptions};
 use rsod_baseline::{baseline_detect, BaselineOptions, dynamics::{dynamics_detect, BaselineConfig}};
 use rsod_forecaster::{forecast, ForecasterOptions};
+use rsod_funnel::{funnel_detect, FunnelOptions};
 
 // ── FFI helpers ──────────────────────────────────────────────────────
 
@@ -216,6 +217,7 @@ fn run_detector_with_history<Opts, E, F>(
 where
     Opts: serde::de::DeserializeOwned,
     F: FnOnce(&rsod_core::OwnedTimeSeries, &rsod_core::OwnedTimeSeries, &Opts) -> Result<DetectionResult, E>,
+    E: std::fmt::Debug,
 {
     let data_struct = match import_ffi_struct_array(data_schema, data_array) {
         Some(sa) => sa,
@@ -236,7 +238,10 @@ where
 
     let det = match detect_fn(&data_owned, &history_owned, &opts) {
         Ok(r) => r,
-        Err(_) => return false,
+        Err(e) => {
+            eprintln!("detector failed: {:?}", e);
+            return false;
+        }
     };
 
     let out = detection_result_to_struct(&det, value_col, ts_as_f64);
@@ -312,6 +317,39 @@ pub extern "C" fn rsod_storage_init(trial_mode: bool, pg_dsn: *const c_char) -> 
         Ok(success) => success,
         Err(_) => {
             eprintln!("Panic occurred during database initialization");
+            false
+        }
+    }
+}
+
+/// FFI function for funnel (L1 statistical + L2 ML) detection.
+#[no_mangle]
+pub extern "C" fn funnel_fit_predict(
+    data_schema: *mut FFI_ArrowSchema,
+    data_array: *mut FFI_ArrowArray,
+    history_schema: *mut FFI_ArrowSchema,
+    history_array: *mut FFI_ArrowArray,
+    options_json: *const c_char,
+    result_schema: *mut FFI_ArrowSchema,
+    result_array: *mut FFI_ArrowArray,
+) -> bool {
+    match std::panic::catch_unwind(|| {
+        run_detector_with_history::<FunnelOptions, rsod_core::RsodError, _>(
+            data_schema,
+            data_array,
+            history_schema,
+            history_array,
+            options_json,
+            result_schema,
+            result_array,
+            |data, history, opts| funnel_detect(data.as_input(), history.as_input(), opts),
+            BASELINE_VALUE_COL,
+            false,
+        )
+    }) {
+        Ok(ok) => ok,
+        Err(_) => {
+            eprintln!("Panic occurred during funnel_fit_predict");
             false
         }
     }

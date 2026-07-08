@@ -10,6 +10,7 @@ rsod-forecaster = { workspace = true }
 rsod-baseline = { workspace = true }
 rsod-storage = { workspace = true }
 rsod-utils = { workspace = true }
+rsod-funnel = { workspace = true }
 
 [lints]
 workspace = true
