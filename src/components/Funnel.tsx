@@ -25,16 +25,6 @@ const TREND_OPTIONS = [
   { label: 'None', value: 'none' },
 ];
 
-const BUCKET_SLOT_OPTIONS = [
-  { label: 'Auto (from scrape interval)', value: 0 },
-  { label: '1 minute', value: 60 },
-  { label: '5 minutes', value: 300 },
-  { label: '10 minutes', value: 600 },
-  { label: '15 minutes', value: 900 },
-  { label: '30 minutes', value: 1800 },
-  { label: '1 hour', value: 3600 },
-];
-
 const SENSITIVITY_OPTIONS: ComboboxOption<FunnelSensitivityPreset>[] = [
   {
     label: FUNNEL_SENSITIVITY_PRESETS.strict.label,
@@ -71,9 +61,6 @@ function thresholdErrorStyle(hasError: boolean): React.CSSProperties | undefined
 export const Funnel: React.FC<FunnelProps> = ({ params, onParamsChange }) => {
   const currentTrend = params.trend || DEFAULT_FUNNEL_PARAMS.trend;
   const trendOption = TREND_OPTIONS.find((opt) => opt.value === currentTrend) || TREND_OPTIONS[0];
-  const currentSlot = params.bucketSlotSecs ?? DEFAULT_FUNNEL_PARAMS.bucketSlotSecs ?? 0;
-  const slotOption =
-    BUCKET_SLOT_OPTIONS.find((opt) => opt.value === currentSlot) || BUCKET_SLOT_OPTIONS[0];
   const alertMode =
     ALERT_OUTPUT_OPTIONS.find((opt) => opt.value === (params.alertOutputMode || 'full')) ||
     ALERT_OUTPUT_OPTIONS[0];
@@ -145,17 +132,6 @@ export const Funnel: React.FC<FunnelProps> = ({ params, onParamsChange }) => {
           onChange={(v: SelectableValue) => {
             if (v?.value) {
               onParamsChange({ ...params, trend: v.value as string });
-            }
-          }}
-        />
-      </InlineField>
-      <InlineField label="Bucket Slot" tooltip="Sub-hour seasonal bucket width. Auto infers from scrape interval (e.g. 5m → 5-minute buckets).">
-        <Combobox
-          options={BUCKET_SLOT_OPTIONS}
-          value={slotOption}
-          onChange={(v: SelectableValue) => {
-            if (v?.value !== undefined) {
-              onParamsChange({ ...params, bucketSlotSecs: v.value as number });
             }
           }}
         />

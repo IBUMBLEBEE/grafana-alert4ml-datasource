@@ -60,13 +60,40 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 		return nil, err
 	}
 
+	client := sdk.NewGrafanaClient(config.URL, config.Secrets.ApiToken)
+	newResponses := backend.NewQueryDataResponse()
+
+	// Funnel uses dual upstream queries (history auto-coarsened from $__interval, current @ panel interval).
+	for _, query := range req.Queries {
+		queryJson, err := ParseQueryJson(query.JSON)
+		if err != nil {
+			return nil, err
+		}
+		if queryJson.DetectType != constant.DetectTypeFunnel {
+			continue
+		}
+		hyperParams, err := ParseHyperParams(queryJson.DetectType, queryJson.HyperParams)
+		if err != nil {
+			return nil, err
+		}
+		newframes, curResponse, err := processFunnelDualQuery(client, query, queryJson, hyperParams)
+		if err != nil {
+			return nil, fmt.Errorf("funnel query: %w", err)
+		}
+		existingResponse := *curResponse
+		if queryJson.ShowAnomalyPoints {
+			existingResponse.Frames = newframes
+		} else {
+			existingResponse.Frames = append(existingResponse.Frames, newframes...)
+		}
+		newResponses.Responses[query.RefID] = existingResponse
+	}
+
 	queryAlert4MLQueryBody, err := ParseAlert4MLQueryTargets(req.Queries)
 	if err != nil {
 		return nil, err
 	}
 
-	client := sdk.NewGrafanaClient(config.URL, config.Secrets.ApiToken)
-	newResponses := backend.NewQueryDataResponse()
 	for _, queryAlert4MLQueryBody := range queryAlert4MLQueryBody {
 		rsp, err := client.DataSourceQuery(queryAlert4MLQueryBody)
 		if err != nil {
@@ -166,64 +193,6 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 					}
 
 					newframe := RenderFrameWithBaseline(resultDynamicsDF, selfRefID)
-					if queryJson.ShowAnomalyPoints {
-						removeNonAnomalyFields(newframe)
-					}
-					newframes = append(newframes, newframe)
-
-				case constant.DetectTypeFunnel:
-					fp := hyperParams.(*FunnelHyperParams)
-					periods, err := ParsePeriods(fp.Periods, queryAlert4MLQueryBody.IntervalMs)
-					if err != nil {
-						return nil, err
-					}
-
-					persistProfile := true
-					if fp.PersistProfile != nil {
-						persistProfile = *fp.PersistProfile
-					}
-
-					options := rsod.FunnelOptions{
-						UUID:                 ukUUID,
-						Trend:                funnelTrendForRust(fp.Trend),
-						BucketSlotSecs:       fp.BucketSlotSecs,
-						AutoTrend:            fp.AutoTrend,
-						KOuter:               fp.KOuter,
-						KInner:               fp.KInner,
-						MinSamples:           fp.MinSamples,
-						StdDevMultiplier:     fp.StdDevMultiplier,
-						EnableL2:             false, // L1-only until L2 is production-ready
-						PersistProfile:       persistProfile,
-						Periods:              periods,
-						ModelName:            fp.ModelName,
-						MaxSparseBucketRatio: fp.MaxSparseBucketRatio,
-						LookbackDays:         fp.LookbackDays,
-						EvalWindowSecs:       fp.EvalWindowSecs,
-						AlertOutputMode:      fp.AlertOutputMode,
-					}
-
-					rawFrame := queryResponse.DeepCopy().Frames[frameIdx]
-					currentFrame, historyFrame, err := splitFrames(rawFrame, queryAlert4MLQueryBody.From, queryAlert4MLQueryBody.To, htr)
-					if err != nil {
-						return nil, err
-					}
-					historyFrame, currentFrame, err = ensureFunnelFrames(rawFrame, historyFrame, currentFrame)
-					if err != nil {
-						return nil, err
-					}
-					if err = TransformDataFrame(currentFrame); err != nil {
-						return nil, err
-					}
-					if err = TransformDataFrame(historyFrame); err != nil {
-						return nil, err
-					}
-
-					resultFunnelDF, err := rsod.FunnelFitPredict(currentFrame, historyFrame, options)
-					if err != nil {
-						return nil, err
-					}
-
-					newframe := RenderFrameWithBaseline(resultFunnelDF, selfRefID)
 					if queryJson.ShowAnomalyPoints {
 						removeNonAnomalyFields(newframe)
 					}
@@ -426,6 +395,9 @@ func ParseAlert4MLQueryTargets(queries []backend.DataQuery) ([]*Alert4MLQueryBod
 		queryJson, err := ParseQueryJson(query.JSON)
 		if err != nil {
 			return nil, err
+		}
+		if queryJson.DetectType == constant.DetectTypeFunnel {
+			continue
 		}
 		queriesJson := make([]json.RawMessage, 0)
 		for idx := range queryJson.Targets {

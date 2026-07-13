@@ -33,6 +33,8 @@ type Alert4MLQueryJson struct {
 // `{from, to}` relative-seconds pairs.
 type HistoryTimeRange struct {
 	DurationMs uint64 `json:"durationMs"`
+	// IntervalMs is deprecated: funnel history/current intervals now use Grafana's panel interval ($__interval).
+	IntervalMs uint64 `json:"intervalMs,omitempty"`
 }
 
 // UnmarshalJSON accepts three wire formats:
@@ -42,9 +44,13 @@ type HistoryTimeRange struct {
 func (h *HistoryTimeRange) UnmarshalJSON(data []byte) error {
 	var modern struct {
 		DurationMs *uint64 `json:"durationMs"`
+		IntervalMs *uint64 `json:"intervalMs"`
 	}
 	if err := json.Unmarshal(data, &modern); err == nil && modern.DurationMs != nil {
 		h.DurationMs = *modern.DurationMs
+		if modern.IntervalMs != nil {
+			h.IntervalMs = *modern.IntervalMs
+		}
 		return nil
 	}
 	var legacy struct {
