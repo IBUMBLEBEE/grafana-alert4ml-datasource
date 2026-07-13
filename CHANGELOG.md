@@ -1,4 +1,9 @@
 # Changelog
+# 0.3.1 (2026-07-13)
+
+### Bug fixes
+- Fix(go): use Grafana __interval variable
+**Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/v0.3.0...v0.3.1
 # 0.3.0 (2026-07-08)
 
 ### Features and enhancements
