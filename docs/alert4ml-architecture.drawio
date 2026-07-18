@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Alert4ML Architecture">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===== Tier 1: Grafana ===== -->
+        <mxCell id="tier-grafana" value="Grafana" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="820" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="grafana-ui" value="Grafana Dashboard&lt;br&gt;&amp; Alerting" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="tier-grafana">
+          <mxGeometry x="310" y="45" width="200" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Tier 2: Frontend ===== -->
+        <mxCell id="tier-frontend" value="Frontend (TypeScript / React)" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="190" width="820" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="fe-query" value="QueryEditor v2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="tier-frontend">
+          <mxGeometry x="100" y="45" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="fe-algos" value="Baseline | Dynamics&lt;br&gt;Forecast | Funnel | Outlier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="tier-frontend">
+          <mxGeometry x="520" y="45" width="200" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: Grafana -> Frontend -->
+        <mxCell id="e1" value="HTTP/API" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="grafana-ui" target="fe-query">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Tier 3: Go Backend ===== -->
+        <mxCell id="tier-go" value="Go Backend Plugin (grafana-plugin-sdk-go)" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="340" width="820" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="go-ds" value="Datasource&lt;br&gt;(Query Handling &amp; Routing)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tier-go">
+          <mxGeometry x="80" y="45" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="go-storage" value="Storage Init&lt;br&gt;(→ Rust rsod-storage)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tier-go">
+          <mxGeometry x="330" y="45" width="180" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="go-converter" value="Frame Converter&lt;br&gt;(data.Frame ↔ Arrow)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tier-go">
+          <mxGeometry x="560" y="45" width="200" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: Frontend -> Go -->
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="fe-query" target="go-ds">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Tier 4: Go-Rust FFI ===== -->
+        <mxCell id="tier-ffi" value="Go-Rust FFI Bridge (CGO + Arrow C Data Interface)" style="swimlane;startSize=30;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="490" width="820" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="ffi-bridge" value="pkg/rsod (CGO)&lt;br&gt;Arrow CData Export/Import&lt;br&gt;rsod_go.h → librsod_go.so" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="tier-ffi">
+          <mxGeometry x="230" y="40" width="360" height="55" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: Go -> FFI -->
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="go-converter" target="ffi-bridge">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" parent="1" source="go-ds" target="ffi-bridge">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Tier 5: Rust ML Engine ===== -->
+        <mxCell id="tier-rust" value="Rust ML Engine (rsod/)" style="swimlane;startSize=30;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="620" width="820" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="rust-outlier" value="rsod-outlier&lt;br&gt;Extended Isolation Forest" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-rust">
+          <mxGeometry x="20" y="50" width="145" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="rust-baseline" value="rsod-baseline&lt;br&gt;STL Decomposition" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-rust">
+          <mxGeometry x="180" y="50" width="145" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="rust-dyn" value="rsod-dynamics&lt;br&gt;Dynamic Threshold" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-rust">
+          <mxGeometry x="340" y="50" width="145" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="rust-fc" value="rsod-forecaster&lt;br&gt;Perpetual GBM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-rust">
+          <mxGeometry x="500" y="50" width="145" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="rust-funnel" value="rsod-funnel&lt;br&gt;L1 Stats + L2 ML" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-rust">
+          <mxGeometry x="660" y="50" width="140" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: FFI -> Rust crates -->
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ffi-bridge" target="rust-outlier">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ffi-bridge" target="rust-baseline">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4c" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ffi-bridge" target="rust-dyn">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4d" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ffi-bridge" target="rust-fc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ffi-bridge" target="rust-funnel">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Tier 6: Data Layer ===== -->
+        <mxCell id="tier-data" value="Data Layer" style="swimlane;startSize=30;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="790" width="820" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-api" value="Grafana API&lt;br&gt;(Time-Series Queries)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="tier-data">
+          <mxGeometry x="100" y="42" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-arrow" value="Apache Arrow&lt;br&gt;(Columnar In-Memory)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="tier-data">
+          <mxGeometry x="320" y="42" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-pg" value="PostgreSQL&lt;br&gt;(Models &amp; Profiles)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;size=15;" vertex="1" parent="tier-data">
+          <mxGeometry x="580" y="42" width="140" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges: Rust -> Data -->
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rust-outlier" target="data-arrow">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rust-baseline" target="data-pg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5c" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rust-funnel" target="data-pg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+
+        <!-- ===== Legend ===== -->
+        <mxCell id="legend" value="Legend" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;verticalAlign=top;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="900" y="40" width="180" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg1" value="" style="rounded=0;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="legend">
+          <mxGeometry x="10" y="30" width="30" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg1t" value="Frontend (TS/React)" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="28" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg2" value="" style="rounded=0;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="legend">
+          <mxGeometry x="10" y="54" width="30" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg2t" value="Go Backend" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="52" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg3" value="" style="rounded=0;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="legend">
+          <mxGeometry x="10" y="78" width="30" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg3t" value="FFI Bridge (CGO)" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="76" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg4" value="" style="rounded=0;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="legend">
+          <mxGeometry x="10" y="102" width="30" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg4t" value="Rust ML Engine" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="100" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg5" value="" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="legend">
+          <mxGeometry x="10" y="126" width="30" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg5t" value="External / Data" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="124" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg6" value="" style="rounded=0;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="legend">
+          <mxGeometry x="10" y="150" width="30" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg6t" value="Data Layer" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="148" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=classic;" edge="1" parent="legend">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="10" y="190" as="sourcePoint"/>
+            <mxPoint x="40" y="190" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg7t" value="Data Flow" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="180" width="120" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- Title -->
+        <mxCell id="title" value="Alert4ML — Grafana Datasource Plugin Architecture" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="820" height="30" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

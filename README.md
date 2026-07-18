@@ -4,7 +4,7 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 ## Architecture
 
-![Architecture](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/arch.png)
+![Architecture](docs/alert4ml-architecture.drawio.svg)
 
 ## Technology Stack
 
