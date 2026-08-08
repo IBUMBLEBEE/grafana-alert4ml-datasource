@@ -10,7 +10,7 @@ description: Grafana datasource 插件仓库级规则。当修改 plugin.json、
 ## 何时使用
 
 - 修改 src/ 下影响插件 UI、查询编辑器、配置编辑器或 datasource 前端行为的文件
-- 修改 pkg/plugin/ 或 pkg/sdk/ 下影响后端查询处理、健康检查、资源接口、日志或插件行为的文件
+- 修改 rsod/crates/rsod-backend/ 下影响后端查询处理、健康检查、资源接口、日志或插件行为的文件
 - 更新 src/plugin.json、provisioning、tests 或兼容性行为
 
 ## 必查文件
@@ -18,14 +18,14 @@ description: Grafana datasource 插件仓库级规则。当修改 plugin.json、
 - src/plugin.json
 - src/datasource.ts
 - src/components/QueryEditorv2.tsx
-- pkg/plugin/datasource.go
+- rsod/crates/rsod-backend/src/（plugin.rs、pipeline.rs、health.rs、contract.rs）
 - README.md
 - tests/
 
 ## 仓库规则
 
 1. 必须首先把这个代码库视为 Grafana datasource 插件，其次才是 ML 产品。插件安全性、兼容性和可运维性优先于花哨的 UI 或后端行为。
-2. 必须保留后端 datasource 架构。当前仓库已经使用 backend plugin，涉及后端敏感能力的工作必须留在 Go 和 Rust 中，不能推到浏览器侧。
+2. 必须保留后端 datasource 架构。当前仓库已经使用 backend plugin，涉及后端敏感能力的工作必须留在 Rust 后端（rsod-backend）中，不能推到浏览器侧。
 3. 前端代码必须遵守 Grafana UI 约定。优先使用 @grafana/ui 组件和 Grafana 主题模式，而不是自定义 UI 体系。
 4. 禁止在前端产物中保留 console logging。浏览器侧调试输出不能进入生产代码。
 5. 禁止在前端状态、查询载荷、日志、截图或文档中暴露 secrets、tokens、DSN 或凭据。敏感配置必须放在 secureJsonData 或纯后端配置路径中。
@@ -61,7 +61,7 @@ description: Grafana datasource 插件仓库级规则。当修改 plugin.json、
 
 - npm run typecheck
 - npm run build
-- go test ./pkg/...
+- cd rsod && cargo test -p rsod-backend
 - 如果查询编辑器或插件行为发生变化，考虑执行 npm run e2e 或针对 Grafana 的定向 smoke 验证。
 
 ## 反模式

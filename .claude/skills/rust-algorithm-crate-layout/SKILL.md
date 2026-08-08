@@ -19,7 +19,6 @@ description: 约束新增 Rust 算法的 crate 与模块布局。当新增 rsod 
 
 - 在 rsod/crates/ 下新增 crate
 - 拆分过大的 lib.rs
-- 将算法代码从 rsod-ffi 迁移到独立 crate
 - 为了可维护性重构现有算法 crate
 
 ## 新增前置授权
@@ -32,14 +31,12 @@ description: 约束新增 Rust 算法的 crate 与模块布局。当新增 rsod 
 
 - rsod/Cargo.toml
 - rsod/crates/
-- rsod/crates/rsod-ffi/src/lib.rs
-- docs/interfaces/go-rust-interface.md
+- docs/interfaces/go-rust-interface.md（历史文档，追溯已移除的 FFI 协议）
 
 ## 目录规则
 
 1. 每个新算法都必须以独立 crate 的形式存在于 rsod/crates/ 下，并遵循 rsod-<algorithm> 命名模式。
-2. 禁止将新的算法逻辑直接实现到 rsod-ffi 中。
-3. 禁止把完整算法实现堆进 src/lib.rs。
+2. 禁止把完整算法实现堆进 src/lib.rs。
 4. lib.rs 必须保持为薄入口文件，只负责组织模块、定义公共 API、重导出稳定类型。
 
 ## 新算法 crate 的推荐结构
@@ -70,27 +67,23 @@ rsod/crates/rsod-<algorithm>/
 
 ## 依赖规则
 
-1. 算法 crate 只能向内依赖 rsod-core、rsod-utils 等共享 crate，不能向外依赖 Grafana、Go 或 FFI 相关概念。
-2. rsod-ffi 可以依赖算法 crate，但算法 crate 不能反向依赖 rsod-ffi。
-3. 保持 crate 单一职责：核心类型放在 rsod-core，存储能力放在 rsod-storage，传输边界放在 rsod-ffi，算法行为放在 rsod-<algorithm>。
+1. 算法 crate 只能向内依赖 rsod-core、rsod-utils 等共享 crate，不能向外依赖 Grafana 或 rsod-backend 概念。
+2. 保持 crate 单一职责：核心类型放在 rsod-core，存储能力放在 rsod-storage，算法行为放在 rsod-<algorithm>，插件集成放在 rsod-backend。
 
 ## 新增算法的审查清单
 
 1. 新 crate 已在 rsod/crates/ 下创建，并使用 rsod- 前缀命名
 2. 如有需要，Cargo workspace 已同步更新
-3. 公共 API 从新 crate 暴露，而不是从 rsod-ffi 暴露
-4. rsod-ffi 只负责 FFI 输入输出映射与委派，不承载算法主体
-5. 如果引入了新的 FFI 入口或 Schema，docs/interfaces/go-rust-interface.md 已同步更新
+3. 公共 API 从新 crate 暴露，插件路径从 rsod-backend 调用
 
 ## 禁止模式
 
-- 在 rsod-ffi/src/lib.rs 中实现完整算法
 - 让 lib.rs 膨胀成数百行的混合实现文件
-- 在同一个模块里混杂配置解析、模型训练、特征提取和 Arrow 传输
-- 在算法 crate 中引入 Go 或 Grafana 特有概念
+- 在同一个模块里混杂配置解析、模型训练和特征提取
+- 在算法 crate 中引入 Grafana 或 rsod-backend 特有概念
 
 ## 最低验证要求
 
 - cd rsod && cargo test
-- 确认 rsod-ffi 到 rsod-<algorithm> 的边界仍然清晰
-- 重新检查任何变更过的 FFI 签名或 Schema 文档
+- 确认 rsod-backend 与算法 crate 之间的边界仍然清晰
+- 重新检查任何变更过的公共 API 或 Schema 文档

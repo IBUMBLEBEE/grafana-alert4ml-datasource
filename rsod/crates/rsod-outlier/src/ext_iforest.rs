@@ -233,8 +233,8 @@ fn extract_and_normalize_features(data: &[[f64; 2]]) -> (Vec<[f64; 4]>, Vec<f64>
 /// 
 /// # Examples
 /// ```no_run
-/// use rsod_outlier::ext_iforest::{save_iforest_model, EIFOptions};
-/// 
+/// use rsod_outlier::{save_iforest_model, EIFOptions};
+///
 /// let options = EIFOptions {
 ///     n_trees: 100,
 ///     sample_size: Some(256),
@@ -274,8 +274,8 @@ pub fn save_iforest_model(uuid: String, options: EIFOptions, data: &[[f64; 2]]) 
 /// 
 /// # Examples
 /// ```no_run
-/// use rsod_outlier::ext_iforest::load_iforest_model;
-/// 
+/// use rsod_outlier::load_iforest_model;
+///
 /// let saved_model = load_iforest_model("model-uuid".to_string()).unwrap();
 /// let forest = &saved_model.forest;
 /// ```
@@ -367,8 +367,8 @@ fn normalize_features_with_params(
 /// 
 /// # Examples
 /// ```no_run
-/// use rsod_outlier::ext_iforest::predict_with_saved_model;
-/// 
+/// use rsod_outlier::predict_with_saved_model;
+///
 /// let data = vec![[1.0, 2.0], [2.0, 3.0]];
 /// let scores = predict_with_saved_model("model-uuid".to_string(), &data).unwrap();
 /// ```

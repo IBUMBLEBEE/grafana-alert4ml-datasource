@@ -269,6 +269,13 @@ export interface Alert4MLQuery extends DataQuery {
   uniqueKeys: UniqueKeys;
   baseDsUid?: string;
   rawQuery?: Record<string, any>;
+  /**
+   * Optional override for the series label segment of the result field
+   * display names (`{refId}-{seriesLabel}-{column}`). Empty = auto: the
+   * backend uses the upstream frame name, falling back to the value field's
+   * labels (e.g. `{__name__="up", ...}`) when the frame has no name.
+   */
+  seriesLabel?: string;
 }
 
 export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {

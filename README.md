@@ -9,8 +9,8 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 ## Technology Stack
 
 * Frontend: [TS](https://www.typescriptlang.org/) / [React](https://react.dev/)
-* Backend: [Go](https://go.dev/) / [CGO](https://pkg.go.dev/cmd/cgo) / [Rust](https://www.rust-lang.org/)
-* Data Transform: [Arrow Dataframe](https://arrow.apache.org/docs/index.html)
+* Backend: [Rust](https://www.rust-lang.org/) / [grafana-plugin-sdk-rust](https://github.com/grafana/grafana-plugin-sdk-rust)
+* Data Transform: [Arrow](https://arrow.apache.org/docs/index.html)
 
 ## Algorithm
 
@@ -23,7 +23,6 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 **Searching in the Grafana plugin catalog is not supported due to the following limitations:**
 
 * Grafana plugins in general should not access any file system. [github issues](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/issues/1)
-* CGO and glibc dependencies.
 
 ~~You can download and install this grafana plugin using various options~~
 

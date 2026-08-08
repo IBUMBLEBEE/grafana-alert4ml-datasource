@@ -1,6 +1,14 @@
-# Alert4ML Go-Rust 交互接口规范
+# Alert4ML Go-Rust 交互接口规范（历史文档）
 
-> 依据当前实现整理，来源于 [pkg/rsod/rsod.go](pkg/rsod/rsod.go)、[rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 和 [rsod/crates/rsod-ffi/include/rsod_go.h](rsod/crates/rsod-ffi/include/rsod_go.h)。
+> **⚠️ 已废弃**：Go 后端（`pkg/`）已被 `grafana-plugin-sdk-rust` 实现的
+> `rsod/crates/rsod-backend` 整体替换，插件路径不再存在 Go-Rust 边界。
+> 本文档保留用于追溯旧 FFI 协议；新架构见
+> `rsod/crates/rsod-backend/src/`（直接调用 rsod 算法 crate，无 C ABI）。
+> 迁移中无法表达的保真度缺口见 [第 10 节](#10-插件路径替换为-grafana-plugin-sdk-rust-后的保真度缺口)。
+
+> 依据历史实现整理，来源于已删除的 `pkg/rsod/rsod.go`、`rsod/crates/rsod-ffi/`
+> （`src/lib.rs`、`include/rsod_go.h`；该 crate 已随 Go 迁移从 workspace 移除）。
+> 移除前版本见 git 历史。
 
 ## 1. 适用范围
 
@@ -36,8 +44,8 @@ Grafana data.Frame
 其中：
 
 - Go 侧入口位于 [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
-- Rust FFI 边界位于 [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs)
-- C 头文件位于 [rsod/crates/rsod-ffi/include/rsod_go.h](rsod/crates/rsod-ffi/include/rsod_go.h)
+- Rust FFI 边界位于 `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史）
+- C 头文件位于 `rsod/crates/rsod-ffi/include/rsod_go.h`（crate 已移除，见 git 历史）
 
 ## 3. C ABI 总览
 
@@ -95,7 +103,7 @@ data_schema, data_array, history_schema, history_array, options_json, result_sch
 
 ### 4.1 输入数据契约
 
-Rust FFI 通过 [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `struct_array_to_input` 读取输入，当前实现有两个重要事实：
+Rust FFI 通过 `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `struct_array_to_input` 读取输入，当前实现有两个重要事实：
 
 1. 按列位置读取，而不是按列名读取
 2. 第 0 列和第 1 列都必须能下转成 `Float64Array`
@@ -186,7 +194,7 @@ Rust 侧当前做法：
 
 ### Rust 目标函数
 
-- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `outlier_fit_predict`
+- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `outlier_fit_predict`
 - 内部委派到 `rsod_outlier::outlier`
 
 ### 输入
@@ -242,7 +250,7 @@ Go 侧 `OutlierFitPredict` 只读取第 2 列并返回 `[]float64`，不会把 R
 
 ### Rust 目标函数
 
-- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `baseline_fit_predict`
+- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `baseline_fit_predict`
 - 内部通过 `run_detector_with_history` 委派到 `rsod_baseline::baseline_detect`
 
 ### 输入
@@ -291,7 +299,7 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 
 ### Rust 目标函数
 
-- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `dynamics_fit_predict`
+- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `dynamics_fit_predict`
 - 内部通过 `run_detector_with_history` 委派到 `rsod_baseline::dynamics::dynamics_detect`
 
 ### 输入
@@ -340,7 +348,7 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 
 ### Rust 目标函数
 
-- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `funnel_fit_predict`
+- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `funnel_fit_predict`
 - 内部委派到 `rsod_funnel::funnel_detect`（L1 统计预筛 + 可选 L2 ML 升级）
 
 ### 输入
@@ -394,7 +402,7 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 
 ### Rust 目标函数
 
-- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `rsod_forecaster`
+- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `rsod_forecaster`
 - 内部通过 `run_detector_with_history` 委派到 `rsod_forecaster::forecast`
 
 ### 输入
@@ -465,7 +473,7 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 
 ### Rust 目标函数
 
-- [rsod/crates/rsod-ffi/src/lib.rs](rsod/crates/rsod-ffi/src/lib.rs) 中的 `rsod_storage_init`
+- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `rsod_storage_init`
 
 ### 参数
 
@@ -526,6 +534,67 @@ Rust 当前只读取第 0 列和第 1 列，因此列顺序是硬契约。
 ### 8.4 Go 侧 CString 释放尚未完全对齐
 
 当前 `OutlierFitPredict` 和 `RSODForecaster` 没有释放 `C.CString(...)` 创建的字符串，这属于实现层问题，不改变 ABI，但应在后续修正。
+
+## 10. 插件路径替换为 grafana-plugin-sdk-rust 后的保真度缺口
+
+> 本文件的 FFI 协议描述的是旧 Go 后端；`rsod/crates/rsod-backend` 已直接调用
+> rsod 算法 crate，不再经过 C ABI。下列缺口是「行为等价迁移」中无法由
+> grafana-plugin-sdk-rust 表达的差异，迁移后必须知晓（详见
+> `rsod/crates/rsod-backend/src/render.rs` 等处的源码注释）。
+
+### 10.1 Frame `meta.type` —— 已解决（vendored SDK 扩展）
+
+Go 后端通过 `frame.Meta.Type = "timeseries-wide"` 声明帧类型。vendored
+SDK（`rsod/vendor/grafana-plugin-sdk`）的 `Metadata` 已新增
+`type: Option<String>`（serde rename `"type"`），`render.rs` 在 baseline 与
+forecast 帧上设置 `timeseries_wide_meta()`，与 Go 输出一致。旧 JSON 无
+`type` 字段时反序列化为 `None`，向后兼容。
+
+### 10.2 `FieldConfig.color` —— 已解决（vendored SDK 扩展）
+
+Go 的 `FieldConfig` 支持 `Color`（异常点渲染为红色等）。vendored SDK 已新增
+`ColorConfig { mode, fixedColor }`（`FieldConfig.color: Option<ColorConfig>`），
+`render.rs` 复刻 Go：bounds 列 `#808080`/fixed、异常列 `red`/fixed（baseline
+值列与 pred 列无颜色，与 Go 注释掉的 `Color` 一致）；outlier 帧值列 `red`。
+None 时 `skip_serializing_none` 不输出，向后兼容。
+
+### 10.3 错误语义：全请求失败 → 单查询失败
+
+Go 后端任一查询出错即整个 `QueryData` 请求失败；SDK 是流式响应，Rust
+迁移后错误以 per-query 的 `QueryError::Internal` 返回，Grafana 只对失败的
+那个查询显示错误。错误文本与 Go 保持逐字一致（如 `datasource query: ...`、
+`funnel history query returned no frames for refId ...`）。
+
+### 10.4 存储初始化：从「从不初始化」改为「按配置初始化」
+
+Go 后端的 `RSODStorageInit` 从未被调用，因此即使配置了 PostgreSQL，
+funnel 模型持久化也总是落到 SQLite in-memory。Rust 迁移在健康检查和
+funnel 查询前 best-effort 调用 `rsod_storage::init_db_with_config`，
+trial_mode=false 且有合法 DSN 时会真正使用 PostgreSQL —— 这是对旧行为的
+有意修正，不是回归。
+
+### 10.5 非异常值：NaN → null
+
+Go 的 outlier 输出对非异常位置写 `math.NaN()`；Rust 迁移写 Arrow null。
+两种值在 Grafana 渲染中都表现为数据缺口，效果等价。
+
+### 10.6 健康检查的 URL 校验时机
+
+Go 先 `url.Parse` 再 ping，坏 URL 报 `invalid URL: ...`；Rust 用 reqwest
+在请求时暴露坏 URL，错误消息来自 reqwest。其余健康检查分支（API Token、
+登录 ping、trial 模式、PG 字段检查、PG ping）与 Go 逐字一致。
+
+### 10.7 未迁移的 Go 死代码
+
+以下 Go 函数定义后从未被调用，未迁移：`RenderFrameWithOutlier`、
+`removeAnomalyField`、`UniqueSlice`、`DebugFrame*`、`WriteArrowRecordToCSV`、
+`frameToArrowIPC`/`arrowIPCToFrame`、`getGrafanaPluginDir`。
+
+### 10.8 插件 buildinfo 元数据
+
+Go 二进制通过 ldflags 嵌入 `buildinfoJSON`（Grafana 插件诊断页展示构建
+时间/版本）；grafana-plugin-sdk-rust 无对应机制，Rust 二进制不携带该
+元数据。Grafana 将其视为可选信息，插件功能不受影响。
 
 ## 9. 文档更新触发条件
 

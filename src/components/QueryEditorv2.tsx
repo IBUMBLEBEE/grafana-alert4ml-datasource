@@ -5,6 +5,7 @@ import {
   Combobox,
   Collapse,
   InlineSwitch,
+  Input,
   TimeRangePicker,
 } from '@grafana/ui';
 import type { ComboboxOption } from '@grafana/ui';
@@ -283,6 +284,10 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   };
 
+  const onSeriesLabelChange = (value: string) => {
+    runDebouncedQueryWithTempTargets({ seriesLabel: value.trim() || undefined });
+  };
+
   const onHistoryTimeRangeChange = (v: TimeRange) => {
     // Only the width of the picked window is meaningful — the `to` anchor is always
     // pinned to panel.timeRange.from on render, so users may pick any absolute range
@@ -402,6 +407,17 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
           value={showAnomalyPoints || false}
           onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
         />
+        <InlineField
+          label="Series Label"
+          tooltip="Overrides the series name segment of the result field display names (A-{label}-Pred). Leave empty to auto-detect from the upstream frame name or its labels."
+        >
+          <Input
+            width={24}
+            placeholder="Auto"
+            value={query.seriesLabel || ''}
+            onChange={(e) => onSeriesLabelChange(e.currentTarget.value)}
+          />
+        </InlineField>
 
       </Stack>
       <Stack gap={0}>

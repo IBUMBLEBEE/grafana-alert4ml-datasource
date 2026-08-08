@@ -44,7 +44,7 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # ── Step 2: Build Rust + Go backend per platform ─────────────
+  # ── Step 2: Build Rust backend per platform ──────────────────
   build-backend:
     needs: build-frontend
     runs-on: ubuntu-latest
@@ -68,11 +68,6 @@ jobs:
 
       - name: Run Rust Builder
         uses: ./.github/actions/rust-builder
-        with:
-          target: ${{ matrix.target }}
-
-      - name: Run Go Builder
-        uses: ./.github/actions/go-builder
         with:
           target: ${{ matrix.target }}
 

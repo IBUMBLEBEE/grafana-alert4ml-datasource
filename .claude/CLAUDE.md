@@ -11,21 +11,22 @@ Plugin ID: `ibumblebee-alert4ml-datasource`
 ## 技术栈
 
 - 前端：TypeScript + React 18（Grafana UI components）
-- 后端：Go 1.25 + CGO -> Rust FFI
+- 后端：Rust（grafana-plugin-sdk-rust，`rsod/crates/rsod-backend`）
 - ML 引擎：Rust workspace（`rsod/crates/`）
-- 构建：Webpack、Mage、Cargo（使用 zigbuild 交叉编译）
+- 构建：Webpack、Cargo（使用 zigbuild 交叉编译）
+- 历史：Go 后端（`pkg/` + CGO FFI）已在迁移中被整体移除，插件路径不再有 Go 代码
 
 ## 项目结构
 
 ```text
-pkg/              Go backend（plugin entry、query handler、data conversion）
-rsod/crates/      Rust ML engine（outlier、forecaster、baseline、classifier、storage）
-src/              TypeScript frontend（components、datasource、types）
-src/plugin.json   Plugin metadata and capabilities
-tests/            Playwright e2e tests
-.config/          Grafana scaffolded configs（webpack、jest、eslint、prettier）
-.github/          CI/CD workflows and custom build actions
-provisioning/     Grafana provisioning configs
+rsod/crates/rsod-backend/  Rust 插件后端（plugin entry、query handler、data conversion）
+rsod/crates/              Rust ML engine（outlier、forecaster、baseline、classifier、storage、ffi）
+src/                      TypeScript frontend（components、datasource、types）
+src/plugin.json           Plugin metadata and capabilities
+tests/                    Playwright e2e tests
+.config/                  Grafana scaffolded configs（webpack、jest、eslint、prettier）
+.github/                  CI/CD workflows and custom build actions
+provisioning/             Grafana provisioning configs
 ```
 
 ## 构建命令
@@ -45,45 +46,42 @@ npm install
 npm run build
 npm run dev
 
-# Go backend
-mage build:linux
-mage build:linuxARM64
+# Rust backend（输出到 dist/gpx_alert4ml_linux_{amd64,arm64}）
+make build-backend-amd64
+make build-backend-arm64
 
-# Rust ML engine
-mage build:rsAMD64
-mage build:rsARM64
-
-# Combined
-mage build:all
-mage build:allPlatforms
+# 或直接 cargo（不复制到 dist）
+cd rsod && cargo zigbuild --release --target x86_64-unknown-linux-musl -p rsod-backend
+cd rsod && cargo build -p rsod-backend
 ```
 
 ### 清理
 
 ```bash
 make clean
-mage clean
 ```
 
 ## 测试与检查
 
 ```bash
 npm run test:ci
-go test ./pkg/...
+cd rsod && cargo test -p rsod-backend
 cd rsod && cargo test
 npm run e2e
 npm run typecheck
 npm run lint
 npm run lint:fix
+cd rsod && cargo clippy -p rsod-backend --all-targets --no-deps
 ```
 
 ## 本地开发
 
 ```bash
-make -f Makefile.cross.local
+make build-backend-amd64
+npm run dev
 ```
 
-Grafana runs with unsigned plugin loading enabled. Delve debugger available on port 2345.
+Grafana runs with unsigned plugin loading enabled.
 
 Plugin logs: `GF_LOG_FILTERS=plugin.ibumblebee-alert4ml-datasource:debug`
 
@@ -91,14 +89,14 @@ Plugin logs: `GF_LOG_FILTERS=plugin.ibumblebee-alert4ml-datasource:debug`
 
 - 这是一个 Grafana datasource 插件项目，不是通用 Web 应用。
 - 前端位于 `src/`，负责查询编辑器、配置编辑器和 Grafana 插件 UI。
-- Go 后端位于 `pkg/`，负责 Grafana 插件协议、查询编排、FFI 调用和结果渲染。
-- Rust 代码位于 `rsod/crates/`，负责机器学习算法、FFI 边界、存储与共享核心类型。
+- Rust 后端位于 `rsod/crates/rsod-backend/`，负责 Grafana 插件协议（grafana-plugin-sdk-rust）、查询编排和结果渲染。
+- Rust 算法代码位于 `rsod/crates/`，负责机器学习算法、存储与共享核心类型。
 - Rust 产物面向 `linux/amd64` 与 `linux/arm64` 的 musl 静态构建，统一使用 `cargo zigbuild`。
 
 ## 架构说明
 
-- Go backend 接收 Grafana queries，通过 FFI 调用 Rust ML engine（`pkg/rsod/`）。
-- Rust workspace 当前包含 `rsod-outlier`、`rsod-forecaster`、`rsod-baseline`、`rsod-classifier` 等专用 crate。
+- Rust 后端（rsod-backend）直接调用 rsod 算法 crate（outlier、forecaster、baseline、funnel），不再经过任何跨语言边界。
+- 插件后端与 Grafana 通过 grafana-plugin-sdk-rust 的 gRPC 协议通信；上游数据通过 `/api/ds/query` 代理。
 - 前端组件与能力映射：Baseline、Forecast、Dynamics、Outlier detection。
 - 所有二进制默认静态链接（musl）以确保跨平台兼容。
 - Cross-compilation 使用 zig 作为 C compiler。
@@ -110,7 +108,6 @@ Plugin logs: `GF_LOG_FILTERS=plugin.ibumblebee-alert4ml-datasource:debug`
 
 ## 通用约定
 
-- Go：standard library style，`pkg/` layout
 - Rust：workspace with `rsod-` prefix for crates
 - TypeScript：Grafana plugin conventions，`@grafana/eslint-config`
 - Node 22，npm 10.9，Rust nightly-2025-12-05，Zig 0.15.2
@@ -141,29 +138,25 @@ Plugin logs: `GF_LOG_FILTERS=plugin.ibumblebee-alert4ml-datasource:debug`
 
 - [skills/rust-ml-boundary/SKILL.md](skills/rust-ml-boundary/SKILL.md)
   - 适用范围：训练、推理、特征提取、评分、预测、异常检测相关改动
-  - 负责内容：机器学习流程只在 Rust 中实现，Go 和前端不得承载算法逻辑
-
-- [skills/arrow-safe-ffi/SKILL.md](skills/arrow-safe-ffi/SKILL.md)
-  - 适用范围：Go-Rust FFI、Arrow Schema、时间戳单位、内存释放、跨语言数据交换
-  - 负责内容：Arrow C Data Interface、FFI 安全、Schema 契约、边界内存所有权
+  - 负责内容：机器学习流程只在 Rust 中实现，前端不得承载算法逻辑
 
 ## Grafana Plugin Skill 索引
 
 - [skills/grafana-plugin-practices/SKILL.md](skills/grafana-plugin-practices/SKILL.md)
-  - 适用范围：`src/`、`pkg/plugin/`、`pkg/sdk/`、`src/plugin.json`、测试和兼容性改动
+  - 适用范围：`src/`、`rsod/crates/rsod-backend/`、`src/plugin.json`、测试和兼容性改动
   - 负责内容：Grafana datasource 插件最佳实践、前端 UI 约束、plugin metadata、运行时兼容性、日志与配置安全
 
 ## 修改前最小检查
 
-- 先确认当前任务主要落在前端、Go 后端、Rust 算法、还是 Go-Rust 边界。
+- 先确认当前任务主要落在前端、Rust 后端、还是 Rust 算法。
 - 如果是 Rust 任务，先读 `rust-core`，再决定是否联读其他专项 skill。
-- 如果是跨层任务，按“插件层 → Go 编排层 → Rust 边界层 → Rust 算法层”的顺序梳理影响范围。
-- 如果任务影响公共契约，联动检查 `docs/interfaces/ts-go-interface.md` 和 `docs/interfaces/go-rust-interface.md`。
+- 如果是跨层任务，按“插件层 → Rust 后端层 → Rust 算法层”的顺序梳理影响范围。
+- 如果任务影响公共契约，联动检查 `docs/interfaces/README.md`（前端↔后端 JSON 契约）与 `rsod-backend/src/contract.rs`。
 
 ## 约束原则
 
-- 不要把机器学习逻辑移入 Go 或前端。
-- 不要绕过 Arrow C Data Interface 自创 Go-Rust 交换协议。
+- 不要把机器学习逻辑移入前端。
+- 插件路径不引入新的跨语言交换层；如需恢复跨语言调用，必须使用 Arrow C Data Interface（`rsod-ffi` 模式），不得自创协议。（`rsod-ffi` crate 已随 Go 迁移移除，该约束保护的是协议模式本身。）
 - 单元测试使用的时序数据必须来自 `dataset/testdata/` 下的固定测试数据；不要在测试里内联长时序、临时生成独立 CSV，或改用仓库其他目录下的散落数据副本。
 - 不要把 Rust 专项规则分散成并列顶层规范；Rust 顶层基线统一由 `rust-core` 提供。
 - 不要把本文件写成重复的详细规范；详细规则应下沉到对应 skill 中维护。

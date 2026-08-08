@@ -1,5 +1,5 @@
-name: 'Rust Plugin Builder'
-description: 'Compiles Rust static library for the plugin (musl targets) using cargo-zigbuild'
+name: 'Rust Plugin Backend Builder'
+description: 'Compiles the Rust plugin backend (rsod-backend) for a musl target using cargo-zigbuild and copies the binary into dist/'
 
 inputs:
   target:
@@ -34,11 +34,24 @@ runs:
       shell: bash
       run: cargo install cargo-zigbuild --locked
 
-    - name: Build Rust static library
+    - name: Build plugin backend
       shell: bash
       run: |
-        echo "Building rsod for target: ${{ inputs.target }}"
+        echo "Building rsod-backend for target: ${{ inputs.target }}"
         cd rsod/
-        cargo zigbuild --release --target ${{ inputs.target }}
-        echo "=== Static library ==="
-        ls -lh target/${{ inputs.target }}/release/librsod_go.a
+        cargo zigbuild --release --target ${{ inputs.target }} -p rsod-backend
+
+    # Grafana resolves the plugin.json `executable` plus a GOOS/GOARCH-style
+    # suffix, so the binary must be named gpx_alert4ml_linux_<arch> in dist/.
+    - name: Copy plugin binary to dist/
+      shell: bash
+      run: |
+        case "${{ inputs.target }}" in
+          x86_64-unknown-linux-musl)  os_arch=linux_amd64 ;;
+          aarch64-unknown-linux-musl) os_arch=linux_arm64 ;;
+          *) echo "Unsupported target: ${{ inputs.target }}"; exit 1 ;;
+        esac
+        mkdir -p dist
+        cp rsod/target/${{ inputs.target }}/release/gpx_alert4ml dist/gpx_alert4ml_${os_arch}
+        echo "=== Plugin binary ==="
+        ls -lh dist/gpx_alert4ml_${os_arch}

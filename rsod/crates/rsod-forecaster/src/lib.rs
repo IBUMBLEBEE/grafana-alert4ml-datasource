@@ -493,7 +493,11 @@ fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_st
     let mut lower = Vec::with_capacity(n);
 
     for i in 0..n {
-        result_timestamps.push(timestamps[i] as i64);
+        // Contract: `DetectionResult.timestamps` is epoch millis (input here
+        // is epoch seconds from the plugin pipeline). The Go-era FFI chain
+        // (`timestamp_ms: (t * 1000.0) as i64`) converted the same way;
+        // funnel's `alert_output` divides by 1000 to recover seconds.
+        result_timestamps.push((timestamps[i] * 1000.0) as i64);
         result_values.push(pred[i]);
 
         let ub = pred[i] + margin;
