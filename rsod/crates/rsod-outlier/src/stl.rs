@@ -129,14 +129,18 @@ fn variance<I: Iterator<Item = f64>>(data: I) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsod_utils::read_csv_to_vec;
+    use rsod_utils::eval::read_testdata_pairs;
     // use std::fs::File;
     // use std::io::Write;
 
     #[test]
     fn test_decompose_with_csv_data() {
-        // Read CSV data
-        let data: Vec<[f64; 2]> = read_csv_to_vec("data/data.csv");
+        // Read CSV data.
+        // Fixture: `dataset/testdata/artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv`,
+        // downsampled every 12th row to hourly (5-minute → 1-hour) so the daily
+        // period asserted below is 24 samples.
+        let data: Vec<[f64; 2]> =
+            read_testdata_pairs("artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv", 12);
 
         // Extract time series data
         let time_series: Vec<f32> = data

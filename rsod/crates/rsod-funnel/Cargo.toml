@@ -19,14 +19,6 @@ serde_json.workspace = true
 [lints]
 workspace = true
 
-[[example]]
-name = "funnel_viz"
-path = "examples/funnel_viz.rs"
-
-[[example]]
-name = "funnel_bench"
-path = "examples/funnel_bench.rs"
-
 [dev-dependencies]
 plotters = "0.3.7"
 rsod-utils.workspace = true

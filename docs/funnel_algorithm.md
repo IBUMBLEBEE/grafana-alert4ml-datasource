@@ -121,7 +121,7 @@ flowchart TD
 
 > L1 用历史统计画像把明显正常和明显异常的点快速裁掉；只有落在灰区的 `Uncertain` 点才触发 L2。L2 先判断时序类型，再路由到 Outlier、Forecast 或 Baseline 算法，最后只覆盖这些灰区点的判定结果。
 >
-> 注意：L2 当前在 Grafana 面板路径中默认关闭（`enable_l2 = false`，见 [pkg/plugin/datasource.go](../pkg/plugin/datasource.go)），可在算法侧显式开启。
+> 注意：L2 当前在 Grafana 面板路径中默认关闭（`enable_l2 = false`，见 [rsod/crates/rsod-backend/src/pipeline.rs](../rsod/crates/rsod-backend/src/pipeline.rs)），可在算法侧显式开启。
 
 ## 5. 一段时序经过 L1/L2 的示例
 

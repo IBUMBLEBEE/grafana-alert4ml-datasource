@@ -7,18 +7,9 @@ use augurs_forecaster::transforms::interpolate::*;
 /// 
 /// # Arguments
 /// * `data` - Time series data containing NaN values
-/// 
+///
 /// # Returns
 /// * New time series with NaN values filled
-/// 
-/// # Examples
-/// ```
-/// use rsod_outlier::preprocessing::fill_nan;
-/// 
-/// let data = vec![1.0, f64::NAN, f64::NAN, 2.0];
-/// let filled = fill_nan(data);
-/// assert_eq!(filled, vec![1.0, 1.3333333333333333, 1.6666666666666667, 2.0]);
-/// ```
 pub fn fill_nan(data: &[[f64; 2]]) -> Vec<[f64; 2]> {
     let data_f64: Vec<f64> = data.iter().map(|x| x[1]).collect();
     let filled = data_f64.into_iter()

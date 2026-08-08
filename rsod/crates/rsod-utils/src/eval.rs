@@ -280,6 +280,46 @@ pub fn read_testdata_csv(rel_path: &str) -> (Vec<f64>, Vec<f64>, Vec<u8>) {
     (timestamps, values, labels)
 }
 
+/// Read a fixed `dataset/testdata` fixture as `(timestamp, value)` pairs,
+/// keeping every `step`-th row (`step=1` keeps all rows).
+///
+/// Resolves via `CARGO_MANIFEST_DIR` so tests run from any working directory.
+/// The legacy `read_csv_to_vec` was CWD-relative and its `data/` directory is
+/// gone — fixtures now come exclusively from `dataset/testdata/` (see the
+/// repo CLAUDE.md test-data rule).
+///
+/// Downsampling keeps the fixture's own timestamp of each kept row, so e.g.
+/// `step=12` on a 5-minute fixture yields hourly data (daily period = 24
+/// samples, matching the hourly semantics the algorithm tests were written
+/// against).
+pub fn read_testdata_pairs(rel_path: &str, step: usize) -> Vec<[f64; 2]> {
+    use csv::ReaderBuilder;
+    use std::fs::File;
+
+    assert!(step >= 1, "step must be >= 1");
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let path = format!("{manifest}/../../../dataset/testdata/{rel_path}");
+    let file = File::open(&path).unwrap_or_else(|e| {
+        panic!("testdata fixture not found at {path}: {e}");
+    });
+
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(file);
+    let mut out = Vec::new();
+    for (i, result) in rdr.records().enumerate() {
+        if i % step != 0 {
+            continue;
+        }
+        let record = result.expect("Failed to read CSV record");
+        let timestamp: f64 = record[0]
+            .trim_matches('"')
+            .parse()
+            .expect("Failed to parse timestamp");
+        let value: f64 = record[1].parse().expect("Failed to parse value");
+        out.push([timestamp, value]);
+    }
+    out
+}
+
 /// Compute naïve one-step-ahead persistence forecast errors.
 ///
 /// Returns `|values[i] − values[i-1]|` for `i` in `1..n`.

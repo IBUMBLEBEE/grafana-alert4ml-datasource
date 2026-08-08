@@ -9,19 +9,18 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 
 ### 0.1 算法实现来源与授权约束
 
-- 当前仓库中的机器学习算法实现必须优先落在 Rust 端，不能把会影响模型语义的逻辑转移到 Go、FFI 适配层或前端。
+- 当前仓库中的机器学习算法实现必须优先落在 Rust 端，不能把会影响模型语义的逻辑转移到 rsod-backend（插件集成层）或前端。
 - 当需要参考现有 Rust 生态中的算法设计、训练流程、特征处理或预测实现时，优先参考以下来源：
   - `anofox-forecast`: https://github.com/sipemu/anofox-forecast
   - `Perpetual ML`: https://perpetual-ml.com/
   - `linfa`: https://github.com/rust-ml/linfa
   - `augurs`: https://github.com/grafana/augurs
-- 这些来源只作为算法思路、模块组织和依赖选型的参考，不能因此绕过本仓库既有的 workspace 分层、musl 交叉编译、错误处理和 FFI 边界约束。
+- 这些来源只作为算法思路、模块组织和依赖选型的参考，不能因此绕过本仓库既有的 workspace 分层、musl 交叉编译和错误处理约束。
 - 如果实现某个需求需要新增承载算法语义的 Rust 模块、新增算法 crate、扩展 workspace 成员，或引入新的算法型第三方依赖，必须先获得用户授权，再继续实施。
 
 本文件定义 rsod/ 目录下 Rust 核心代码的通用架构与风格约束，但以下场景不得只依赖本文件，必须同时读取对应的其他 SKILL.md：
 
 - 当涉及 **新增算法**、新增 crate、拆分过大的 `lib.rs`、调整算法模块布局时，必须同时读取 [.claude/skills/rust-algorithm-crate-layout/SKILL.md](../rust-algorithm-crate-layout/SKILL.md)。
-- 当涉及 **Go ↔ Rust FFI 边界**、Arrow Schema、ArrowArray、ArrowSchema、时间戳单位、零拷贝传输、内存释放、`extern "C"` 接口签名时，必须同时读取 [.claude/skills/arrow-safe-ffi/SKILL.md](../arrow-safe-ffi/SKILL.md)。
 - 当涉及 **模型行为**、训练流程、推理流程、异常检测、预测、特征提取、评分逻辑归属时，必须同时读取 [.claude/skills/rust-ml-boundary/SKILL.md](../rust-ml-boundary/SKILL.md)。
 
 优先级原则：
@@ -29,8 +28,7 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 1. 所有 Rust 相关 skills 统一以 `rust-core` 作为顶层基线；凡是命中 Rust 专项 skill，必须先遵守 `rust-core`。
 2. `rust-core` 负责 Rust 代码的通用组织、工程约束、风格基线与跨架构构建要求。
 3. `rust-algorithm-crate-layout` 只负责新增算法时的 crate 与模块布局约束。
-4. `arrow-safe-ffi` 只负责 Go-Rust 跨语言边界与 Arrow C Data Interface 的安全约束。
-5. `rust-ml-boundary` 只负责算法职责边界，防止算法流程泄漏到 Go 或 FFI 层。
+4. `rust-ml-boundary` 只负责算法职责边界，防止算法流程泄漏到 rsod-backend 或任何边界适配层。
 
 如果多个文件同时适用，必须联合遵守，不能以 `rust-core` 为由覆盖更具体的边界规则。
 
@@ -43,12 +41,12 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 - **`rsod-core/` (核心抽象层)**：
   - 存放跨算法共享的公共数据结构、结果类型、常量、基础 trait 与通用接口。
   - **原则**：只定义领域抽象和共享契约，不掺入具体算法流程。
-- **`rsod-outlier/`、`rsod-forecaster/`、`rsod-baseline/`、`rsod-classifier/` (算法实现层)**：
+- **`rsod-outlier/`、`rsod-forecaster/`、`rsod-baseline/`、`rsod-classifier/`、`rsod-funnel/` (算法实现层)**：
   - 存放具体算法实现、训练流程、推理流程、评分逻辑与算法相关配置。
-  - **原则**：算法行为在对应 crate 内聚，不向 `rsod-ffi` 或 Go 层泄漏实现细节。
-- **`rsod-ffi/` (边界层)**：
-  - 专门处理 `#[no_mangle]`、`extern "C"`、Arrow FFI 转换、JSON options 解码与跨语言边界适配。
-  - **原则**：这一层只做边界转换与委派，严禁承载业务算法流程。
+  - **原则**：算法行为在对应 crate 内聚，不向 `rsod-backend` 或 FFI 层泄漏实现细节。
+- **`rsod-backend/` (插件后端)**：
+  - Grafana datasource 插件后端（grafana-plugin-sdk-rust）：插件协议、查询编排、帧切分与结果渲染。
+  - **原则**：集成层，直接调用算法 crate 的公开函数，严禁承载算法流程。
 - **`rsod-storage/`、`rsod-utils/` (基础设施层)**：
   - 分别承载存储能力与通用工具逻辑。
   - **原则**：保持职责单一，避免反向依赖算法 crate 的私有实现。
@@ -76,7 +74,7 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 ### 1.4 禁止事项
 
 - 禁止把整个算法实现塞进 `src/lib.rs`
-- 禁止把算法主流程写进 `rsod-ffi`
+- 禁止把算法主流程写进 `rsod-backend`（集成层）
 - 禁止在 `rsod-core` 中混入具体算法实现
 - 禁止让工具模块反向依赖具体算法 crate
 - 禁止为了“方便调用”在多个 crate 中复制同一份算法逻辑
@@ -86,10 +84,10 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 - **禁止默认使用 `cargo build` 作为发布构建路径**：本仓库的 Rust 产物面向跨架构静态构建，发布与交叉编译必须使用 `cargo-zigbuild`，不能绕过既有构建链。
 
 ### 1.5 自动化钩子 (Automation)
-- **构建脚本**：参考 `Magefile.go`。在 `cargo build` 前必须执行 `cargo fmt --check`。
+- **构建脚本**：参考 `Makefile` 中的 `build-backend-amd64`、`build-backend-arm64`。在 `cargo build` 前必须执行 `cargo fmt --check`。
 - **Clippy**：代码必须通过 `cargo clippy -- -D warnings`。
 - **跨架构要求**：任何新增 Rust 实现或第三方依赖，在合入前都必须至少从规则层确认同时支持 `linux/amd64` 与 `linux/arm64`，对应 Rust 目标分别为 `x86_64-unknown-linux-musl` 和 `aarch64-unknown-linux-musl`。
-- **强制构建方式**：Rust 项目编译必须使用 `cargo zigbuild`，与仓库现有 Makefile 和 Magefile 保持一致。涉及发布、交叉编译或构建脚本调整时，应优先参考 `Makefile` 中的 `build-rs-amd64`、`build-rs-arm64` 以及 `Magefile.go` 中的 `RsAMD64`、`RsARM64`。
+- **强制构建方式**：Rust 项目编译必须使用 `cargo zigbuild`，与仓库现有 Makefile 保持一致。涉及发布、交叉编译或构建脚本调整时，应优先参考 `Makefile` 中的 `build-backend-amd64`、`build-backend-arm64`（构建 `rsod-backend` 并输出插件二进制到 `dist/`）。
 - **推荐验证命令**：
   - `cargo fmt --check`
   - `cargo clippy -- -D warnings`
@@ -174,9 +172,8 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 ### 3.5 架构与边界约束
 
 - 算法 crate 引入的依赖必须服务于算法实现本身，不能顺带把 Go、Grafana、FFI 或存储边界概念带进算法层。
-- `rsod-ffi` 中新增依赖必须严格服务于 FFI 转换、Arrow 交换或必要的边界支撑，不能把算法依赖错误地堆到 FFI 层。
 - `rsod-core` 中新增依赖必须极其克制，避免让核心抽象层背负沉重实现依赖。
-- 新依赖若会改变公共数据结构、错误模型、序列化格式或 FFI 输出结构，必须视为公共契约变更处理。
+- 新依赖若会改变公共数据结构、错误模型或序列化格式，必须视为公共契约变更处理。（历史 FFI 输出结构约束随 `rsod-ffi` 移除，见 git 历史。）
 
 ### 3.6 引入前审查清单
 
@@ -185,7 +182,7 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 - 依赖是否能在 `cargo zigbuild` 下稳定构建
 - 是否包含原生代码、`build.rs`、动态链接假设或额外系统库要求
 - 是否应放入 `[workspace.dependencies]` 统一管理
-- 是否会把实现细节错误地下沉到 `rsod-core` 或错误地上浮到 `rsod-ffi`
+- 是否会把实现细节错误地下沉到 `rsod-core` 或错误地上浮到 `rsod-backend`
 - 是否默认开启了过多 features
 
 ### 3.7 最低验证要求

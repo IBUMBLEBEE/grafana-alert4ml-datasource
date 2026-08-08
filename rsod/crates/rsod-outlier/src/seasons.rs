@@ -212,7 +212,14 @@ impl PeriodDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsod_utils::read_csv_to_vec;
+    use rsod_utils::eval::read_testdata_pairs;
+
+    /// Fixture: `dataset/testdata/artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv`,
+    /// downsampled every 12th row to hourly (5-minute → 1-hour) so the daily
+    /// period is 24 samples, which is what these detector assertions expect.
+    fn hourly_fixture() -> Vec<[f64; 2]> {
+        read_testdata_pairs("artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv", 12)
+    }
 
     #[test]
     fn test_detect_periods() {
@@ -222,7 +229,7 @@ mod tests {
         };
 
         // read data from csv
-        let data = read_csv_to_vec("data/data.csv");
+        let data = hourly_fixture();
         // plot_time_series(&data, "data/stl_residual_residual5.png");
         let time_series: Vec<f64> = data.iter().map(|x| x[1]).collect();
         let periods = detector.detect_periods(&time_series, 3, 12, 24 * 30);
@@ -238,7 +245,7 @@ mod tests {
         };
 
         // read data from csv
-        let data = read_csv_to_vec("data/data.csv");
+        let data = hourly_fixture();
         // plot_time_series(&data, "data/stl_residual_residual5.png");
         let time_series: Vec<f64> = data.iter().map(|x| x[1]).collect();
         let periods = detector.detect_period(&time_series);

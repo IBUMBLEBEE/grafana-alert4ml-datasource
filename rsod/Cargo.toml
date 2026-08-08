@@ -2,7 +2,16 @@
 members = [
     "crates/*"
 ]
+# rsod-ffi was removed in the Go→Rust migration (the plugin path has no
+# cross-language boundary anymore). Keep the glob; exclude the deleted crate.
+exclude = ["crates/rsod-ffi"]
 resolver = "2"
+
+# Vendored grafana-plugin-sdk 0.5.0 with a local frame-deserialization
+# fix (see vendor/grafana-plugin-sdk/README.md). Replace with the crates.io
+# release once upstream ships the fix.
+[patch.crates-io]
+grafana-plugin-sdk = { path = "vendor/grafana-plugin-sdk" }
 
 [workspace.dependencies]
 rsod-core = { path = "crates/rsod-core", version="0.1.2" }
@@ -11,7 +20,6 @@ rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.2" }
 rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }
 rsod-utils = { path = "crates/rsod-utils", version="0.1.2" }
 rsod-storage = { path = "crates/rsod-storage", version="0.1.2" }
-rsod-ffi = { path = "crates/rsod-ffi", version="0.1.1" }
 rsod-classifier = { path = "crates/rsod-classifier", version="0.1.2" }
 rsod-funnel = { path = "crates/rsod-funnel", version="0.1.0" }
 

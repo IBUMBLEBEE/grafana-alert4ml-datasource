@@ -55,11 +55,13 @@ pub fn norm_pdf_skew(x: &[[f64; 2]]) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsod_utils::read_csv_to_vec;
+    use rsod_utils::eval::read_testdata_pairs;
 
     #[test]
     fn test_standard_normal() {
-        let data = read_csv_to_vec("data/data1.csv");
+        // Fixture: `dataset/testdata/artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv`,
+        // downsampled every 12th row to hourly (5-minute → 1-hour).
+        let data = read_testdata_pairs("artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv", 12);
         // PDF of standard normal distribution (mean=0, std_dev=1) should be perfectly symmetric
         let skewness = norm_pdf_skew(&data).unwrap();
         assert!(skewness != 0.0);

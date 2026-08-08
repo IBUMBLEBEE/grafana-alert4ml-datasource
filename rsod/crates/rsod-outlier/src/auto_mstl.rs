@@ -120,7 +120,7 @@ pub fn auto_mstl(data: &[[f32; 2]], periods: &[usize]) -> AutoMSTLDecompositionR
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsod_utils::read_csv_to_vec;
+    use rsod_utils::eval::read_testdata_pairs;
 
     /// Tests the automatic MSTL decomposition functionality.
     ///
@@ -129,9 +129,15 @@ mod tests {
     /// 2. Converts the data to the required format
     /// 3. Performs automatic MSTL decomposition
     /// 4. Verifies that at least one period was detected
+    ///
+    /// Fixture: `dataset/testdata/artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv`
+    /// (5-minute daily-seasonality series), downsampled every 12th row to
+    /// hourly so the daily period is 24 samples — inside the auto-detector's
+    /// [1, 168] search window (at 5-minute granularity the 288-sample daily
+    /// period is out of range).
     #[test]
     fn test_auto_mstl() {
-        let data = read_csv_to_vec("data/data.csv");
+        let data = read_testdata_pairs("artificialNoAnomaly/p24h_clean_art_daily_no_noise.csv", 12);
         let data_f32: Vec<[f32; 2]> = data.iter().map(|x| [x[0] as f32, x[1] as f32]).collect();
         let test_periods: Vec<usize> = Vec::new();
         let result = auto_mstl(&data_f32, &test_periods);

@@ -86,13 +86,38 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
     if input.is_empty() {
         return Err("data is empty".into());
     }
+    // Constant (zero-variance) series: nothing deviates, so there are no
+    // anomalies — return all-zero flags like the missing-data gate. Without
+    // this guard, the zero std turns normalization into 0/0=NaN and the EIF
+    // panics (`Uniform::new` with NaN bounds), aborting the plugin process
+    // (the Go-era FFI boundary caught such panics; direct calls don't).
+    if input.values.iter().all(|v| *v == input.values[0]) {
+        return Ok(DetectionResult {
+            // Input timestamps are epoch seconds; the result contract is
+            // epoch millis (same conversion as the Go-era FFI).
+            timestamps: input
+                .timestamps
+                .iter()
+                .map(|&x| (x * 1000.0) as i64)
+                .collect(),
+            values: input.values.to_vec(),
+            anomalies: vec![0.0; input.timestamps.len()],
+            upper_bound: None,
+            lower_bound: None,
+        });
+    }
 
     // Reconstruct AoS for internal modules that still require it
     let data: Vec<[f64; 2]> = input.timestamps.iter().zip(input.values.iter())
         .map(|(&t, &v)| [t, v])
         .collect();
 
-    let time_cols: Vec<i64> = input.timestamps.iter().map(|&x| x as i64).collect();
+    // Result contract is epoch millis; input is epoch seconds.
+    let time_cols: Vec<i64> = input
+        .timestamps
+        .iter()
+        .map(|&x| (x * 1000.0) as i64)
+        .collect();
     let data_filled_f32: Vec<[f32; 2]> = input.timestamps.iter().zip(input.values.iter())
         .map(|(&t, &v)| [t as f32, v as f32])
         .collect();
@@ -304,6 +329,32 @@ mod tests {
         assert!(metrics.precision.is_finite());
     }
 
+    /// Degenerate-input guard: a constant (zero-variance) series must return
+    /// all-zero flags, not panic. (std=0 would turn normalization into 0/0=NaN
+    /// and the EIF's `Uniform::new` asserts on NaN bounds — aborting the
+    /// plugin process.)
+    #[test]
+    fn test_outlier_constant_series_returns_no_anomalies() {
+        // Input timestamps are epoch seconds (matches the plugin pipeline;
+        // the result contract is epoch millis).
+        let timestamps: Vec<f64> = (0..200).map(|i| 1_786_000_000.0 + i as f64 * 60.0).collect();
+        let values: Vec<f64> = vec![1.0; 200];
+        let owned = OwnedTimeSeries { timestamps, values };
+        let options = OutlierOptions {
+            model_name: "test_model".to_string(),
+            periods: vec![1],
+            uuid: "test-constant-uuid".to_string(),
+            n_trees: None,
+            sample_size: None,
+            max_tree_depth: None,
+            extension_level: None,
+        };
+
+        let result = outlier(owned.as_input(), &options).expect("constant series should not error");
+        assert_eq!(result.anomalies.len(), 200);
+        assert!(result.anomalies.iter().all(|&a| a == 0.0));
+    }
+
     /// Smoke-test on a no-anomaly fixture to verify the model stays quiet.
     ///
     /// Data source: `dataset/testdata/artificialNoAnomaly/p24h_clean_art_daily_small_noise.csv`
@@ -347,4 +398,5 @@ mod tests {
             false_positive_rate,
         );
     }
+
 }
