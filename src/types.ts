@@ -35,7 +35,7 @@ export enum Alert4MLSupportDetect {
   MachineLearning = "machine_learning",
 }
 
-// Baseline 子算法类型，与 Go 后端 const.go 保持一致
+// Baseline sub-algorithm type, kept in sync with the old Go backend const.go
 export enum Alert4MLBaselineDetectType {
   Dynamics = "dynamics",
 }

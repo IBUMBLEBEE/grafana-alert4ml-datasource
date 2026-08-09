@@ -1,28 +1,28 @@
 #!/home/ibumblebee/code/go/src/grafana-alert4ml-datasource/dataset/.venv/bin/python
 """
-NAB (Numenta Anomaly Benchmark) 数据集导入 Elasticsearch 脚本
+NAB (Numenta Anomaly Benchmark) dataset import script for Elasticsearch
 
-数据来源: 本地目录 dataset/NAB/data（已 git clone https://github.com/numenta/NAB.git）
-CSV 格式: timestamp (YYYY-MM-DD HH:MM:SS), value
+Data source: local directory dataset/NAB/data (git clone https://github.com/numenta/NAB.git)
+CSV format: timestamp (YYYY-MM-DD HH:MM:SS), value
 
-索引命名规则: nab-ts-data-{category} (小写)
-  例: nab-ts-data-realaWSCloudwatch -> nab-ts-data-realaWSCloudwatch
+Index naming: nab-ts-data-{category} (lowercase)
+  e.g. nab-ts-data-realaWSCloudwatch -> nab-ts-data-realaWSCloudwatch
 
-用法:
-    # 导入全部类别（默认）
+Usage:
+    # Import all categories (default)
     python scripts/import_nab_to_es.py
 
-    # 指定类别
+    # Import specific categories
     python scripts/import_nab_to_es.py --categories realAWSCloudwatch,realKnownCause
 
-    # 仅预览，不写入 ES
+    # Preview only, do not write to ES
     python scripts/import_nab_to_es.py --dry-run
 
-索引字段:
-    @timestamp  date     ISO8601 UTC 时间
-    value       double   指标值
-    metric      keyword  文件名 (如 ec2_cpu_utilization_24ae8d)
-    category    keyword  类别目录名 (如 realAWSCloudwatch)
+Index fields:
+    @timestamp  date     ISO8601 UTC time
+    value       double   metric value
+    metric      keyword  file name (e.g. ec2_cpu_utilization_24ae8d)
+    category    keyword  category directory name (e.g. realAWSCloudwatch)
 """
 
 import argparse
@@ -34,16 +34,16 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import urlopen, Request
 
-# ── 默认配置 ──────────────────────────────────────────────────────────────────
+# ── Default configuration ───────────────────────────────────────────────────
 
-# 脚本所在目录的父目录为项目根目录
+# The parent of this script's directory is the project root
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 DEFAULT_DATA_DIR = str(_PROJECT_ROOT / "dataset" / "NAB" / "data")
 DEFAULT_ES_URL   = "http://192.168.3.58:9200"
-INDEX_PREFIX     = "nab-ts-data"   # 最终索引: nab-ts-data-{category小写}
+INDEX_PREFIX     = "nab-ts-data"   # final index: nab-ts-data-{category lowercase}
 
-# ── ES 索引 Mapping ───────────────────────────────────────────────────────────
+# ── ES index mapping ──────────────────────────────────────────────────────────
 
 INDEX_MAPPING = {
     "mappings": {
@@ -60,10 +60,10 @@ INDEX_MAPPING = {
     },
 }
 
-# ── CSV 解析 ──────────────────────────────────────────────────────────────────
+# ── CSV parsing ───────────────────────────────────────────────────────────────
 
 def parse_csv_file(csv_path: Path) -> list[dict]:
-    """读取本地 NAB CSV，返回文档列表（不含 metric/category 字段）"""
+    """Read a local NAB CSV, return a list of documents (without metric/category fields)"""
     records = []
     with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -83,7 +83,7 @@ def parse_csv_file(csv_path: Path) -> list[dict]:
             })
     return records
 
-# ── ES 工具函数 ───────────────────────────────────────────────────────────────
+# ── ES helper functions ───────────────────────────────────────────────────────
 
 def _es_req(method: str, path: str, body, es_url: str, api_key: str):
     headers = {"Content-Type": "application/json"}
@@ -113,7 +113,7 @@ def create_index_if_absent(index: str, es_url: str, api_key: str):
 
 
 def bulk_index(index: str, docs: list[dict], es_url: str, api_key: str) -> int:
-    """分批 Bulk 写入，返回成功写入数"""
+    """Bulk-write documents in batches, return the number successfully written"""
     BATCH = 500
     total = 0
     for i in range(0, len(docs), BATCH):
@@ -151,7 +151,7 @@ def bulk_index(index: str, docs: list[dict], es_url: str, api_key: str) -> int:
 
 
 def find_max_date(cats: dict[str, list]) -> date | None:
-    """扫描所有 CSV 文件的最后一行，找到全局最晚日期（NAB 文件按时间顺序排列）"""
+    """Scan the last row of every CSV file to find the global latest date (NAB files are time-ordered)"""
     max_dt: datetime | None = None
     for csv_files in cats.values():
         for csv_path in csv_files:
@@ -172,7 +172,7 @@ def find_max_date(cats: dict[str, list]) -> date | None:
 
 
 def apply_time_shift(docs: list[dict], offset_days: int) -> None:
-    """原地修改 docs 中的 @timestamp：日期偏移 offset_days 天，时间部分不变"""
+    """Mutate the @timestamp of docs in place: shift the date by offset_days, keep the time-of-day"""
     delta = timedelta(days=offset_days)
     for doc in docs:
         dt = datetime.strptime(doc["@timestamp"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -185,7 +185,7 @@ def delete_indices(
     api_key: str,
     selected_cats: list[str],
 ):
-    """删除导入时创建的 ES 索引，selected_cats 为空则删除全部类别索引"""
+    """Delete ES indices created by imports; if selected_cats is empty, delete all category indices"""
     targets = selected_cats if selected_cats else list(cats.keys())
     print(f"ES:      {es_url}")
     print(f"Deleting {len(targets)} indices ...\n")
@@ -201,10 +201,10 @@ def delete_indices(
                 print(f"  [ERROR] {idx}: {exc}")
     print("\nDone.")
 
-# ── CSV 导出（带异常标注）────────────────────────────────────────────────────
+# ── CSV export (with anomaly labels) ──────────────────────────────────────────
 
 def load_anomaly_windows(nab_root: Path) -> dict[str, list[tuple[datetime, datetime]]]:
-    """加载 combined_windows.json，返回 {relative_key: [(start, end), ...]}"""
+    """Load combined_windows.json, return {relative_key: [(start, end), ...]}"""
     windows_file = nab_root / "labels" / "combined_windows.json"
     if not windows_file.exists():
         return {}
@@ -216,7 +216,7 @@ def load_anomaly_windows(nab_root: Path) -> dict[str, list[tuple[datetime, datet
         parsed = []
         for w in windows:
             try:
-                # window格式: ["2014-04-10 07:15:00.000000", "2014-04-11 16:45:00.000000"]
+                # window format: ["2014-04-10 07:15:00.000000", "2014-04-11 16:45:00.000000"]
                 start = datetime.strptime(w[0].split(".")[0], "%Y-%m-%d %H:%M:%S")
                 end   = datetime.strptime(w[1].split(".")[0], "%Y-%m-%d %H:%M:%S")
                 parsed.append((start, end))
@@ -227,7 +227,7 @@ def load_anomaly_windows(nab_root: Path) -> dict[str, list[tuple[datetime, datet
 
 
 def load_anomaly_labels(nab_root: Path) -> dict[str, set[datetime]]:
-    """加载 combined_labels.json，返回 {relative_key: {datetime, ...}}"""
+    """Load combined_labels.json, return {relative_key: {datetime, ...}}"""
     labels_file = nab_root / "labels" / "combined_labels.json"
     if not labels_file.exists():
         return {}
@@ -259,33 +259,33 @@ def export_labeled_csv(
     label_mode: str,       # "window" | "point"
     timestamp_unit: str,   # "ms" | "s" | "iso"
     limit: int,            # 0 = unlimited
-    split: bool,           # True: 分成 history / current 两份
-    split_current_rows: int,  # split 模式下 current 窗口大小（行数）
-    window_index: int = 0, # split 时使用第几个异常 cluster（0=第一个）
+    split: bool,           # True: split into history / current parts
+    split_current_rows: int,  # current window size in rows when splitting
+    window_index: int = 0, # which anomaly cluster to center the split on (0 = first)
 ):
-    """将 NAB 数据集导出为带 is_anomaly 标注的 CSV 文件，供 Go/Rust 单元测试使用。
+    """Export the NAB dataset as CSV files labeled with is_anomaly, for Go/Rust unit tests.
 
-    输出 CSV 字段:
-        timestamp_ms  int64   Unix 毫秒时间戳（--timestamp-unit ms，默认）
-                   或
-        timestamp_s   int64   Unix 秒时间戳（--timestamp-unit s）
-                   或
-        timestamp     str     ISO8601 UTC（--timestamp-unit iso）
-        value         float   指标值
-        is_anomaly    int     0 = 正常, 1 = 异常
+    Output CSV fields:
+        timestamp_ms  int64   Unix millisecond timestamp (--timestamp-unit ms, default)
+                    or
+        timestamp_s   int64   Unix second timestamp (--timestamp-unit s)
+                    or
+        timestamp     str     ISO8601 UTC (--timestamp-unit iso)
+        value         float   metric value
+        is_anomaly    int     0 = normal, 1 = anomaly
     """
     all_cats = discover_categories(data_dir)
     if not all_cats:
         print(f"[ERROR] No category directories found in: {data_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # 过滤类别
+    # Filter categories
     if selected_cats:
         cats = {k: all_cats[k] for k in selected_cats if k in all_cats}
     else:
         cats = all_cats
 
-    # 加载标注
+    # Load anomaly labels
     windows_map = load_anomaly_windows(nab_root)
     labels_map  = load_anomaly_labels(nab_root)
 
@@ -300,13 +300,13 @@ def export_labeled_csv(
             if selected_metrics and metric not in selected_metrics:
                 continue
 
-            # 相对键，与 NAB 标注 JSON 中的键对应
+            # Relative key, matching the keys in the NAB label JSON
             rel_key = f"{category}/{csv_path.name}"
 
             windows = windows_map.get(rel_key, [])
             labels  = labels_map.get(rel_key, set())
 
-            # 读取并标注
+            # Read and label
             records: list[tuple[datetime, float, int]] = []
             with csv_path.open(newline="", encoding="utf-8") as f:
                 for row in csv.DictReader(f):
@@ -343,7 +343,7 @@ def export_labeled_csv(
                     return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
             if split:
-                # 将异常索引按间距 > split_current_rows 聚类，按 window_index 选取
+                # Cluster anomaly indices by gaps > split_current_rows, pick by window_index
                 anomaly_indices = [i for i, (_, _, a) in enumerate(records) if a == 1]
                 if anomaly_indices:
                     clusters: list[list[int]] = []
@@ -359,12 +359,12 @@ def export_labeled_csv(
                     cluster = clusters[wi]
                     first_anomaly = cluster[0]
                     last_anomaly  = cluster[-1]
-                    # current 窗口：以选定异常区间为中心
+                    # current window: centered on the selected anomaly cluster
                     half = split_current_rows // 2
                     cur_start = max(0, first_anomaly - half)
                     cur_end   = min(len(records), last_anomaly + half + 1)
                 else:
-                    # 无异常：后 split_current_rows 行为 current
+                    # No anomalies: the last split_current_rows rows become the current window
                     cur_start = max(0, len(records) - split_current_rows)
                     cur_end   = len(records)
 
@@ -396,10 +396,10 @@ def export_labeled_csv(
 
     print(f"\nDone. Exported {total_files} file(s) to {output_dir}")
 
-# ── 主逻辑 ────────────────────────────────────────────────────────────────────
+# ── Main logic ────────────────────────────────────────────────────────────────
 
 def discover_categories(data_dir: Path) -> dict[str, list[Path]]:
-    """扫描本地目录，返回 {category: [csv_path, ...]}"""
+    """Scan the local directory, return {category: [csv_path, ...]}"""
     result = {}
     for cat_dir in sorted(data_dir.iterdir()):
         if not cat_dir.is_dir():
@@ -411,7 +411,7 @@ def discover_categories(data_dir: Path) -> dict[str, list[Path]]:
 
 
 def index_name(category: str) -> str:
-    """nab-ts-data-{category小写}，ES 索引名不允许大写"""
+    """nab-ts-data-{category lowercased}; ES index names must not contain uppercase"""
     return f"{INDEX_PREFIX}-{category.lower()}"
 
 
@@ -428,7 +428,7 @@ def run_import(
         print(f"[ERROR] No category directories found in: {data_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # 过滤类别
+    # Filter categories
     if selected_cats:
         unknown = set(selected_cats) - set(all_cats)
         if unknown:
@@ -442,7 +442,7 @@ def run_import(
     total_files  = sum(len(v) for v in cats.values())
     total_docs   = 0
 
-    # 计算时间偏移量（全局最晚日期 → 今天，整体向前平移）
+    # Compute the time shift (global latest date → today, shift everything forward)
     offset_days = 0
     if shift_time:
         max_date = find_max_date(cats)
@@ -504,7 +504,7 @@ def parse_args():
   python scripts/import_nab_to_es.py --categories realAWSCloudwatch,realKnownCause
   python scripts/import_nab_to_es.py --dry-run
 
-  # 导出带异常标注的 CSV（用于 Go/Rust 单元测试）
+  # Export labeled CSV with anomalies (for Go/Rust unit tests)
   python main.py --export
   python main.py --export --categories realAWSCloudwatch --files ec2_cpu_utilization_24ae8d
   python main.py --export --label-mode window --timestamp-unit ms --output-dir dataset/testdata
@@ -547,7 +547,7 @@ def parse_args():
         help="Delete the target indices from ES and exit (does not import data)",
     )
 
-    # ── 导出模式 ──────────────────────────────────────────────────────────────
+    # ── Export mode ─────────────────────────────────────────────────────────────
     p.add_argument(
         "--export",
         action="store_true",

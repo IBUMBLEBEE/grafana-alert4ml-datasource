@@ -1,24 +1,26 @@
 # vendored grafana-plugin-sdk 0.5.0
 
-crates.io 版本 `grafana-plugin-sdk = "0.5.0"` 的本地副本，带一个反序列化修复。
+A local copy of the crates.io package `grafana-plugin-sdk = "0.5.0"` with a single deserialization fix.
 
-## 为什么 vendor
+## Why vendored
 
-Grafana 的 frame JSON（`FrameJSON`）序列化 `schema.name` / `schema.refId` 时带
-`omitempty`：frame name 为空（prometheus、testdata 等上游的 frame name 恒为空）
-时 `name` 键被整体省略。SDK 0.5.0 的 `Schema` 结构体却把这两个字段定义为必填，
-导致通过 `/api/ds/query` 代理查询时反序列化失败：
+Grafana serializes the frame JSON (`FrameJSON`) `schema.name` / `schema.refId` with
+`omitempty`: when the frame name is empty (upstream frames from prometheus, testdata,
+etc. always have an empty frame name), the `name` key is omitted entirely. The `Schema`
+struct in SDK 0.5.0 declares both fields as required, so deserialization fails when
+proxying queries through `/api/ds/query`:
 
 ```
 query A failed: datasource query: failed to decode /api/ds/query response:
 error decoding response body
 ```
 
-（Go 后端不受影响：Go SDK 的 `json:"name,omitempty"` 反序列化空值时静默置空。）
+(The Go backend is unaffected: the Go SDK's `json:"name,omitempty"` silently sets the
+value to empty when deserializing missing fields.)
 
-## 本地的改动
+## Local change
 
-`src/data/frame/de.rs` 的 `Schema` 结构体：
+The `Schema` struct in `src/data/frame/de.rs`:
 
 ```rust
 #[serde(default)]
@@ -27,9 +29,10 @@ name: String,
 ref_id: String,
 ```
 
-仅此一处（2 行）。其余内容与 crates.io 0.5.0 一致。
+That is the only change (2 lines). Everything else matches crates.io 0.5.0.
 
-## 何时移除
+## When to remove
 
-上游修复后（新的 crates.io 版本），删除本目录和 `rsod/Cargo.toml` 中的
-`[patch.crates-io]` 段，恢复 `grafana-plugin-sdk = "<新版本>"`。
+Once the upstream fix is released (a new crates.io version), delete this directory and
+the `[patch.crates-io]` section in `rsod/Cargo.toml`, and restore
+`grafana-plugin-sdk = "<new version>"`.

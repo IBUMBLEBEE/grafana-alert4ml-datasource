@@ -1,39 +1,39 @@
-你提到的这个开源项目 `IBUMBLEBEE/grafana-alert4ml-datasource` 是一个非常生动且极具代表性的例子。它不仅不矛盾，反而**恰恰佐证了前面提到的“漏斗形架构”和工业界对复杂算法的处理逻辑**。
+The open-source project you mentioned, `IBUMBLEBEE/grafana-alert4ml-datasource`, is a vivid and highly representative example. It does not contradict the earlier points — on the contrary, it **exactly corroborates the "funnel-shaped architecture" and how industry handles complex algorithms**.
 
-这个项目所代表的思路，本质上是在解决复杂算法“如何落地到现有监控生态”的问题。可以通过它的设计定位，来看它和 GreptimeDB 这种基础内置算法的关系：
+The idea this project represents is, at its core, about how complex algorithms can "land in an existing monitoring ecosystem". Looking at its design positioning shows its relationship to built-in base algorithms such as those in GreptimeDB:
 
-### 1. 它处于架构的“第二层（漏斗下端）”
+### 1. It sits at the "second layer of the architecture (the bottom of the funnel)"
 
-在前面提到的漏斗形架构中：
+In the funnel-shaped architecture described earlier:
 
-* **第一层（底层数据库）：** 像 GreptimeDB 依靠内置的 `zscore`/`mad` 在存储层做海量数据的初筛和流式计算。
-* **第二层（展现与高级分析层）：** **`grafana-alert4ml-datasource` 恰恰就卡在这一层。** 它的核心思想是：把 Grafana 作为一个“数据中转站（Meta-Datasource）”，从已有的 Prometheus、Elasticsearch 等底层数据源把过滤后的数据抠出来，然后在这个自定义的插件（Datasource）里套上机器学习（ML）算法做异常检测，最后再把结果画在 Grafana 上。
+* **Layer 1 (underlying database):** databases like GreptimeDB rely on built-in `zscore`/`mad` for mass-data pre-filtering and stream processing at the storage layer.
+* **Layer 2 (visualization and advanced analysis):** **`grafana-alert4ml-datasource` sits exactly in this layer.** Its core idea is to treat Grafana as a "data relay (Meta-Datasource)": pull already-filtered data from existing upstream data sources such as Prometheus and Elasticsearch, apply machine learning (ML) anomaly detection inside this custom datasource plugin, and finally render the results in Grafana.
 
-### 2. 它解决的不是“存储和高频写入”，而是“低频研判”
+### 2. It solves "low-frequency analysis", not "storage and high-frequency ingestion"
 
-如果把复杂算法放到底层数据库里去跑（比如给 GreptimeDB 塞入复杂的图神经网络），数据库在每秒百万级写入时会直接 CPU 爆满挂掉。
+If you run complex algorithms in the underlying database (for example, stuffing a complicated graph neural network into GreptimeDB), the database would peg its CPU and crash under millions of writes per second.
 
-而这个 Grafana 插件的聪明之处在于：**它把计算挪到了 Grafana 端（或其后端代理层）**。
+The smart part of this Grafana plugin is: **it moves the computation to the Grafana side (or its backend proxy layer)**.
 
-* 底层数据库依然只负责快速存取。
-* 只有当运维人员打开某个特定的 DashBoard（仪表盘），或者配置了一个低频的告警规则（例如每 5 分钟跑一次）时，这个插件才会去请求数据、跑一遍 ML 算法。
-* 这种架构释放了数据库的计算压力，让复杂的机器学习算法有了喘息和计算的空间。
+* The underlying database still only handles fast storage and retrieval.
+* The plugin only requests data and runs the ML algorithm when an operator opens a particular dashboard, or a low-frequency alert rule fires (for example, every 5 minutes).
+* This architecture relieves the database of computation pressure, giving complex ML algorithms room to breathe and compute.
 
-### 3. 这个项目面临的典型工业界痛点（为什么它是 POC 阶段）
+### 3. The typical industry pain points this project faces (why it is at POC stage)
 
-从开发者在社区（如 Reddit）的讨论来看，这个项目目前更多是一个 POC（概念验证）。它虽然很酷，但也把复杂算法在实际落地时的弊端展现得淋漓尽致：
+Based on the developer's discussions in the community (e.g. Reddit), this project is currently more of a POC (proof of concept). It is cool, but it also exposes the downsides of complex algorithms in real-world deployment quite clearly:
 
-* **数据链路过长导致延迟（Latency）：** 正常流程是：`数据源 -> Grafana 展示`。
-用这个插件的流程是：`底层数据源 -> 经过 Grafana 处理转换成 DataFrame -> 喂给你的 ML 插件跑模型 -> 跑完再转回 Grafana 渲染`。
-这个过程增加了额外的网络和序列化开销，对于高频、实时的“秒级告警”来说，延迟太高了。
-* **高基数（High Cardinality）灾难依旧存在：**
-虽然它依托于 Grafana，但如果用户的系统里有上万个 Pod 节点，每一个节点都要在这个插件里跑一遍 ML 检测，Grafana 服务自身的内存和 CPU 很快就会被这个插件榨干。
-* **冷启动与模型维护成本：**
-复杂算法（特别是 ML 算法）往往需要看历史数据（比如看过去 7 天才能识别出周期的规律）。每次 Grafana 请求都要临时去拉过去 7 天的大量数据来“训练”或“推断”，会对底层的 Prometheus/GreptimeDB 造成极其恐怖的查询压力（Query Blast）。
+* **Latency from the long data path:** the normal flow is `data source -> Grafana display`.
+  With this plugin the flow is: `upstream data source -> converted into a DataFrame by Grafana -> fed to your ML plugin to run the model -> converted back to Grafana for rendering`.
+  This adds extra network and serialization overhead, which is too much latency for high-frequency, real-time "second-level alerts".
+* **The high-cardinality disaster still exists:**
+  Although it runs on Grafana, if the user's system has tens of thousands of Pod nodes and each node has to run ML detection through this plugin, the Grafana service's own memory and CPU will quickly be drained by this plugin.
+* **Cold start and model maintenance cost:**
+  Complex algorithms (especially ML) usually need history data (e.g. the past 7 days to recognize periodicity). Every Grafana request has to pull the past 7 days of data on the fly to "train" or "infer", putting enormous query pressure (Query Blast) on the underlying Prometheus/GreptimeDB.
 
-### 总结：两者的互补关系
+### Summary: how the two complement each other
 
-* **GreptimeDB 的 `zscore / mad / iqr**` 解决的是 **“广度”** 问题：大水漫灌，用极低的成本、极快的速度给成千上万的指标拉起第一道防线。
-* **`grafana-alert4ml-datasource` 这种项目** 解决的是 **“深度”** 问题：针对少数核心指标（如核心业务的交易成功率、核心大盘的QPS），在第一道防线筛选后，或者在可视化展现时，提供更聪明的 ML 异常识别。
+* **GreptimeDB's `zscore / mad / iqr`** solves the **"breadth"** problem: flood irrigation — raising the first line of defense for thousands of metrics at extremely low cost and extremely high speed.
+* **Projects like `grafana-alert4ml-datasource`** solve the **"depth"** problem: for a few core metrics (e.g. the transaction success rate of the core business, the QPS of the core dashboard), after the first line of defense filters, or at visualization time, provide smarter ML anomaly identification.
 
-所以，在实际的工业生产中，你往往会看到这样的组合：**底层用 GreptimeDB/Prometheus 配合基础统计学算法做 90% 的常规快速告警；上层用类似的 ML 插件或 AI-Ops 平台去啃那 10% 最难缠、最需要看周期波动的黄金指标。**
+So in real production environments you will often see this combination: **the bottom layer uses GreptimeDB/Prometheus with basic statistical algorithms for 90% of routine fast alerts; the top layer uses ML plugins or AI-Ops platforms like this one to chew on the 10% most difficult, most period-sensitive golden metrics.**

@@ -18,8 +18,9 @@ install-frontend:
 # ── Backend builds ───────────────────────────────────────────
 # Build the plugin backend crate and copy the binary into dist/
 # using the Grafana-executable naming (gpx_alert4ml_linux_<arch>).
-# 拷贝使用 tmp+mv：dist/ 可能被运行中的 Grafana bind-mount 并正在执行，
-# 直接 cp 覆盖会触发 ETXTBSY（text file busy）；rename 原子替换目录项不受影响。
+# Copy via tmp+mv: dist/ may be bind-mounted by a running Grafana that is
+# executing the binary; a direct cp overwrite triggers ETXTBSY (text file busy).
+# rename atomically replaces the directory entry and is unaffected.
 build-backend-amd64:
 	cd rsod && cargo zigbuild --release --target $(RUST_TARGET_AMD64) -p $(BACKEND_CRATE)
 	mkdir -p dist
@@ -35,9 +36,10 @@ build-backend-arm64:
 build-ts:
 	npm run build
 
-# ── 本地测试循环 ─────────────────────────────────────────────
-# 改了 Rust 后端代码后一键生效：重编译（增量）→ 重启容器。
-# Grafana 不会自动重启后端插件进程，必须重启容器让新二进制生效。
+# ── Local test loop ──────────────────────────────────────────
+# One-shot effect after changing Rust backend code: recompile (incremental) → restart container.
+# Grafana does not auto-restart the backend plugin process; the container must be
+# restarted for the new binary to take effect.
 reload: build-backend-amd64
 	docker compose restart
 

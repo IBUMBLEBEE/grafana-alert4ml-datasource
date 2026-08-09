@@ -1,103 +1,105 @@
-# Alert4ML 接口规范总览
+# Alert4ML Interface Specification Overview
 
-> **版本**: 0.2.0 · **状态**: Draft · **更新**: 2026-08-08
+> **Version**: 0.2.0 · **Status**: Draft · **Updated**: 2026-08-08
 >
-> v0.2.0：Go 后端已由 `rsod/crates/rsod-backend`（grafana-plugin-sdk-rust）替换，
-> 层间调用不再经过 CGO/Arrow FFI。历史 FFI 协议见
-> [go-rust-interface.md](go-rust-interface.md)（已废弃，仅作追溯）。
+> v0.2.0: the Go backend has been replaced by `rsod/crates/rsod-backend`
+> (grafana-plugin-sdk-rust); cross-layer calls no longer go through CGO/Arrow FFI.
+> The historical FFI protocol is documented in
+> [go-rust-interface.md](go-rust-interface.md) (deprecated, kept for reference only).
 
-## 架构分层
+## Architecture Layers
 
 ```
 ┌─────────────────────────────────────┐
-│  TypeScript (前端)                   │  src/types.ts
-│  Alert4MLQuery (JSON)                │  src/datasource.ts
+│  TypeScript (frontend)              │  src/types.ts
+│  Alert4MLQuery (JSON)               │  src/datasource.ts
 └──────────────┬──────────────────────┘
                │ Grafana Plugin SDK (gRPC)
-               │ /api/ds/query 代理上游数据源
+               │ /api/ds/query proxy to upstream data sources
                ▼
 ┌─────────────────────────────────────┐
-│  Rust (插件后端)                     │  rsod/crates/rsod-backend/src/
+│  Rust (plugin backend)              │  rsod/crates/rsod-backend/src/
 │  Alert4MLQueryJson + HyperParams     │  contract.rs / pipeline.rs
 └──────────────┬──────────────────────┘
-               │ 直接函数调用（无跨语言边界）
+               │ direct function calls (no cross-language boundary)
                ▼
 ┌─────────────────────────────────────┐
-│  Rust (ML 引擎)                      │  rsod/crates/rsod-{outlier,baseline,forecaster,funnel}
-│  算法 crate + Options struct         │  rsod_core::{DetectionResult, TimeSeriesInput}
+│  Rust (ML engine)                   │  rsod/crates/rsod-{outlier,baseline,forecaster,funnel}
+│  algorithm crates + Options struct  │  rsod_core::{DetectionResult, TimeSeriesInput}
 └─────────────────────────────────────┘
 ```
 
-## 核心枚举（全局共享）
+## Core Enums (Globally Shared)
 
-### supportDetect × detectType 合法组合
+### Valid `supportDetect` × `detectType` Combinations
 
-| `supportDetect` | `detectType` | 状态 | rsod 入口（rsod-backend） |
+| `supportDetect` | `detectType` | Status | rsod entry (rsod-backend) |
 |----------------|-------------|------|--------------------------|
-| `baseline` | `dynamics` | ✅ 可用 | `rsod_baseline::dynamics::dynamics_detect` |
-| `machine_learning` | `outlier` | ✅ 可用 | `rsod_outlier::outlier` |
-| `machine_learning` | `forecast` | ✅ 可用 | `rsod_forecaster::forecast` |
-| `machine_learning` | `funnel` | ✅ 可用 | `rsod_funnel::funnel_detect`（双查询） |
-| `machine_learning` | `changepoint` | 🔒 保留 | — |
+| `baseline` | `dynamics` | ✅ Available | `rsod_baseline::dynamics::dynamics_detect` |
+| `machine_learning` | `outlier` | ✅ Available | `rsod_outlier::outlier` |
+| `machine_learning` | `forecast` | ✅ Available | `rsod_forecaster::forecast` |
+| `machine_learning` | `funnel` | ✅ Available | `rsod_funnel::funnel_detect` (dual query) |
+| `machine_learning` | `changepoint` | 🔒 Reserved | — |
 
-> 其他组合在 rsod-backend `parse_hyper_params()` 阶段返回 error。
+> Any other combination returns an error in the rsod-backend `parse_hyper_params()` stage.
 
-## 时间戳单位约定
+## Timestamp Unit Conventions
 
-| 层 | 字段 | 单位 | 类型 |
+| Layer | Field | Unit | Type |
 |----|------|------|------|
-| TS | `historyTimeRange.from/to` | 相对秒（距当前） | `number` |
-| rsod-backend | `HistoryTimeRange.durationMs` | 毫秒 | `int64` |
-| rsod-backend | 上游 frame col[0] | Arrow `Timestamp(ns/ms)`（或数值秒） | `i64` / `f64` |
-| rsod-backend → 算法 | `TimeSeriesInput.timestamps` | Unix 秒 | `f64` |
-| 算法 → 结果帧 | `DetectionResult.timestamps` | Unix 毫秒 | `i64` → `DateTime` |
+| TS | `historyTimeRange.from/to` | relative seconds (from now) | `number` |
+| rsod-backend | `HistoryTimeRange.durationMs` | milliseconds | `int64` |
+| rsod-backend | upstream frame col[0] | Arrow `Timestamp(ns/ms)` (or numeric seconds) | `i64` / `f64` |
+| rsod-backend → algorithm | `TimeSeriesInput.timestamps` | Unix seconds | `f64` |
+| algorithm → result frame | `DetectionResult.timestamps` | Unix milliseconds | `i64` → `DateTime` |
 
-> `frame_ops::field_time_ns` 负责统一上游时间列的读取（Timestamp ns/ms、
-> Float64/Int64 按 Unix 秒解释），渲染层输出 `DateTime` 列。
+> `frame_ops::field_time_ns` normalizes how the upstream time column is read
+> (Timestamp ns/ms, Float64/Int64 interpreted as Unix seconds); the rendering
+> layer emits a `DateTime` column.
 
-## 默认值注入层
+## Default Value Injection Layers
 
-每个字段的默认值由且仅由一层注入，避免双重覆盖。
+Each field's default value is injected by exactly one layer, to avoid double overrides.
 
-| 字段 | 注入层 | 来源 |
+| Field | Injection layer | Source |
 |------|--------|------|
 | `historyTimeRange` | TS | `DEFAULT_TIME_RANGE = {from:300, to:0}` |
-| `hyperParams` 初始值 | TS | `DEFAULT_RSOD_PARAMS` / `DEFAULT_DYNAMICS_PARAMS` / `DEFAULT_FORECAST_PARAMS` |
-| `uniqueKeys` | TS | Grafana 模板变量 `${__dashboard.uid}` + `panelId` + `refId` |
-| HyperParams 空字段兜底 | rsod-backend | `contract.rs` 中各 struct 的 `impl Default`（镜像 Go `SetDefaults()`） |
-| 算法 Options 字段 | rsod 算法 crate | `serde default` / `impl Default` |
+| `hyperParams` initial values | TS | `DEFAULT_RSOD_PARAMS` / `DEFAULT_DYNAMICS_PARAMS` / `DEFAULT_FORECAST_PARAMS` |
+| `uniqueKeys` | TS | Grafana template variable `${__dashboard.uid}` + `panelId` + `refId` |
+| HyperParams empty-field fallback | rsod-backend | `impl Default` on each struct in `contract.rs` (mirrors Go `SetDefaults()`) |
+| algorithm Options fields | rsod algorithm crates | `serde default` / `impl Default` |
 
-## AI 使用指引
+## AI Usage Guidelines
 
-本规范设计为机器可读，遵守以下约定：
+This spec is designed to be machine-readable and follows these conventions:
 
-1. **Schema 优先**：每份文档包含字段约束表（required/optional、nullable、默认值、注入层、枚举范围）。
-2. **示例驱动**：每种 `detectType` 提供最小有效请求样例和完整请求样例。
-3. **派生规则显式化**：所有运行时计算（时间范围重算、UUID v5 派生、`targets` 注入）均以编号步骤列出。
-4. **跨层映射明确**：每个字段标注 TS 字段名与 Rust serde 字段名，不依赖读者自行推断命名转换。
-5. **错误语义完整**：每个接口边界均标注失败时的返回形式和错误传播方式。
+1. **Schema first**: every document includes a field-constraint table (required/optional, nullable, default, injection layer, enum range).
+2. **Example-driven**: every `detectType` provides a minimal valid request sample and a full request sample.
+3. **Derived rules made explicit**: all runtime computations (time-range recomputation, UUID v5 derivation, `targets` injection) are listed as numbered steps.
+4. **Cross-layer mapping made explicit**: every field annotates its TS field name and Rust serde field name, so readers never have to infer naming conversions.
+5. **Complete error semantics**: every interface boundary annotates the failure return form and error propagation.
 
-## 变更规则
+## Change Rules
 
-| 变更类型 | 兼容性 | 要求 |
+| Change type | Compatibility | Requirement |
 |---------|--------|------|
-| 新增 optional 字段 | ✅ 向后兼容 | 无需版本升级，更新对应规范文档 |
-| 字段改名 | ❌ Breaking | 两个主版本内保留别名，先 deprecate 再移除 |
-| 新增 `detectType` | ✅ 向后兼容 | 同时更新 README 组合矩阵与 `parse_hyper_params` |
-| 修改结果帧 schema 列数/类型 | ❌ Breaking | 需要升级主版本 |
+| Add optional field | ✅ Backward compatible | No version bump; update the corresponding spec doc |
+| Rename field | ❌ Breaking | Keep aliases for two major versions; deprecate first, then remove |
+| Add `detectType` | ✅ Backward compatible | Update the README combination matrix and `parse_hyper_params` at the same time |
+| Change result frame schema column count/type | ❌ Breaking | Requires a major version bump |
 
-## 层间职责
+## Cross-Layer Responsibilities
 
-| 层 | 职责 | 不做什么 |
+| Layer | Responsibilities | Not responsible for |
 |---|---|---|
-| TypeScript | 查询编辑 UI、模板变量替换、参数组装 | 不做 ML 计算 |
-| Rust（rsod-backend） | 查询解析、上游数据源代理、帧切分、结果帧渲染、存储初始化 | 不做 ML 算法逻辑 |
-| Rust（算法 crate） | ML 算法执行（异常检测、预测、基线、funnel） | 不感知 Grafana 概念 |
+| TypeScript | Query editor UI, template variable substitution, parameter assembly | No ML computation |
+| Rust (rsod-backend) | Query parsing, upstream data source proxy, frame splitting, result frame rendering, storage initialization | No ML algorithm logic |
+| Rust (algorithm crates) | ML algorithm execution (anomaly detection, forecasting, baseline, funnel) | Unaware of Grafana concepts |
 
-## 关键约定
+## Key Conventions
 
-1. TS→后端序列化格式：JSON，字段名 camelCase
-2. 后端→算法：直接函数调用（`TimeSeriesInput` + Options），无跨语言边界
-3. 结果帧：SDK `Frame`（arrow2 数组），列名沿用 Go 时代的 `Time`/`Anomaly`/`Baseline`/`Pred`/`lower_bound`/`upper_bound`
-4. 模型 key：UUID v5，`unique_keys_uuid` + `derive_uuid` 与 Go 字节级兼容（见 `rsod-backend/src/uuid_util.rs`）
-5. 错误处理：TS→后端走 Grafana SDK 标准错误；单查询失败返回 per-query `QueryError::Internal`
+1. TS→backend serialization format: JSON, camelCase field names
+2. backend→algorithm: direct function calls (`TimeSeriesInput` + Options), no cross-language boundary
+3. Result frames: SDK `Frame` (arrow2 arrays); column names carry over from the Go era: `Time`/`Anomaly`/`Baseline`/`Pred`/`lower_bound`/`upper_bound`
+4. Model key: UUID v5; `unique_keys_uuid` + `derive_uuid` are byte-level compatible with Go (see `rsod-backend/src/uuid_util.rs`)
+5. Error handling: TS→backend uses the standard Grafana SDK error path; a single failing query returns a per-query `QueryError::Internal`
