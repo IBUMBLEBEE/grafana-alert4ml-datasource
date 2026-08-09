@@ -15,10 +15,10 @@ grafana-plugin-sdk = { path = "vendor/grafana-plugin-sdk" }
 
 [workspace.dependencies]
 rsod-core = { path = "crates/rsod-core", version="0.1.2" }
-rsod-outlier = { path = "crates/rsod-outlier", version="0.1.2" }
-rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.2" }
+rsod-outlier = { path = "crates/rsod-outlier", version="0.1.3" }
+rsod-forecaster = { path = "crates/rsod-forecaster", version="0.1.3" }
 rsod-baseline = { path = "crates/rsod-baseline", version="0.1.2" }
-rsod-utils = { path = "crates/rsod-utils", version="0.1.2" }
+rsod-utils = { path = "crates/rsod-utils", version="0.1.3" }
 rsod-storage = { path = "crates/rsod-storage", version="0.1.2" }
 rsod-classifier = { path = "crates/rsod-classifier", version="0.1.2" }
 rsod-funnel = { path = "crates/rsod-funnel", version="0.1.0" }
