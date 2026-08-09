@@ -1,45 +1,45 @@
-# rsod-classifier 架构设计文档
+# rsod-classifier Architecture Design Document
 
-## 1. 目标与动机
+## 1. Goals and Motivation
 
-### 目标
-设计一个时序数据类型检测器模块，能够自动识别输入时序数据的特征（平稳性、趋势、季节性等），并进行分类，为后续的异常检测、预测等任务提供数据驱动的算法选择依据。
+### Goal
+Design a time-series data type detector module that automatically identifies the characteristics of input time-series data (stationarity, trend, seasonality, etc.) and classifies it, providing data-driven algorithm-selection grounds for subsequent tasks such as anomaly detection and forecasting.
 
-### 动机
-- **算法自适应**: 不同类型的时序数据需要不同的异常检测算法
-  - 季节性数据应使用周期相关方法
-  - 趋势数据应使用去趋势方法
-  - 平稳数据应使用基线方法
-- **可解释性**: 用户能理解系统为何选择特定算法
-- **可维护性**: 基于 sklearn Pipeline 的分阶段设计便于拓展和测试
+### Motivation
+- **Algorithm adaptivity**: different time-series types need different anomaly detection algorithms
+  - Seasonal data should use period-aware methods
+  - Trend data should use detrended methods
+  - Stationary data should use baseline methods
+- **Explainability**: users can understand why the system chose a particular algorithm
+- **Maintainability**: the stage-based design based on the sklearn Pipeline is easy to extend and test
 
-## 2. 架构设计
+## 2. Architecture Design
 
-### 2.1 分层架构
+### 2.1 Layered Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│  应用层 (Application Layer)              │
-│  - 异常检测选择                         │
-│  - 特征工程选择                         │
+│  Application Layer                      │
+│  - anomaly detection selection          │
+│  - feature engineering selection        │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  Pipeline 层 (Pipeline Layer)            │
-│  TimeSeriesClassifierPipeline            │
-│  - 协调各阶段                           │
-│  - 聚合结果                             │
+│  Pipeline Layer                         │
+│  TimeSeriesClassifierPipeline           │
+│  - coordinates the stages               │
+│  - aggregates results                   │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  阶段层 (Stage Layer)                    │
+│  Stage Layer                            │
 │  ┌─────────────┬──────────┬──────────┐  │
 │  │ Preprocess  │ Analyze  │ Detect   │  │
 │  └─────────────┴──────────┴──────────┘  │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  算法层 (Algorithm Layer)                │
+│  Algorithm Layer                        │
 │  - preprocessing                        │
 │  - stationarity (ADF/KPSS)              │
 │  - trend (Linear Regression)            │
@@ -47,36 +47,36 @@
 └─────────────────────────────────────────┘
 ```
 
-### 2.2 模块组织
+### 2.2 Module Organization
 
 ```
 rsod-classifier/
 ├── src/
-│   ├── lib.rs                 # 主入口，重新导出 API
-│   ├── types.rs               # 数据类型定义
-│   ├── traits.rs              # Pipeline trait 定义
-│   ├── preprocessing.rs       # 数据预处理
-│   ├── stationarity.rs        # ADF/KPSS 检验
-│   ├── trend.rs               # 趋势检测
-│   ├── seasonality.rs         # 季节性和周期性
-│   └── pipeline.rs            # Pipeline 实现
+│   ├── lib.rs                 # main entry, re-exports the API
+│   ├── types.rs               # data type definitions
+│   ├── traits.rs              # Pipeline trait definitions
+│   ├── preprocessing.rs       # data preprocessing
+│   ├── stationarity.rs        # ADF/KPSS tests
+│   ├── trend.rs               # trend detection
+│   ├── seasonality.rs         # seasonality and periodicity
+│   └── pipeline.rs            # Pipeline implementation
 ├── Cargo.toml
 └── README.md
 ```
 
-## 3. 核心设计决策
+## 3. Core Design Decisions
 
-### 3.1 Pipeline 模式 vs 传统函数链
+### 3.1 Pipeline Pattern vs Traditional Function Chains
 
-**选择**: Pipeline 模式 (灵感来自 sklearn)
+**Choice**: Pipeline pattern (inspired by sklearn)
 
-**原因**:
-- ✓ 顺序控制清晰
-- ✓ 易于调试（可在每个阶段打点）
-- ✓ 易于扩展新阶段
-- ✓ 配置管理集中
+**Rationale**:
+- ✓ Clear sequential control
+- ✓ Easy to debug (instrument each stage)
+- ✓ Easy to extend with new stages
+- ✓ Centralized configuration management
 
-**实现**:
+**Implementation**:
 ```rust
 pub struct TimeSeriesClassifierPipeline {
     config: ClassifierConfig,
@@ -84,76 +84,76 @@ pub struct TimeSeriesClassifierPipeline {
 }
 ```
 
-### 3.2 平稳性检验: 简化 vs 完整
+### 3.2 Stationarity Tests: Simplified vs Complete
 
-**选择**: 简化实现（但预留完整实现接口）
+**Choice**: simplified implementation (but with an interface reserved for the complete one)
 
-**原因**:
-- ✓ 减少依赖复杂度
-- ✓ 对于 100-10000 点数据足够准确
-- ✓ 可快速集成 anofox-forecast 的完整实现
+**Rationale**:
+- ✓ Fewer dependency complexities
+- ✓ Accurate enough for 100-10000 point data
+- ✓ Can quickly integrate anofox-forecast's complete implementation
 
-**实现**:
+**Implementation**:
 ```rust
 pub fn simple_adf_test(values: &[f64], lags: usize) -> Result<(f64, f64)>
 pub fn simple_kpss_test(values: &[f64]) -> Result<(f64, f64)>
 ```
 
-### 3.3 多周期检测策略
+### 3.3 Multi-Period Detection Strategy
 
-**选择**: STL + FFT/ACF 混合方法
+**Choice**: hybrid STL + FFT/ACF approach
 
-**原因**:
-- ✓ STL 对单周期效果好
-- ✓ FFT 对多周期频率提取好
-- ✓ ACF 对周期延迟识别好
+**Rationale**:
+- ✓ STL works well for single periods
+- ✓ FFT is good at extracting multi-period frequencies
+- ✓ ACF is good at identifying period lags
 
-**实现**:
+**Implementation**:
 ```rust
 pub fn detect_seasonality_stl(values: &[f64]) -> Result<SeasonalityAnalysis>
 pub fn detect_periodicity_fft(values: &[f64]) -> Result<PeriodicityAnalysis>
 pub fn compute_acf(values: &[f64], max_lag: usize) -> Vec<f64>
 ```
 
-### 3.4 决策规则的层级设计
+### 3.4 Hierarchical Design of Decision Rules
 
-**选择**: 嵌套 if-else + 强度阈值
+**Choice**: nested if-else + strength thresholds
 
-**原因**:
-- ✓ 生成可解释的推理过程
-- ✓ 支持细粒度的置信度调节
+**Rationale**:
+- ✓ Produces an explainable reasoning process
+- ✓ Supports fine-grained confidence adjustment
 
-**逻辑路径**:
+**Logic paths**:
 ```
-CV 异常? → 返回 Irregular
-非平稳? {
-  有趋势? {
-    有季节性? → SeasonalWithTrend
-    否则 → Trending
+CV abnormal? → return Irregular
+non-stationary? {
+  has trend? {
+    has seasonality? → SeasonalWithTrend
+    otherwise → Trending
   }
-  有季节性? → Seasonal  
-  否则 → Irregular
+  has seasonality? → Seasonal  
+  otherwise → Irregular
 }
-平稳? {
-  有季节性? → Seasonal
-  有周期性? → Stationary (低置信)
-  否则 → Stationary
+stationary? {
+  has seasonality? → Seasonal
+  has periodicity? → Stationary (low confidence)
+  otherwise → Stationary
 }
 ```
 
-## 4. 算法选择依据
+## 4. Algorithm Selection Rationale
 
-| 功能 | 算法 | 来源库 | 理由 |
+| Function | Algorithm | Source library | Rationale |
 |------|------|-------|------|
-| 平稳性检验 | ADF + KPSS 对比测试 | statrs | 两个测试互补，robust |
-| 趋势分析 | 线性回归 + Mann-Kendall | ndarray + 手工实现 | 经典组合，计算简单 |
-| 季节性 | STL 分解 + ACF 峰值 | stlrs | 效果好，稳定 |
-| 周期性 | FFT + ACF | rustfft | 频域+时域双重识别 |
-| 数据处理 | DataFrame | polars (可选) | 便于批处理 |
+| Stationarity tests | ADF + KPSS comparison tests | statrs | The two tests complement each other, robust |
+| Trend analysis | Linear regression + Mann-Kendall | ndarray + hand-written | Classic combination, simple to compute |
+| Seasonality | STL decomposition + ACF peaks | stlrs | Effective and stable |
+| Periodicity | FFT + ACF | rustfft | Dual frequency-domain + time-domain identification |
+| Data processing | DataFrame | polars (optional) | Convenient for batch processing |
 
-## 5. 扩展机制
+## 5. Extension Mechanisms
 
-### 5.1 新阶段集成
+### 5.1 Integrating New Stages
 
 ```rust
 pub trait ClassificationStage: Send + Sync {
@@ -162,77 +162,77 @@ pub trait ClassificationStage: Send + Sync {
 }
 ```
 
-### 5.2 新算法集成示例
+### 5.2 Example: Integrating a New Algorithm
 
 ```rust
-// 添加 TBATS 检测
+// Add TBATS detection
 pub fn detect_seasonality_tbats(data: &[f64]) -> Result<SeasonalityAnalysis> {
-    // 调用 anofox-forecast 的 TBATS
+    // call anofox-forecast's TBATS
     todo!()
 }
 
-// Pipeline 中使用
+// Use in the Pipeline
 let tbats_result = detect_seasonality_tbats(values)?;
 ```
 
-## 6. 性能分析
+## 6. Performance Analysis
 
-### 时间复杂度
+### Time Complexity
 
-| 阶段 | 复杂度 | 瓶颈 | 备注 |
+| Stage | Complexity | Bottleneck | Notes |
 |------|-------|------|------|
-| 数据预处理 | O(n) | 线性扫描 | 缓存友好 |
-| 平稳性检验 | O(n) | 线性回归 | 支持并行 |
-| 趋势检测 | O(n log n) | 排序 | 可调参数 |
-| 季节性 STL | O(n log n) | FFT | 可采样优化 |
-| 周期性 FFT | O(n log n) | FFT | 已优化 |
-| **总计** | **O(n log n)** | FFT | 对 10K 点 < 100ms |
+| Data preprocessing | O(n) | linear scan | cache friendly |
+| Stationarity tests | O(n) | linear regression | parallelizable |
+| Trend detection | O(n log n) | sorting | tunable parameters |
+| Seasonality STL | O(n log n) | FFT | samplable optimization |
+| Periodicity FFT | O(n log n) | FFT | already optimized |
+| **Total** | **O(n log n)** | FFT | < 100ms for 10K points |
 
-### 内存复杂度: O(n)
+### Memory Complexity: O(n)
 
 ```
-输入数据: 8n bytes (f64 × 2)
-中间结果: 8n bytes (ACF, 去趋势等)
-输出: 1K bytes (结果结构)
+Input data: 8n bytes (f64 × 2)
+Intermediate results: 8n bytes (ACF, detrending, etc.)
+Output: 1K bytes (result struct)
 ---
-总计: ~16n bytes (n=数据点数)
+Total: ~16n bytes (n = number of data points)
 ```
 
-## 7. 测试策略
+## 7. Testing Strategy
 
-### 7.1 测试覆盖
+### 7.1 Test Coverage
 
 ```
 ┌─────────────────────────────┐
-│      单元测试                │
+│      Unit tests             │
 ├─────────────────────────────┤
-│ • 平稳性: 常数 vs 趋势      │
-│ • 趋势: 上升 vs 下降        │
-│ • 季节性: 合成周期序列      │
-│ • ACF/PACF: 已知周期        │
+│ • stationarity: constant vs trend      │
+│ • trend: upward vs downward │
+│ • seasonality: synthetic periodic series │
+│ • ACF/PACF: known periods  │
 └──────────┬──────────────────┘
            │
 ┌──────────▼──────────────────┐
-│      集成测试                │
+│      Integration tests      │
 ├─────────────────────────────┤
-│ • 实际异常检测数据集        │
-│ • Grafana 面板数据          │
-│ • IoT 传感器数据            │
+│ • real anomaly detection datasets │
+│ • Grafana panel data        │
+│ • IoT sensor data           │
 └──────────┬──────────────────┘
            │
 ┌──────────▼──────────────────┐
-│      回归测试                │
+│      Regression tests       │
 ├─────────────────────────────┤
-│ • 分类结果稳定性            │
-│ • 置信度热图                │
-│ • 算法运行时间              │
+│ • classification result stability │
+│ • confidence heatmap        │
+│ • algorithm runtimes        │
 └─────────────────────────────┘
 ```
 
-### 7.2 测试数据集
+### 7.2 Test Datasets
 
 ```rust
-// 合成数据集生成
+// Synthetic dataset generation
 fn create_seasonal_series(periods: usize, amplitude: f64) -> Vec<f64> {
     (0..100)
         .map(|i| {
@@ -248,9 +248,9 @@ fn create_trending_series(slope: f64) -> Vec<f64> {
 }
 ```
 
-## 8. 集成建议
+## 8. Integration Recommendations
 
-### 与 rsod-outlier 集成
+### Integration with rsod-outlier
 
 ```rust
 use rsod_classifier::classify;
@@ -259,22 +259,22 @@ use rsod_outlier::outlier;
 pub fn intelligent_outlier_detection(
     data: TimeSeriesInput<'_>,
 ) -> Result<DetectionResult> {
-    // 1. 分类
+    // 1. classify
     let classification = classify(data.timestamps, data.values)?;
     
-    // 2. 根据分类选择周期
+    // 2. choose periods based on the classification
     let periods = match classification.classification {
         SeriesCharacteristic::Seasonal { periods } => periods,
         SeriesCharacteristic::SeasonalWithTrend { periods, .. } => periods,
         _ => vec![],
     };
     
-    // 3. 使用周期进行无效检测
+    // 3. run detection using the periods
     outlier(data, &periods, "uuid")
 }
 ```
 
-### 与 rsod-forecaster 集成
+### Integration with rsod-forecaster
 
 ```rust
 pub fn intelligent_forecasting(
@@ -282,57 +282,57 @@ pub fn intelligent_forecasting(
 ) -> Result<DetectionResult> {
     let classification = classify(data.timestamps, data.values)?;
     
-    // 针对不同类型数据选择预测模型
+    // choose the forecasting model for each data type
     match classification.classification {
         SeriesCharacteristic::Seasonal { periods } => {
-            // 使用 HoltWinters 或 SARIMA
+            // use HoltWinters or SARIMA
             forecast_seasonal(data, periods)
         }
         SeriesCharacteristic::Trending(_) => {
-            // 使用 线性模型或 Theta 方法
+            // use a linear model or the Theta method
             forecast_trending(data)
         }
         _ => {
-            // 使用 Naive 或均值方法
+            // use Naive or the mean method
             forecast_stationary(data)
         }
     }
 }
 ```
 
-## 9. 常见问题与解决方案
+## 9. FAQ and Solutions
 
-### Q1: 如何处理多重周期数据？
+### Q1: How to handle multi-period data?
 
-**A**: 使用多次 STL 分解在残差上运行：
+**A**: Run repeated STL decompositions on the residuals:
 
 ```rust
-// 在 auto_mstl 中实现
+// implemented in auto_mstl
 for iteration in 0..max_iterations {
     let mstl_result = decompose(data, &periods);
-    data = mstl_result.residual;  // 继续在残差中查找周期
+    data = mstl_result.residual;  // keep looking for periods in the residuals
 }
 ```
 
-### Q2: 时序数据不足 30 点怎么办？
+### Q2: What if the time series has fewer than 30 points?
 
-**A**: 可有多个选项：
+**A**: There are several options:
 
 ```rust
 let config = ClassifierConfig {
-    min_data_length: 10,  // 降低阈值
+    min_data_length: 10,  // lower the threshold
     ..Default::default()
 };
 ```
 
-或者返回"数据不足"的特殊分类。
+Or return a special "insufficient data" classification.
 
-### Q3: 如何适配不同的业务场景？
+### Q3: How to adapt to different business scenarios?
 
-**A**: 使用 `ClassifierConfig` 的阈值参数：
+**A**: Use the threshold parameters of `ClassifierConfig`:
 
 ```rust
-// 对非常敏感的检测
+// for very sensitive detection
 let config = ClassifierConfig {
     seasonality_strength_threshold: 0.05,
     trend_pvalue_threshold: 0.1,
@@ -340,29 +340,29 @@ let config = ClassifierConfig {
 };
 ```
 
-## 10. 负债与改进计划
+## 10. Technical Debt and Improvement Plan
 
-### 技术负债
-- [ ] 简化的 ADF/KPSS 实现（应迁移到 anofox-forecast）
-- [ ] 缺少 ARIMA 阶数建议
-- [ ] 缺少异常值处理
+### Technical Debt
+- [ ] Simplified ADF/KPSS implementation (should migrate to anofox-forecast)
+- [ ] Missing ARIMA order suggestions
+- [ ] Missing outlier handling
 
-### 短期改进（3 个月）
-- [ ] 集成 anofox-forecast 完整检验
-- [ ] 添加 MSTL 分解
-- [ ] 性能基准测试
+### Short-term improvements (3 months)
+- [ ] Integrate anofox-forecast's complete tests
+- [ ] Add MSTL decomposition
+- [ ] Performance benchmarks
 
-### 中期改进（6 个月）
-- [ ] Web UI 可视化
-- [ ] 实时流处理支持
-- [ ] 模型序列化和缓存
+### Mid-term improvements (6 months)
+- [ ] Web UI visualization
+- [ ] Real-time stream processing support
+- [ ] Model serialization and caching
 
-### 长期改进（12 个月）
-- [ ] 深度学习分类器（LSTM-VAE）
-- [ ] 多元时序分类
-- [ ] 自动机器学习集成
+### Long-term improvements (12 months)
+- [ ] Deep learning classifier (LSTM-VAE)
+- [ ] Multivariate time-series classification
+- [ ] Automated machine learning integration
 
-## 参考文献
+## References
 
 1. [Time Series Forecasting with STL](https://robjhyndman.com/papers/JSS5605.pdf)
 2. [Kwiatkowski-Phillips-Schmidt-Shin Test](https://en.wikipedia.org/wiki/KPSS_test)

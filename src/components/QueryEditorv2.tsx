@@ -51,7 +51,7 @@ function defaultFunnelParams(app?: CoreApp): FunnelParams {
   return params;
 }
 
-// query 是 <Alert4MLQuery | AlertDataQuery>  类型， 需要根据 query 的类型来判断是 Alert4MLQuery 还是 AlertDataQuery
+// query is of type <Alert4MLQuery | AlertDataQuery>; branch on the query type to handle Alert4MLQuery vs AlertDataQuery
 export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app, datasource }: Props) {
   const [isHyperParamsOpen, setIsHyperParamsOpen] = useState<boolean>(false);
 
@@ -60,10 +60,10 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   const [baseDsInstance, setBaseDsInstance] = useState<DataSourceApi | null>(null);
   const [NativeQueryEditor, setNativeQueryEditor] = useState<React.ComponentType<any> | null>(null);
 
-  // 缓存每个 dsUid 对应的 rawQuery，切换数据源时可恢复
+  // Cache the rawQuery per dsUid so it can be restored when switching data sources
   const rawQueryCacheRef = useRef<Record<string, Record<string, any>>>({});
 
-  // 初始化时，将已保存的 rawQuery 存入缓存
+  // On init, seed the cache with the saved rawQuery
   useEffect(() => {
     if (baseDsUid && query.rawQuery) {
       rawQueryCacheRef.current[baseDsUid] = query.rawQuery;
@@ -84,24 +84,24 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     const newUid = option?.value;
     const prevUid = query.baseDsUid;
 
-    // 切换到同一个数据源，无需操作
+    // Switching to the same data source — nothing to do
     if (newUid === prevUid) {
       return;
     }
 
-    // 将当前数据源的 rawQuery 保存到缓存
+    // Save the current data source's rawQuery into the cache
     if (prevUid && query.rawQuery) {
       rawQueryCacheRef.current[prevUid] = query.rawQuery;
     }
 
     if (!newUid) {
-      // 清空数据源
+      // Clear the data source
       onChange({ ...query, baseDsUid: undefined, rawQuery: undefined, targets: [] });
       onRunQuery();
       return;
     }
 
-    // 尝试从缓存恢复目标数据源的 rawQuery
+    // Try to restore the target data source's rawQuery from the cache
     const cachedRawQuery = rawQueryCacheRef.current[newUid];
     if (cachedRawQuery) {
       onChange({ ...query, baseDsUid: newUid, rawQuery: cachedRawQuery, targets: [cachedRawQuery as DataQuery] });
@@ -150,7 +150,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         ? { uid: baseDsInstance.uid, type: baseDsInstance.type }
         : rawQuery.datasource,
     };
-    // 同步更新缓存
+    // Keep the cache in sync
     if (baseDsUid) {
       rawQueryCacheRef.current[baseDsUid] = enrichedQuery;
     }
@@ -167,12 +167,12 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
   
-  // 使用 useRef 来跟踪是否是首次执行
+  // Track whether this is the first run with useRef
   const isInitialized = useRef(false);
-  // 创建一个处理 debounced 查询的函数
+  // Create a function that runs a debounced query
   const runDebouncedQueryWithTempTargets = useCallback((updatedQuery: Partial<Alert4MLQuery>) => {
     const currentTargets = updatedQuery.targets || query.targets || [];
-    // 确保 uniqueKeys 有值，优先使用 updatedQuery.uniqueKeys，否则使用 query.uniqueKeys，最后使用默认值
+    // Ensure uniqueKeys has a value: prefer updatedQuery.uniqueKeys, then query.uniqueKeys, then the default
     const fallbackUniqueKeys: UniqueKeys = {
       dashboardUid: getTemplateSrv().replace("${__dashboard.uid}"),
       panelId: data?.request?.panelId || 0,
@@ -235,7 +235,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }));
   }, [supportDetect]);
 
-  // 根据 detectType 获取对应的默认 hyperParams
+  // Get the default hyperParams for a given detectType
   const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams | FunnelParams => {
     if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
       return DEFAULT_DYNAMICS_PARAMS;
@@ -252,7 +252,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     return DEFAULT_RSOD_PARAMS;
   }, [app]);
 
-  // loadDetectTypesOptions 和 onSupportDetectChange 需要联动
+  // detectType options and onSupportDetectChange must stay in sync
   useEffect(() => {
     const sd_options = SUPPORT_DETECT_OPTIONS.find((option) => option.value === supportDetect)?.detectTypes || [];
     if (isInitialized.current) {
@@ -325,7 +325,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   const debouncedRunQuery = useCallback(
     debounce(() => {
       onRunQuery();
-    }, 500), // 500ms 延迟
+    }, 500), // 500ms delay
     [onRunQuery]
   );
 

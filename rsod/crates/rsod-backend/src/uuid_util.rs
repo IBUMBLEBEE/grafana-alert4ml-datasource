@@ -225,7 +225,8 @@ mod tests {
             go_json_string("\u{0001}\u{2028}\u{2029}"),
             "\"\\u0001\\u2028\\u2029\""
         );
-        assert_eq!(go_json_string("中文"), "\"中文\"");
+        // Non-ASCII text (accented Latin + supplementary-plane emoji) passes through unescaped.
+        assert_eq!(go_json_string("café ☕"), "\"café ☕\"");
     }
 
     #[test]

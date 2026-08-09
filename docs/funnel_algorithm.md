@@ -1,185 +1,185 @@
-# Funnel 漏斗型时序异常检测算法
+# Funnel: Funnel-Shaped Time-Series Anomaly Detection
 
-本文件描述 `rsod-funnel` 的整体流程与 L1 / L2 算法流程，用于说明一段时序数据在漏斗架构中的处理路径。
+This document describes the overall flow of `rsod-funnel` and the L1 / L2 algorithm flows, explaining the processing path of a time-series through the funnel architecture.
 
-## 1. 设计目标
+## 1. Design Goals
 
-Funnel 采用漏斗型分层检测：
+Funnel uses a layered, funnel-shaped detection:
 
-- **L1（统计预筛）**：偏统计的轻量算法，对绝大多数点做 O(1) 快速裁决，直接判定明显正常和明显异常的点。
-- **L2（复杂算法）**：只对 L1 无法判定的灰区点（`Uncertain`）升级到较重的 ML 算法（Outlier / Forecast / Baseline）。
+- **L1 (statistical pre-filter)**: a lightweight, statistics-oriented algorithm that makes an O(1) decision per point for the vast majority of points, directly classifying clearly normal and clearly anomalous points.
+- **L2 (complex algorithms)**: only escalates the gray-zone points (`Uncertain`) that L1 cannot decide to heavier ML algorithms (Outlier / Forecast / Baseline).
 
-目标是让大部分正常数据在 L1 被过滤，只有少量不确定的点进入 L2，兼顾精度与成本。
+The goal is for most normal data to be filtered out in L1, with only a few uncertain points entering L2, balancing accuracy and cost.
 
-对应实现：
+Corresponding implementations:
 
-- L1：[rsod/crates/rsod-funnel/src/l1.rs](../rsod/crates/rsod-funnel/src/l1.rs)
-- Profile：[rsod/crates/rsod-funnel/src/profile.rs](../rsod/crates/rsod-funnel/src/profile.rs)
-- Pipeline：[rsod/crates/rsod-funnel/src/pipeline.rs](../rsod/crates/rsod-funnel/src/pipeline.rs)
-- L2 路由：[rsod/crates/rsod-funnel/src/l2.rs](../rsod/crates/rsod-funnel/src/l2.rs)
-- 度量指标：[rsod/crates/rsod-funnel/src/metrics.rs](../rsod/crates/rsod-funnel/src/metrics.rs)
+- L1: [rsod/crates/rsod-funnel/src/l1.rs](../rsod/crates/rsod-funnel/src/l1.rs)
+- Profile: [rsod/crates/rsod-funnel/src/profile.rs](../rsod/crates/rsod-funnel/src/profile.rs)
+- Pipeline: [rsod/crates/rsod-funnel/src/pipeline.rs](../rsod/crates/rsod-funnel/src/pipeline.rs)
+- L2 routing: [rsod/crates/rsod-funnel/src/l2.rs](../rsod/crates/rsod-funnel/src/l2.rs)
+- Metrics: [rsod/crates/rsod-funnel/src/metrics.rs](../rsod/crates/rsod-funnel/src/metrics.rs)
 
-## 2. 整体流程图
+## 2. Overall Flow Diagram
 
 ```mermaid
 flowchart TD
-    A["输入时序数据<br/>current: (timestamp, value)<br/>history: 历史窗口"] --> B["构建/加载 SeasonalProfile"]
+    A["Input time series<br/>current: (timestamp, value)<br/>history: history window"] --> B["Build/load SeasonalProfile"]
 
-    B --> B1["趋势识别<br/>Daily / Weekly / Monthly / None"]
-    B1 --> B2["按季节桶聚合历史样本<br/>bucket by time-of-day / weekday / month"]
-    B2 --> B3["剔除历史异常样本<br/>Hampel filter"]
-    B3 --> B4["生成 L1 统计画像<br/>median + MAD / std"]
+    B --> B1["Trend detection<br/>Daily / Weekly / Monthly / None"]
+    B1 --> B2["Aggregate history samples into seasonal buckets<br/>bucket by time-of-day / weekday / month"]
+    B2 --> B3["Remove historical anomaly samples<br/>Hampel filter"]
+    B3 --> B4["Build L1 statistical profile<br/>median + MAD / std"]
 
-    B4 --> C["L1 轻量统计过滤<br/>逐点 O(1) 判定"]
+    B4 --> C["L1 lightweight statistical filter<br/>per-point O(1) decision"]
 
-    C --> D{"点是否落入统计区间？"}
+    C --> D{"Is the point inside the statistical band?"}
 
-    D -->|"inner band 内"| E["Normal<br/>直接判正常<br/>不进入 L2"]
-    D -->|"outer band 外"| F["Anomaly<br/>直接判异常<br/>不进入 L2"]
-    D -->|"inner 和 outer 之间"| G["Uncertain<br/>进入 L2 复杂算法"]
+    D -->|"inside inner band"| E["Normal<br/>directly normal<br/>no L2"]
+    D -->|"outside outer band"| F["Anomaly<br/>directly anomalous<br/>no L2"]
+    D -->|"between inner and outer"| G["Uncertain<br/>enter L2 complex algorithms"]
 
-    G --> H["序列分类器<br/>rsod-classifier"]
-    H --> I{"序列类型 / 决策引擎 decide()"}
+    G --> H["Series classifier<br/>rsod-classifier"]
+    H --> I{"Series type / decision engine decide()"}
 
     I -->|"Stationary"| J["L2: Outlier<br/>rsod-outlier / EIF"]
     I -->|"Trending"| K["L2: Forecast<br/>rsod-forecaster"]
-    I -->|"Seasonal / SeasonalWithTrend"| L["L2: Baseline / Forecast<br/>按 decision 路由"]
-    I -->|"Irregular"| M["L2: Baseline 或 Outlier<br/>按 confidence / skewness 路由"]
+    I -->|"Seasonal / SeasonalWithTrend"| L["L2: Baseline / Forecast<br/>routed by decision"]
+    I -->|"Irregular"| M["L2: Baseline or Outlier<br/>routed by confidence / skewness"]
 
-    J --> N["L2 输出异常结果"]
+    J --> N["L2 anomaly result output"]
     K --> N
     L --> N
     M --> N
 
-    E --> O["结果合并<br/>merge_l1_l2"]
+    E --> O["Merge results<br/>merge_l1_l2"]
     F --> O
     N --> O
 
-    O --> P["Grafana 输出<br/>baseline / lower_bound / upper_bound / anomaly"]
+    O --> P["Grafana output<br/>baseline / lower_bound / upper_bound / anomaly"]
 ```
 
-## 3. L1 算法流程
+## 3. L1 Algorithm Flow
 
-L1 基于历史构建的季节画像，对当前每个点做 O(1) 三态判定，不做重训练。
+L1 builds a seasonal profile from history and makes an O(1) three-state decision for each current point, without retraining.
 
 ```mermaid
 flowchart TD
-    A["历史数据 history"] --> B["按周期建桶<br/>Daily / Weekly / Monthly"]
-    B --> C["每个 bucket 计算鲁棒统计量"]
+    A["history data"] --> B["Bucket by period<br/>Daily / Weekly / Monthly"]
+    B --> C["Compute robust statistics per bucket"]
     C --> D["baseline = median"]
     C --> E["scale = 1.4826 × MAD"]
 
-    D --> F["生成阈值带"]
+    D --> F["Generate threshold bands"]
     E --> F
 
     F --> G["inner band<br/>baseline ± k_inner × scale"]
     F --> H["outer band<br/>baseline ± k_outer × scale"]
 
-    I["当前点 x"] --> J{"x 的位置"}
+    I["current point x"] --> J{"position of x"}
 
-    J -->|"inner band 内"| K["Normal"]
-    J -->|"outer band 外"| L["Anomaly"]
-    J -->|"两者之间"| M["Uncertain → L2"]
+    J -->|"inside inner band"| K["Normal"]
+    J -->|"outside outer band"| L["Anomaly"]
+    J -->|"between the two"| M["Uncertain → L2"]
 ```
 
-L1 的三态判定语义（[FilterVerdict](../rsod/crates/rsod-funnel/src/l1.rs)）：
+L1 three-state decision semantics ([FilterVerdict](../rsod/crates/rsod-funnel/src/l1.rs)):
 
-| 判定 | 条件 | 处理 |
+| Verdict | Condition | Handling |
 | --- | --- | --- |
-| `Normal` | 落在内带 `inner band` 内 | 直接判正常，不进入 L2 |
-| `Anomaly` | 落在外带 `outer band` 外 | 直接判异常，不进入 L2 |
-| `Uncertain` | 落在内带与外带之间 | 升级到 L2 复杂算法 |
+| `Normal` | Inside the `inner band` | Directly normal, does not enter L2 |
+| `Anomaly` | Outside the `outer band` | Directly anomalous, does not enter L2 |
+| `Uncertain` | Between the inner and outer bands | Escalated to L2 complex algorithms |
 
-阈值方法（MAD / IQR / ZScore）由历史数据的偏度自动选择。
+The threshold method (MAD / IQR / ZScore) is chosen automatically from the skewness of the history data.
 
-## 4. L2 算法流程
+## 4. L2 Algorithm Flow
 
-L2 不是固定单一模型，而是先对序列分类，再由决策引擎路由到具体算法，且**只覆盖 L1 判为 `Uncertain` 的点**。
+L2 is not a single fixed model: it first classifies the series, then routes to a concrete algorithm via the decision engine, and **only covers the points L1 judged `Uncertain`**.
 
 ```mermaid
 flowchart TD
-    A["L1 存在 Uncertain 点"] --> B["对 history 或 current 做序列分类<br/>rsod-classifier::classify"]
+    A["L1 has Uncertain points"] --> B["Classify history or current<br/>rsod-classifier::classify"]
     B --> C["SeriesCharacteristic + confidence + skewness"]
 
     C --> D{"decide()"}
 
     D -->|"Stationary"| E["Outlier Detector<br/>rsod-outlier / EIF"]
     D -->|"Trending"| F["Forecaster<br/>rsod-forecaster"]
-    D -->|"Seasonal / SeasonalWithTrend"| G["Baseline / Forecast<br/>根据周期与趋势"]
-    D -->|"Irregular"| H["Outlier / Baseline<br/>根据 confidence 和 skewness"]
+    D -->|"Seasonal / SeasonalWithTrend"| G["Baseline / Forecast<br/>based on period and trend"]
+    D -->|"Irregular"| H["Outlier / Baseline<br/>based on confidence and skewness"]
 
-    E --> I["L2 检测结果 DetectionResult"]
+    E --> I["L2 detection result DetectionResult"]
     F --> I
     G --> I
     H --> I
 
-    I --> J["只覆盖 L1=Uncertain 的点<br/>merge_l1_l2"]
-    J --> K["与 L1 Normal / Anomaly 合并输出"]
+    I --> J["Cover only points with L1=Uncertain<br/>merge_l1_l2"]
+    J --> K["Merge output with L1 Normal / Anomaly"]
 ```
 
-一句话概括：
+Summary in one sentence:
 
-> L1 用历史统计画像把明显正常和明显异常的点快速裁掉；只有落在灰区的 `Uncertain` 点才触发 L2。L2 先判断时序类型，再路由到 Outlier、Forecast 或 Baseline 算法，最后只覆盖这些灰区点的判定结果。
+> L1 uses the historical statistical profile to quickly cut out clearly normal and clearly anomalous points; only gray-zone `Uncertain` points trigger L2. L2 first determines the time-series type, then routes to the Outlier, Forecast, or Baseline algorithm, and finally only covers the verdicts for these gray-zone points.
 >
-> 注意：L2 当前在 Grafana 面板路径中默认关闭（`enable_l2 = false`，见 [rsod/crates/rsod-backend/src/pipeline.rs](../rsod/crates/rsod-backend/src/pipeline.rs)），可在算法侧显式开启。
+> Note: L2 is currently disabled by default on the Grafana panel path (`enable_l2 = false`, see [rsod/crates/rsod-backend/src/pipeline.rs](../rsod/crates/rsod-backend/src/pipeline.rs)); it can be enabled explicitly on the algorithm side.
 
-## 5. 一段时序经过 L1/L2 的示例
+## 5. Example: A Time Series Through L1/L2
 
-假设当前窗口有 10 个点：
+Assume the current window has 10 points:
 
-| 点位 | 原始值 | L1 判定 | 是否进入 L2 | 最终结果 |
+| Point | Raw value | L1 verdict | Enters L2? | Final result |
 | --- | ---: | --- | --- | --- |
-| t1 | 100 | Normal | 否 | 正常 |
-| t2 | 102 | Normal | 否 | 正常 |
-| t3 | 98 | Normal | 否 | 正常 |
-| t4 | 135 | Uncertain | 是 | 由 L2 决定 |
-| t5 | 160 | Anomaly | 否 | 异常 |
-| t6 | 101 | Normal | 否 | 正常 |
-| t7 | 129 | Uncertain | 是 | 由 L2 决定 |
-| t8 | 99 | Normal | 否 | 正常 |
-| t9 | 97 | Normal | 否 | 正常 |
-| t10 | 180 | Anomaly | 否 | 异常 |
+| t1 | 100 | Normal | No | Normal |
+| t2 | 102 | Normal | No | Normal |
+| t3 | 98 | Normal | No | Normal |
+| t4 | 135 | Uncertain | Yes | Decided by L2 |
+| t5 | 160 | Anomaly | No | Anomaly |
+| t6 | 101 | Normal | No | Normal |
+| t7 | 129 | Uncertain | Yes | Decided by L2 |
+| t8 | 99 | Normal | No | Normal |
+| t9 | 97 | Normal | No | Normal |
+| t10 | 180 | Anomaly | No | Anomaly |
 
-对应的漏斗分流：
+The corresponding funnel split:
 
 ```mermaid
 flowchart LR
-    A["10 个输入点"] --> B["L1 统计过滤"]
+    A["10 input points"] --> B["L1 statistical filter"]
 
-    B --> C["7 个 Normal<br/>直接放行"]
-    B --> D["2 个 Anomaly<br/>直接报警"]
-    B --> E["2 个 Uncertain<br/>进入 L2"]
+    B --> C["7 Normal<br/>pass through"]
+    B --> D["2 Anomaly<br/>alert directly"]
+    B --> E["2 Uncertain<br/>enter L2"]
 
-    E --> F["L2 复杂算法<br/>Classifier + Outlier / Forecast / Baseline"]
-    F --> G["确认或否决边界异常"]
+    E --> F["L2 complex algorithms<br/>Classifier + Outlier / Forecast / Baseline"]
+    F --> G["Confirm or reject boundary anomalies"]
 
-    C --> H["最终输出"]
+    C --> H["Final output"]
     D --> H
     G --> H
 ```
 
-## 6. 可度量的漏斗效果
+## 6. Measurable Funnel Effectiveness
 
-`funnel_detect_with_metrics` 在检测的同时返回 [FunnelMetrics](../rsod/crates/rsod-funnel/src/metrics.rs)，用于量化漏斗分流：
+`funnel_detect_with_metrics` returns [FunnelMetrics](../rsod/crates/rsod-funnel/src/metrics.rs) alongside detection, to quantify the funnel split:
 
-| 指标 | 含义 |
+| Metric | Semantics |
 | --- | --- |
-| `total_points` | 当前 eval 窗口点数 |
-| `l1_normal` / `l1_anomaly` / `l1_uncertain` | L1 三态分流数量 |
-| `l1_coverage_rate` | L1 直接裁决比例 `(normal + anomaly) / total` |
-| `l2_escalation_rate` | 升级到 L2 的比例 `uncertain / total` |
-| `l2_enabled` / `l2_triggered` | L2 是否开启 / 本次是否触发 |
-| `l2_method` | 本次 L2 实际路由到的算法 |
-| `l1_elapsed_ms` / `l2_elapsed_ms` / `total_elapsed_ms` | 各阶段耗时 |
+| `total_points` | Number of points in the current eval window |
+| `l1_normal` / `l1_anomaly` / `l1_uncertain` | L1 three-state split counts |
+| `l1_coverage_rate` | L1 direct-decision ratio `(normal + anomaly) / total` |
+| `l2_escalation_rate` | Ratio escalated to L2 `uncertain / total` |
+| `l2_enabled` / `l2_triggered` | Whether L2 is enabled / whether it triggered this time |
+| `l2_method` | The algorithm L2 actually routed to this time |
+| `l1_elapsed_ms` / `l2_elapsed_ms` / `total_elapsed_ms` | Per-stage elapsed times |
 
-漏斗目标可表述为：`l1_coverage_rate` 尽量高（大部分点在 L1 裁决），`l2_escalation_rate` 保持在较低区间。
+The funnel goal can be stated as: keep `l1_coverage_rate` as high as possible (most points decided in L1) while keeping `l2_escalation_rate` in a low range.
 
-## 7. 可视化与基准
+## 7. Visualization and Benchmark
 
-- 面板可视化示例：[rsod/crates/rsod-funnel/examples/funnel_viz.rs](../rsod/crates/rsod-funnel/examples/funnel_viz.rs)
-- 指标基准（含 `L1_cov` / `L2_rate` / 耗时）：[rsod/crates/rsod-funnel/examples/funnel_bench.rs](../rsod/crates/rsod-funnel/examples/funnel_bench.rs)
+- Panel visualization example: [rsod/crates/rsod-funnel/examples/funnel_viz.rs](../rsod/crates/rsod-funnel/examples/funnel_viz.rs)
+- Metric benchmark (including `L1_cov` / `L2_rate` / elapsed): [rsod/crates/rsod-funnel/examples/funnel_bench.rs](../rsod/crates/rsod-funnel/examples/funnel_bench.rs)
 
-运行方式：
+How to run:
 
 ```bash
 cd rsod
@@ -187,4 +187,4 @@ cargo run --example funnel_viz -p rsod-funnel --release
 cargo run --example funnel_bench -p rsod-funnel
 ```
 
-可视化输出目录：`dataset/output/funnel_viz/`。
+Visualization output directory: `dataset/output/funnel_viz/`.

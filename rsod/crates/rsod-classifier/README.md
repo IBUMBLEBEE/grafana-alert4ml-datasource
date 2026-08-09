@@ -1,89 +1,89 @@
-# rsod-classifier: 时序数据类型检测器
+# rsod-classifier: Time-Series Data Type Detector
 
-## 总览
+## Overview
 
-`rsod-classifier` 是一个用于自动检测和分类时序数据类型的 Rust 库。它基于多阶段 Pipeline（类似 sklearn Pipeline），通过统计分析、平稳性检验、趋势检测和季节性分析来识别时序数据的特征。
+`rsod-classifier` is a Rust library for automatically detecting and classifying time-series data types. It is based on a multi-stage Pipeline (similar to an sklearn Pipeline), identifying time-series characteristics through statistical analysis, stationarity tests, trend detection, and seasonality analysis.
 
-## 支持的分类类型
+## Supported Classification Types
 
-- **Stationary（平稳）**: 无明显趋势、季节性或周期性的数据
-- **Trending（趋势）**: 具有明显上升或下降趋势的数据
-- **Seasonal（季节性）**: 存在规律性季节模式的数据
-- **SeasonalWithTrend（季节+趋势）**: 同时具有季节性和趋势的数据
-- **Irregular/Noisy（不规则/噪声）**: 高方差、无规律的数据
+- **Stationary**: data with no obvious trend, seasonality, or periodicity
+- **Trending**: data with a clear upward or downward trend
+- **Seasonal**: data with regular seasonal patterns
+- **SeasonalWithTrend**: data with both seasonality and trend
+- **Irregular/Noisy**: high-variance, patternless data
 
-## Pipeline 架构
+## Pipeline Architecture
 
-分类流程分为 7 个阶段：
+The classification flow has 7 stages:
 
 ```
-输入时序数据
+Input time-series data
     ↓
-[1] 数据预处理和验证
-    - 检查缺失值率
-    - 处理异常值
+[1] Data preprocessing and validation
+    - check missing-value ratio
+    - handle outliers
     ↓
-[2] 基础统计特征提取
-    - 均值、方差、偏度、峰度
-    - 变异系数 (CV)
+[2] Basic statistical feature extraction
+    - mean, variance, skewness, kurtosis
+    - coefficient of variation (CV)
     ↓
-[3] 平稳性检验
-    - ADF (Augmented Dickey-Fuller) 测试
-    - KPSS (Kwiatkowski-Phillips-Schmidt-Shin) 测试
+[3] Stationarity tests
+    - ADF (Augmented Dickey-Fuller) test
+    - KPSS (Kwiatkowski-Phillips-Schmidt-Shin) test
     ↓
-[4] 趋势检测
-    - 线性回归斜率分析
-    - Mann-Kendall 检验
+[4] Trend detection
+    - linear regression slope analysis
+    - Mann-Kendall test
     ↓
-[5] 季节性检测
-    - STL 分解
-    - 季节强度计算
+[5] Seasonality detection
+    - STL decomposition
+    - seasonal strength computation
     ↓
-[6] 周期性检测
-    - FFT 频谱分析
-    - 自相关函数 (ACF)
+[6] Periodicity detection
+    - FFT spectrum analysis
+    - autocorrelation function (ACF)
     ↓
-[7] 综合分类和决策
-    - 应用决策规则
-    - 输出分类结果和置信度
+[7] Combined classification and decision
+    - apply decision rules
+    - output classification result and confidence
     ↓
-输出: SeriesCharacteristic 及详细分析结果
+Output: SeriesCharacteristic and detailed analysis results
 ```
 
-## 快速开始
+## Quick Start
 
-### 基础使用
+### Basic Usage
 
 ```rust
 use rsod_classifier::classify;
 
 fn main() {
-    // 准备数据
+    // Prepare data
     let timestamps: Vec<f64> = (0..100).map(|i| i as f64).collect();
     let values: Vec<f64> = (0..100).map(|i| (i as f64 * 0.1).sin() + 10.0).collect();
 
-    // 分类
+    // Classify
     let result = classify(&timestamps, &values).unwrap();
 
-    println!("分类: {:?}", result.classification);
-    println!("置信度: {:.2}", result.confidence);
-    println!("推理: {}", result.reasoning);
-    println!("详细结果:");
+    println!("Classification: {:?}", result.classification);
+    println!("Confidence: {:.2}", result.confidence);
+    println!("Reasoning: {}", result.reasoning);
+    println!("Detailed results:");
     println!("  - CV: {:.4}", result.coefficient_of_variation);
     if let Some(stationarity) = &result.stationarity {
-        println!("  - 平稳性 (ADF p-value): {:.4}", stationarity.adf_pvalue);
+        println!("  - Stationarity (ADF p-value): {:.4}", stationarity.adf_pvalue);
     }
     if let Some(trend) = &result.trend {
-        println!("  - 趋势斜率: {:.6}", trend.slope);
+        println!("  - Trend slope: {:.6}", trend.slope);
     }
     if let Some(seasonality) = &result.seasonality {
-        println!("  - 季节强度: {:.4}", seasonality.strength);
-        println!("  - 检测周期: {:?}", seasonality.periods);
+        println!("  - Seasonal strength: {:.4}", seasonality.strength);
+        println!("  - Detected periods: {:?}", seasonality.periods);
     }
 }
 ```
 
-### 使用自定义配置
+### Using a Custom Config
 
 ```rust
 use rsod_classifier::{classify_with_config, ClassifierConfig};
@@ -92,18 +92,18 @@ fn main() {
     let timestamps: Vec<f64> = (0..50).map(|i| i as f64).collect();
     let values: Vec<f64> = vec![5.0; 50];
 
-    // 创建自定义配置
+    // Create a custom config
     let mut config = ClassifierConfig::default();
-    config.seasonality_strength_threshold = 0.2;  // 提高季节性检测阈值
-    config.max_seasonal_period = 24;  // 最大检测 24 小时周期
-    config.use_fft = true;  // 启用 FFT 分析
+    config.seasonality_strength_threshold = 0.2;  // raise the seasonality detection threshold
+    config.max_seasonal_period = 24;  // detect at most a 24-hour period
+    config.use_fft = true;  // enable FFT analysis
     
     let result = classify_with_config(&timestamps, &values, config).unwrap();
-    println!("分类: {:?}", result.classification);
+    println!("Classification: {:?}", result.classification);
 }
 ```
 
-### 管道方式（高级）
+### Pipeline Approach (Advanced)
 
 ```rust
 use rsod_classifier::{TimeSeriesClassifierPipeline, ClassifierInput};
@@ -116,102 +116,102 @@ fn main() {
     let input = ClassifierInput::new(&timestamps, &values);
     
     let result = classifier.classify(&input).unwrap();
-    println!("分类结果: {:#?}", result);
+    println!("Classification result: {:#?}", result);
 
-    // 获取最后的结果
+    // Get the last result
     if let Some(last) = classifier.last_result() {
-        println!("缓存结果: {:#?}", last);
+        println!("Cached result: {:#?}", last);
     }
 }
 ```
 
-## 配置选项
+## Configuration Options
 
-`ClassifierConfig` 提供以下配置参数：
+`ClassifierConfig` provides the following configuration parameters:
 
-| 参数 | 类型 | 默认值 | 说明 |
+| Parameter | Type | Default | Description |
 |-----|------|------|------|
-| `stationarity_method` | String | "both" | 平稳性检验方法: "adf", "kpss", "both" |
-| `adf_significance` | f64 | 0.05 | ADF 检验显著性水平 |
-| `kpss_significance` | f64 | 0.05 | KPSS 检验显著性水平 |
-| `trend_pvalue_threshold` | f64 | 0.05 | 趋势显著性 p 值阈值 |
-| `seasonality_strength_threshold` | f64 | 0.1 | 季节性强度阈值 (0-1) |
-| `irregular_cv_threshold` | f64 | 0.8 | 不规则数据变异系数阈值 |
-| `max_seasonal_period` | usize | 336 | 最大检测周期 |
-| `min_data_length` | usize | 30 | 最小数据点数 |
-| `use_fft` | bool | true | 是否使用 FFT 周期性检测 |
-| `use_acf` | bool | false | 是否使用 ACF 分析 |
+| `stationarity_method` | String | "both" | Stationarity test method: "adf", "kpss", "both" |
+| `adf_significance` | f64 | 0.05 | ADF test significance level |
+| `kpss_significance` | f64 | 0.05 | KPSS test significance level |
+| `trend_pvalue_threshold` | f64 | 0.05 | Trend significance p-value threshold |
+| `seasonality_strength_threshold` | f64 | 0.1 | Seasonality strength threshold (0-1) |
+| `irregular_cv_threshold` | f64 | 0.8 | Coefficient-of-variation threshold for irregular data |
+| `max_seasonal_period` | usize | 336 | Maximum detected period |
+| `min_data_length` | usize | 30 | Minimum number of data points |
+| `use_fft` | bool | true | Whether to use FFT for periodicity detection |
+| `use_acf` | bool | false | Whether to use ACF analysis |
 
-## 输出说明
+## Output Description
 
-`ClassificationResult` 包含完整的分析结果：
+`ClassificationResult` contains the complete analysis result:
 
 ```rust
 pub struct ClassificationResult {
-    pub data_stats: DataStatistics,           // 基础统计
-    pub stationarity: Option<StationarityTest>, // 平稳性测试结果
-    pub trend: Option<TrendAnalysis>,         // 趋势分析
-    pub seasonality: Option<SeasonalityAnalysis>, // 季节性分析
-    pub periodicity: Option<PeriodicityAnalysis>, // 周期性分析
-    pub coefficient_of_variation: f64,        // 变异系数
-    pub classification: SeriesCharacteristic,  // 最终分类
-    pub confidence: f64,                       // 置信度 (0-1)
-    pub reasoning: String,                    // 分类理由
+    pub data_stats: DataStatistics,           // basic statistics
+    pub stationarity: Option<StationarityTest>, // stationarity test result
+    pub trend: Option<TrendAnalysis>,         // trend analysis
+    pub seasonality: Option<SeasonalityAnalysis>, // seasonality analysis
+    pub periodicity: Option<PeriodicityAnalysis>, // periodicity analysis
+    pub coefficient_of_variation: f64,        // coefficient of variation
+    pub classification: SeriesCharacteristic,  // final classification
+    pub confidence: f64,                       // confidence (0-1)
+    pub reasoning: String,                    // classification reasoning
 }
 ```
 
-## 工作原理
+## How It Works
 
-### 平稳性检验
+### Stationarity Tests
 
-- **ADF Test**: 检验原假设（非平稳）。p value < 0.05 表示序列为平稳。
-- **KPSS Test**: 检验原假设（平稳）。p value > 0.05 表示序列为平稳。
+- **ADF Test**: tests the null hypothesis (non-stationary). p value < 0.05 means the series is stationary.
+- **KPSS Test**: tests the null hypothesis (stationary). p value > 0.05 means the series is stationary.
 
-### 趋势检测
+### Trend Detection
 
-- 使用线性回归计算斜率，判断上升/下降趋势
-- 关键指标：t-统计量、p-value、趋势强度
-- 通过 Mann-Kendall 检验验证趋势显著性
+- Linear regression computes the slope to determine upward/downward trends
+- Key indicators: t-statistic, p-value, trend strength
+- Mann-Kendall test validates trend significance
 
-### 季节性检测
+### Seasonality Detection
 
-- STL 分解识别季节分量
-- 计算季节强度 = 1 - Var(残差) / Var(季节+残差)
-- 检验常见周期：7天、24小时等
+- STL decomposition identifies the seasonal component
+- Seasonal strength = 1 - Var(residual) / Var(seasonal + residual)
+- Tests common periods: 7 days, 24 hours, etc.
 
-### 周期性检测
+### Periodicity Detection
 
-- FFT 频域分析识别主导频率
-- ACF 自相关分析识别周期
-- 找到显著的峰值对应的周期
+- FFT frequency-domain analysis identifies dominant frequencies
+- ACF autocorrelation analysis identifies periods
+- Finds the periods corresponding to significant peaks
 
-### 决策规则
+### Decision Rules
 
 ```
 IF CV > 0.8:
-    分类为 Irregular (置信度: 0.3)
-ELSE IF 非平稳:
-    IF 有趋势:
-        IF 有季节性:
-            分类为 SeasonalWithTrend (置信度: 0.85)
+    classify as Irregular (confidence: 0.3)
+ELSE IF non-stationary:
+    IF has trend:
+        IF has seasonality:
+            classify as SeasonalWithTrend (confidence: 0.85)
         ELSE:
-            分类为 Trending (置信度: 0.80)
-    ELSE IF 有季节性:
-        分类为 Seasonal (置信度: 0.75)
+            classify as Trending (confidence: 0.80)
+    ELSE IF has seasonality:
+        classify as Seasonal (confidence: 0.75)
     ELSE:
-        分类为 Stationary (置信度: 0.50)
-ELSE:  # 平稳
-    IF 有季节性:
-        分类为 Seasonal (置信度: 0.85)
-    ELSE IF 有周期性:
-        分类为 Stationary (置信度: 0.70)
+        classify as Stationary (confidence: 0.50)
+ELSE:  # stationary
+    IF has seasonality:
+        classify as Seasonal (confidence: 0.85)
+    ELSE IF has periodicity:
+        classify as Stationary (confidence: 0.70)
     ELSE:
-        分类为 Stationary (置信度: 0.90)
+        classify as Stationary (confidence: 0.90)
 ```
 
-## 集成与应用
+## Integration and Applications
 
-### 与异常检测的结合
+### Combining with Anomaly Detection
 
 ```rust
 use rsod_classifier::classify;
@@ -222,28 +222,28 @@ fn anomaly_detection_with_classification(
     values: &[f64],
     periods: &[usize],
 ) -> Result<()> {
-    // 第一步：分类时序
+    // Step 1: classify the time series
     let classification = classify(timestamps, values)?;
-    println!("时序类型: {:?}", classification.classification);
+    println!("Series type: {:?}", classification.classification);
 
-    // 第二步：根据分类选择异常检测方法
+    // Step 2: choose the anomaly detection method based on the classification
     match classification.classification {
         SeriesCharacteristic::Seasonal { ref periods } => {
-            // 对于季节性数据，使用周期相关的异常检测
+            // For seasonal data, use period-aware anomaly detection
             let result = outlier(
                 TimeSeriesInput::new(timestamps, values),
                 periods,
                 "model-uuid",
             )?;
-            println!("异常得分: {:?}", result.anomalies);
+            println!("Anomaly scores: {:?}", result.anomalies);
         }
         SeriesCharacteristic::Trending(_) => {
-            // 对于趋势数据，使用去趋势的异常检测
-            println!("使用去趋势方法进行异常检测");
+            // For trend data, use detrended anomaly detection
+            println!("Using detrended method for anomaly detection");
         }
         _ => {
-            // 其他情况使用默认方法
-            println!("使用默认异常检测方法");
+            // Other cases use the default method
+            println!("Using default anomaly detection method");
         }
     }
 
@@ -251,58 +251,58 @@ fn anomaly_detection_with_classification(
 }
 ```
 
-## 性能考虑
+## Performance Considerations
 
-- **数据长度**: 建议 100-10000 点
-- **计算复杂度**: O(n log n) for FFT, O(n²) for ACF
-- **内存使用**: 约 8n 字节（n = 数据点数）
+- **Data length**: 100-10000 points recommended
+- **Computational complexity**: O(n log n) for FFT, O(n²) for ACF
+- **Memory usage**: about 8n bytes (n = number of data points)
 
-## 局限与改进方向
+## Limitations and Improvement Directions
 
-### 当前限制
+### Current Limitations
 
-1. 简化的 ADF/KPSS 实现（生产使用建议使用 anofox-forecast）
-2. 对多重周期的检测能力有限
-3. 不支持多变量时序分类
+1. Simplified ADF/KPSS implementation (anofox-forecast recommended for production use)
+2. Limited ability to detect multiple periods
+3. No multivariate time-series classification
 
-### 未来改进
+### Future Improvements
 
-- [ ] 集成 anofox-forecast 的完整 ADF/KPSS 实现
-- [ ] 支持多周期检测和 MSTL 分解
-- [ ] 添加自定义特征提取插件系统
-- [ ] Web UI 用于交互式分类和可视化
-- [ ] 模型序列化和跨会话缓存
+- [ ] Integrate anofox-forecast's complete ADF/KPSS implementation
+- [ ] Support multi-period detection and MSTL decomposition
+- [ ] Add a custom feature-extraction plugin system
+- [ ] Web UI for interactive classification and visualization
+- [ ] Model serialization and cross-session caching
 
-## 依赖项
+## Dependencies
 
-- `rsod-core`: 核心类型和 traits
-- `statrs`: 统计函数和分布
-- `stlrs`: STL 分解
-- `augurs`: 时序分析工具
-- `ndarray`: 数值计算
+- `rsod-core`: core types and traits
+- `statrs`: statistical functions and distributions
+- `stlrs`: STL decomposition
+- `augurs`: time-series analysis utilities
+- `ndarray`: numerical computation
 
-## 测试
+## Testing
 
-运行测试：
+Run the tests:
 
 ```bash
 cargo test -p rsod-classifier
 ```
 
-覆盖的场景：
+Covered scenarios:
 
-- ✓ 常数序列（平稳）  
-- ✓ 趋势序列（上升/下降）
-- ✓ 周期序列
-- ✓ 季节性检测
-- ✓ 缺失值处理
-- ✓ 统计计算
-- ✓ ACF/PACF 计算
+- ✓ Constant series (stationary)  
+- ✓ Trend series (up/down)
+- ✓ Periodic series
+- ✓ Seasonality detection
+- ✓ Missing-value handling
+- ✓ Statistical computations
+- ✓ ACF/PACF computations
 
-## 贡献
+## Contributing
 
-欢迎提交 Bug 报告和功能建议！
+Bug reports and feature suggestions are welcome!
 
-## 许可证
+## License
 
-与 rsod 项目相同
+Same as the rsod project

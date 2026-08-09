@@ -13,7 +13,7 @@ export class DataSource extends DataSourceWithBackend<Alert4MLQuery, Alert4MLDat
     return DEFAULT_ALERT4ML_QUERY;
   }
 
-  // 应用模板变量，在发送请求前，将 query.targets 中的模板变量替换为实际值
+  // Apply template variables: replace template variables in query.targets before sending the request
   applyTemplateVariables(query: Alert4MLQuery, scopedVars: ScopedVars) {
     const currentDataSourceString = JSON.stringify(query.targets);
     const currentDataSource = getTemplateSrv().replace(currentDataSourceString, scopedVars);

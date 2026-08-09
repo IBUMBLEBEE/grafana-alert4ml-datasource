@@ -2,7 +2,7 @@ import React from 'react';
 import { Stack } from '@grafana/ui';
 
 export interface BaselineParams {
-  // 预留：后续添加 Baseline 专属算法参数
+  // Reserved: Baseline-specific algorithm parameters to be added later
 }
 
 interface BaselineProps {
@@ -13,7 +13,7 @@ interface BaselineProps {
 export const Baseline: React.FC<BaselineProps> = ({ params: _params, onParamsChange: _onParamsChange }) => {
   return (
     <Stack direction="column" gap={1}>
-      {/* 后续在此处添加 Baseline 算法参数 */}
+      {/* Baseline algorithm parameters go here later */}
     </Stack>
   );
 };

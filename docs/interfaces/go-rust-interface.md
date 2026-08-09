@@ -1,34 +1,37 @@
-# Alert4ML Go-Rust 交互接口规范（历史文档）
+# Alert4ML Go-Rust Interface Specification (Historical Document)
 
-> **⚠️ 已废弃**：Go 后端（`pkg/`）已被 `grafana-plugin-sdk-rust` 实现的
-> `rsod/crates/rsod-backend` 整体替换，插件路径不再存在 Go-Rust 边界。
-> 本文档保留用于追溯旧 FFI 协议；新架构见
-> `rsod/crates/rsod-backend/src/`（直接调用 rsod 算法 crate，无 C ABI）。
-> 迁移中无法表达的保真度缺口见 [第 10 节](#10-插件路径替换为-grafana-plugin-sdk-rust-后的保真度缺口)。
+> **⚠️ Deprecated**: the Go backend (`pkg/`) has been fully replaced by
+> `rsod/crates/rsod-backend` implemented with `grafana-plugin-sdk-rust`; the
+> plugin path no longer has a Go-Rust boundary. This document is kept for
+> tracing the old FFI protocol; see `rsod/crates/rsod-backend/src/` for the new
+> architecture (direct calls to the rsod algorithm crates, no C ABI).
+> Fidelity gaps that the migration could not express are listed in
+> [Section 10](#10-fidelity-gaps-after-replacing-the-plugin-path-with-grafana-plugin-sdk-rust).
 
-> 依据历史实现整理，来源于已删除的 `pkg/rsod/rsod.go`、`rsod/crates/rsod-ffi/`
-> （`src/lib.rs`、`include/rsod_go.h`；该 crate 已随 Go 迁移从 workspace 移除）。
-> 移除前版本见 git 历史。
+> Reconstructed from the historical implementation, sourced from the deleted
+> `pkg/rsod/rsod.go` and `rsod/crates/rsod-ffi/`
+> (`src/lib.rs`, `include/rsod_go.h`; the crate was removed from the workspace
+> along with the Go migration). See git history for pre-removal versions.
 
-## 1. 适用范围
+## 1. Scope
 
-本文件描述 Alert4ML 在 Go 后端与 Rust ML 引擎之间的进程内交互协议，覆盖以下内容：
+This document describes the in-process interaction protocol between the Alert4ML Go backend and the Rust ML engine, covering:
 
-- Go 如何把 Grafana `data.Frame` 转为 Arrow 并传入 Rust
-- Rust FFI 暴露了哪些 C ABI 入口
-- 每个入口函数的输入输出 schema、JSON options 和返回语义
-- 当前实现下的内存所有权、错误语义和已知不一致点
+- How Go converts Grafana `data.Frame` into Arrow and passes it to Rust
+- Which C ABI entry points the Rust FFI exposes
+- The input/output schema, JSON options, and return semantics of each entry point
+- Memory ownership, error semantics, and known inconsistencies in the current implementation
 
-本文件只描述 Go-Rust 边界，不描述 TS-Go 查询协议。
+This document only describes the Go-Rust boundary, not the TS-Go query protocol.
 
-## 2. 总体交互模型
+## 2. Overall Interaction Model
 
-Go 与 Rust 的交互统一遵循两条通道：
+Go and Rust interact through two unified channels:
 
-1. 时序数据通过 Apache Arrow C Data Interface 传输
-2. 算法参数通过 JSON C 字符串传输
+1. Time-series data is transferred via the Apache Arrow C Data Interface
+2. Algorithm parameters are transferred as JSON C strings
 
-运行时调用链如下：
+The runtime call chain is as follows:
 
 ```text
 Grafana data.Frame
@@ -36,20 +39,20 @@ Grafana data.Frame
   -> Go: cdata.ExportArrowRecordBatch
   -> C ABI: FFI_ArrowSchema* + FFI_ArrowArray* + const char* options_json
   -> Rust FFI: import_ffi_struct_array / parse_json_options
-  -> Rust 算法 crate
+  -> Rust algorithm crates
   -> Rust FFI: export_ffi_result
   -> Go: cdata.ImportCRecordBatch / data.FromArrowRecord
 ```
 
-其中：
+Where:
 
-- Go 侧入口位于 [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
-- Rust FFI 边界位于 `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史）
-- C 头文件位于 `rsod/crates/rsod-ffi/include/rsod_go.h`（crate 已移除，见 git 历史）
+- The Go-side entry point is in [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
+- The Rust FFI boundary is in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
+- The C header is in `rsod/crates/rsod-ffi/include/rsod_go.h` (crate removed, see git history)
 
-## 3. C ABI 总览
+## 3. C ABI Overview
 
-当前头文件暴露 5 个入口：
+The current header exposes 5 entry points:
 
 ```c
 bool outlier_fit_predict(
@@ -91,121 +94,121 @@ bool rsod_forecaster(
 bool rsod_storage_init(bool trial_mode, const char *pg_dsn);
 ```
 
-除 `rsod_storage_init` 外，其余 4 个入口都遵循相同的参数顺序：
+Except for `rsod_storage_init`, the other 4 entry points follow the same parameter order:
 
 ```text
 data_schema, data_array, history_schema, history_array, options_json, result_schema, result_array
 ```
 
-其中 `outlier_fit_predict` 为了保持接口统一，仍保留 history 参数位，但当前实现不会读取历史数据。
+`outlier_fit_predict` keeps the history parameter slots for interface uniformity, but the current implementation never reads history data.
 
-## 4. 通用传输契约
+## 4. Common Transfer Contract
 
-### 4.1 输入数据契约
+### 4.1 Input Data Contract
 
-Rust FFI 通过 `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `struct_array_to_input` 读取输入，当前实现有两个重要事实：
+The Rust FFI reads input via `struct_array_to_input` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history). The current implementation has two important facts:
 
-1. 按列位置读取，而不是按列名读取
-2. 第 0 列和第 1 列都必须能下转成 `Float64Array`
+1. Columns are read by position, not by name
+2. Both column 0 and column 1 must downcast to `Float64Array`
 
-因此当前 Go -> Rust 输入 record batch 的最小契约为：
+Therefore the minimal contract for the current Go -> Rust input record batch is:
 
-| 列序号 | 语义 | Rust 读取类型 | 必填 |
+| Column index | Semantics | Rust read type | Required |
 |---|---|---|---|
-| 0 | timestamp | `Float64Array` | 是 |
-| 1 | value | `Float64Array` | 是 |
+| 0 | timestamp | `Float64Array` | Yes |
+| 1 | value | `Float64Array` | Yes |
 
-补充说明：
+Additional notes:
 
-- Go 侧目前通过 `tableToRecord` 仅取前两列传给 Rust。
-- Rust 侧不会校验列名是否为 `time` / `value`，只按位置解析。
-- 如果列类型不是 `Float64Array`，当前实现会在 Rust 中 `unwrap()` 失败并触发 panic 风险。
+- The Go side currently passes only the first two columns to Rust via `tableToRecord`.
+- The Rust side does not validate the column names (`time` / `value`); it parses by position only.
+- If a column type is not `Float64Array`, the current implementation fails in a Rust `unwrap()` and risks a panic.
 
-### 4.2 history 数据契约
+### 4.2 history Data Contract
 
 - `baseline_fit_predict`
 - `dynamics_fit_predict`
 - `funnel_fit_predict`
 - `rsod_forecaster`
 
-这 4 个入口要求同时提供 `data_*` 与 `history_*` 两组 Arrow 指针。
+These 4 entry points require both the `data_*` and `history_*` Arrow pointer pairs.
 
-- Go 侧包装函数会先校验 `historyFrame != nil`
-- Rust 侧 `import_ffi_struct_array` 若收到空指针会直接返回 `None`，进而让 FFI 返回 `false`
+- The Go wrapper functions first validate `historyFrame != nil`
+- On the Rust side, `import_ffi_struct_array` returns `None` for null pointers, which makes the FFI return `false`
 
-`outlier_fit_predict` 允许传入空 history 指针，当前 Go 实现也确实传入 `nil`。
+`outlier_fit_predict` accepts null history pointers, and the current Go implementation indeed passes `nil`.
 
-### 4.3 options_json 契约
+### 4.3 options_json Contract
 
-- `options_json` 必须是 UTF-8 JSON 文本
-- Rust 侧通过 `parse_json_options<T>` 反序列化为具体 options struct
-- JSON 无法解析、字段类型不匹配或空指针时，FFI 返回 `false`
+- `options_json` must be UTF-8 JSON text
+- The Rust side deserializes it into a concrete options struct via `parse_json_options<T>`
+- The FFI returns `false` when the JSON cannot be parsed, field types mismatch, or a pointer is null
 
-### 4.4 返回值契约
+### 4.4 Return Value Contract
 
-- FFI 层只返回 `bool`
-- `true` 表示 Rust 已成功把结果导出到 `result_schema` 与 `result_array`
-- `false` 表示导入 Arrow、解析 JSON、执行算法或导出结果的某一步失败
+- The FFI layer only returns `bool`
+- `true` means Rust successfully exported the result into `result_schema` and `result_array`
+- `false` means one of the steps failed: importing Arrow, parsing JSON, running the algorithm, or exporting the result
 
-当前 FFI ABI 不直接返回错误消息；详细错误大多停留在 Go 包装层或 Rust 内部日志中。
+The current FFI ABI does not return error messages directly; detailed errors mostly stay in the Go wrapper layer or Rust internal logs.
 
-## 5. 内存所有权与生命周期
+## 5. Memory Ownership and Lifecycle
 
-### 5.1 Arrow 指针
+### 5.1 Arrow Pointers
 
-当前实现遵循 Apache Arrow C Data Interface 的典型所有权模型：
+The current implementation follows the typical ownership model of the Apache Arrow C Data Interface:
 
-- Go 是输入 Arrow 结构的生产者
-- Rust 通过 `from_ffi` 导入输入 Arrow 数据
-- Rust 是输出 Arrow 结构的生产者
-- Go 通过 `ImportCRecordBatch` 导入输出结果
+- Go produces the input Arrow structures
+- Rust imports the input Arrow data via `from_ffi`
+- Rust produces the output Arrow structures
+- Go imports the output results via `ImportCRecordBatch`
 
-Go 侧当前做法：
+Current Go-side practice:
 
-- 输入通过 `cdata.ExportArrowRecordBatch` 导出
-- 输入与输出都在 Go 侧 `defer cdata.ReleaseCArrowArray/Schema(...)`
+- Inputs are exported via `cdata.ExportArrowRecordBatch`
+- Both inputs and outputs are released Go-side via `defer cdata.ReleaseCArrowArray/Schema(...)`
 
-Rust 侧当前做法：
+Current Rust-side practice:
 
-- `import_ffi_struct_array` 从原始指针构造 `FFI_ArrowArray` 和 `FFI_ArrowSchema`
-- `export_ffi_result` 通过 `to_ffi` 把 `StructArray` 导出到输出指针
+- `import_ffi_struct_array` builds `FFI_ArrowArray` and `FFI_ArrowSchema` from raw pointers
+- `export_ffi_result` exports the `StructArray` to the output pointers via `to_ffi`
 
-### 5.2 C 字符串
+### 5.2 C Strings
 
-`options_json` 和 `pg_dsn` 都通过 `C.CString(...)` 从 Go 传入 Rust。
+Both `options_json` and `pg_dsn` are passed from Go to Rust via `C.CString(...)`.
 
-当前实现中：
+In the current implementation:
 
-- `BaselineFitPredict` 会释放 `cOptsJson`
-- `DynamicsFitPredict` 会释放 `cOptsJson`
-- `RSODStorageInit` 会释放 `cPgDSN`
-- `OutlierFitPredict` 当前直接传 `C.CString(string(optsJson))`，没有显式释放
-- `RSODForecaster` 当前直接传 `C.CString(string(optsJson))`，没有显式释放
+- `BaselineFitPredict` releases `cOptsJson`
+- `DynamicsFitPredict` releases `cOptsJson`
+- `RSODStorageInit` releases `cPgDSN`
+- `OutlierFitPredict` currently passes `C.CString(string(optsJson))` directly without an explicit release
+- `RSODForecaster` currently passes `C.CString(string(optsJson))` directly without an explicit release
 
-因此从接口约束上看，Go 侧应负责释放自己创建的 C 字符串；当前 `outlier` 和 `forecaster` 包装实现存在释放不一致，需要后续代码层面对齐。
+So per the interface contract, the Go side is responsible for releasing the C strings it creates; the current `outlier` and `forecaster` wrappers have inconsistent release behavior that should be aligned at the code level later.
 
-## 6. 各入口函数规范
+## 6. Per-Entry-Point Specifications
 
 ## 6.1 outlier_fit_predict
 
-### Go 包装函数
+### Go Wrapper Function
 
-- [pkg/rsod/rsod.go](pkg/rsod/rsod.go) 中的 `OutlierFitPredict`
+- `OutlierFitPredict` in [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
 
-### Rust 目标函数
+### Rust Target Function
 
-- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `outlier_fit_predict`
-- 内部委派到 `rsod_outlier::outlier`
+- `outlier_fit_predict` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
+- Internally delegates to `rsod_outlier::outlier`
 
-### 输入
+### Input
 
-- `data_schema` / `data_array`: 必填，2 列 `Float64Array`
-- `history_schema` / `history_array`: 当前忽略，可以为空
+- `data_schema` / `data_array`: required, 2 columns of `Float64Array`
+- `history_schema` / `history_array`: currently ignored, may be empty
 - `options_json`: `OutlierOptions`
 
-### JSON 参数
+### JSON Parameters
 
-Go 结构体：
+Go struct:
 
 ```json
 {
@@ -219,9 +222,9 @@ Go 结构体：
 }
 ```
 
-字段映射：
+Field mapping:
 
-| JSON 字段 | Go 类型 | Rust 类型 |
+| JSON field | Go type | Rust type |
 |---|---|---|
 | `model_name` | `string` | `String` |
 | `periods` | `[]uint` | `Vec<usize>` |
@@ -231,35 +234,35 @@ Go 结构体：
 | `max_tree_depth` | `*int` | `Option<usize>` |
 | `extension_level` | `*int` | `Option<usize>` |
 
-### 输出
+### Output
 
-`outlier_fit_predict` 与其他算法不同，当前返回 2 列结构：
+Unlike the other algorithms, `outlier_fit_predict` currently returns a 2-column structure:
 
-| 列名 | 类型 | 含义 |
+| Column | Type | Semantics |
 |---|---|---|
-| `time` | `Float64` | 结果时间戳，当前实现直接把 `DetectionResult.timestamps` 转成 `f64` |
-| `value` | `Float64` | 异常结果列，当前导出的是 `det.anomalies` |
+| `time` | `Float64` | Result timestamps; the current implementation converts `DetectionResult.timestamps` to `f64` directly |
+| `value` | `Float64` | Anomaly result column; currently exports `det.anomalies` |
 
-Go 侧 `OutlierFitPredict` 只读取第 2 列并返回 `[]float64`，不会把 Rust 输出再组装成 `data.Frame`。
+The Go-side `OutlierFitPredict` only reads the second column and returns `[]float64`; it does not reassemble the Rust output into a `data.Frame`.
 
 ## 6.2 baseline_fit_predict
 
-### Go 包装函数
+### Go Wrapper Function
 
-- [pkg/rsod/rsod.go](pkg/rsod/rsod.go) 中的 `BaselineFitPredict`
+- `BaselineFitPredict` in [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
 
-### Rust 目标函数
+### Rust Target Function
 
-- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `baseline_fit_predict`
-- 内部通过 `run_detector_with_history` 委派到 `rsod_baseline::baseline_detect`
+- `baseline_fit_predict` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
+- Internally delegates to `rsod_baseline::baseline_detect` via `run_detector_with_history`
 
-### 输入
+### Input
 
-- `data_schema` / `data_array`: 必填
-- `history_schema` / `history_array`: 必填
+- `data_schema` / `data_array`: required
+- `history_schema` / `history_array`: required
 - `options_json`: `BaselineOptions`
 
-### JSON 参数
+### JSON Parameters
 
 ```json
 {
@@ -272,43 +275,43 @@ Go 侧 `OutlierFitPredict` 只读取第 2 列并返回 `[]float64`，不会把 R
 }
 ```
 
-说明：
+Notes:
 
-- Go 侧 `BaselineOptions` 中大部分字段不是指针，JSON 序列化时通常会直接带出具体值
-- Rust 侧对应字段多为 `Option<u32>` / `Option<f64>` / `Option<bool>`，允许缺省
+- Most fields of the Go-side `BaselineOptions` are not pointers, so JSON serialization usually carries concrete values
+- The corresponding Rust-side fields are mostly `Option<u32>` / `Option<f64>` / `Option<bool>`, allowing omission
 
-### 输出
+### Output
 
-当前返回 5 列结构：
+Currently returns a 5-column structure:
 
-| 列名 | 类型 | 可空 | 含义 |
+| Column | Type | Nullable | Semantics |
 |---|---|---|---|
-| `time` | `Int64` | 否 | 当前实现导出 `DetectionResult.timestamps` |
-| `baseline` | `Float64` | 是 | 基线值 |
-| `lower_bound` | `Float64` | 是 | 下界 |
-| `upper_bound` | `Float64` | 是 | 上界 |
-| `anomaly` | `Float64` | 是 | 异常点时为原始值，正常时常为 `null` |
+| `time` | `Int64` | No | The current implementation exports `DetectionResult.timestamps` |
+| `baseline` | `Float64` | Yes | Baseline value |
+| `lower_bound` | `Float64` | Yes | Lower bound |
+| `upper_bound` | `Float64` | Yes | Upper bound |
+| `anomaly` | `Float64` | Yes | Original value at anomaly points; usually `null` on normal points |
 
-Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中是 nullable 列。
+The Rust FFI converts `NaN` to `null` before exporting, so the last 4 columns are nullable columns in Arrow.
 
 ## 6.3 dynamics_fit_predict
 
-### Go 包装函数
+### Go Wrapper Function
 
-- [pkg/rsod/rsod.go](pkg/rsod/rsod.go) 中的 `DynamicsFitPredict`
+- `DynamicsFitPredict` in [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
 
-### Rust 目标函数
+### Rust Target Function
 
-- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `dynamics_fit_predict`
-- 内部通过 `run_detector_with_history` 委派到 `rsod_baseline::dynamics::dynamics_detect`
+- `dynamics_fit_predict` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
+- Internally delegates to `rsod_baseline::dynamics::dynamics_detect` via `run_detector_with_history`
 
-### 输入
+### Input
 
-- `data_schema` / `data_array`: 必填
-- `history_schema` / `history_array`: 必填
+- `data_schema` / `data_array`: required
+- `history_schema` / `history_array`: required
 - `options_json`: `BaselineConfig`
 
-### JSON 参数
+### JSON Parameters
 
 ```json
 {
@@ -318,46 +321,46 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 }
 ```
 
-字段映射：
+Field mapping:
 
-| JSON 字段 | Go 类型 | Rust 类型 |
+| JSON field | Go type | Rust type |
 |---|---|---|
 | `trend` | `string` | `Trend` |
 | `period_days` | `int` | `Option<u32>` |
 | `std_dev_multiplier` | `float64` | `f64` |
 
-### 输出
+### Output
 
-输出 schema 与 `baseline_fit_predict` 相同：
+The output schema is the same as `baseline_fit_predict`:
 
-| 列名 | 类型 | 可空 |
+| Column | Type | Nullable |
 |---|---|---|
-| `time` | `Int64` | 否 |
-| `baseline` | `Float64` | 是 |
-| `lower_bound` | `Float64` | 是 |
-| `upper_bound` | `Float64` | 是 |
-| `anomaly` | `Float64` | 是 |
+| `time` | `Int64` | No |
+| `baseline` | `Float64` | Yes |
+| `lower_bound` | `Float64` | Yes |
+| `upper_bound` | `Float64` | Yes |
+| `anomaly` | `Float64` | Yes |
 
-当 history 为空时，Rust 会返回 cold-start 结果：
+When history is empty, Rust returns a cold-start result:
 
-- `time` 保留
-- `baseline` / `lower_bound` / `upper_bound` / `anomaly` 为 `NaN`
-- FFI 导出时这些 `NaN` 会变成 `null`
+- `time` is preserved
+- `baseline` / `lower_bound` / `upper_bound` / `anomaly` are `NaN`
+- These `NaN`s become `null` when exported through the FFI
 
 ## 6.4 funnel_fit_predict
 
-### Rust 目标函数
+### Rust Target Function
 
-- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `funnel_fit_predict`
-- 内部委派到 `rsod_funnel::funnel_detect`（L1 统计预筛 + 可选 L2 ML 升级）
+- `funnel_fit_predict` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
+- Internally delegates to `rsod_funnel::funnel_detect` (L1 statistical pre-filter + optional L2 ML escalation)
 
-### 输入
+### Input
 
-- `data_schema` / `data_array`: 当前窗口，必填
-- `history_schema` / `history_array`: 历史窗口，必填（用于构建 `SeasonalProfile`）
+- `data_schema` / `data_array`: current window, required
+- `history_schema` / `history_array`: history window, required (used to build the `SeasonalProfile`)
 - `options_json`: `FunnelOptions`
 
-### JSON 参数（主要字段）
+### JSON Parameters (main fields)
 
 ```json
 {
@@ -382,36 +385,36 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 
 `alert_output_mode` shapes how anomaly flags are returned for repeated Grafana Alerting evals:
 
-| 值 | 含义 |
+| Value | Semantics |
 |----|------|
-| `full`（默认） | 保留所有检测到的异常点 |
-| `latest_only` | eval 切片内仅最右侧（最新）异常点 `anomaly = 1` |
-| `dedupe` | 已在上次 eval 输出过的时间戳不再重复告警（状态持久化在 profile 中） |
+| `full` (default) | Keep all detected anomaly points |
+| `latest_only` | Only the rightmost (newest) anomaly point in the eval slice has `anomaly = 1` |
+| `dedupe` | Timestamps already emitted by a previous eval do not alert again (state persisted in the profile) |
 
-推荐 Alerting 组合：`eval_window_secs` = 评估间隔秒数 + `alert_output_mode` = `dedupe` 或 `latest_only`。
+Recommended Alerting combination: `eval_window_secs` = evaluation interval in seconds + `alert_output_mode` = `dedupe` or `latest_only`.
 
-### 输出
+### Output
 
-与 `dynamics_fit_predict` 相同：5 列 `time`, `baseline`, `lower_bound`, `upper_bound`, `anomaly`（timestamp 为 `Int64` 毫秒）。
+Same as `dynamics_fit_predict`: 5 columns `time`, `baseline`, `lower_bound`, `upper_bound`, `anomaly` (timestamps as `Int64` milliseconds).
 
 ## 6.5 rsod_forecaster
 
-### Go 包装函数
+### Go Wrapper Function
 
-- [pkg/rsod/rsod.go](pkg/rsod/rsod.go) 中的 `RSODForecaster`
+- `RSODForecaster` in [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
 
-### Rust 目标函数
+### Rust Target Function
 
-- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `rsod_forecaster`
-- 内部通过 `run_detector_with_history` 委派到 `rsod_forecaster::forecast`
+- `rsod_forecaster` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
+- Internally delegates to `rsod_forecaster::forecast` via `run_detector_with_history`
 
-### 输入
+### Input
 
-- `data_schema` / `data_array`: 必填
-- `history_schema` / `history_array`: 必填
+- `data_schema` / `data_array`: required
+- `history_schema` / `history_array`: required
 - `options_json`: `ForecasterOptions`
 
-### JSON 参数
+### JSON Parameters
 
 ```json
 {
@@ -432,9 +435,9 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 }
 ```
 
-字段映射：
+Field mapping:
 
-| JSON 字段 | Go 类型 | Rust 类型 |
+| JSON field | Go type | Rust type |
 |---|---|---|
 | `model_name` | `string` | `String` |
 | `periods` | `[]uint` | `Vec<usize>` |
@@ -451,159 +454,139 @@ Rust FFI 在导出前会把 `NaN` 转为 `null`，因此后 4 列在 Arrow 中�
 | `seed` | `*uint64` | `Option<u64>` |
 | `log_iterations` | `*int` | `Option<usize>` |
 
-### 输出
+### Output
 
-当前返回 5 列结构：
+Currently returns a 5-column structure:
 
-| 列名 | 类型 | 可空 | 含义 |
+| Column | Type | Nullable | Semantics |
 |---|---|---|---|
-| `time` | `Float64` | 否 | 预测时间戳 |
-| `pred` | `Float64` | 是 | 预测值 |
-| `lower_bound` | `Float64` | 是 | 下界 |
-| `upper_bound` | `Float64` | 是 | 上界 |
-| `anomaly` | `Float64` | 是 | 异常点为原始值，正常时通常为 `null` |
+| `time` | `Float64` | No | Forecast timestamps |
+| `pred` | `Float64` | Yes | Predicted value |
+| `lower_bound` | `Float64` | Yes | Lower bound |
+| `upper_bound` | `Float64` | Yes | Upper bound |
+| `anomaly` | `Float64` | Yes | Original value at anomaly points; usually `null` on normal points |
 
-与 baseline/dynamics 一样，Rust FFI 在导出前会把 `NaN` 转为 `null`。
+As with baseline/dynamics, the Rust FFI converts `NaN` to `null` before exporting.
 
 ## 6.6 rsod_storage_init
 
-### Go 包装函数
+### Go Wrapper Function
 
-- [pkg/rsod/rsod.go](pkg/rsod/rsod.go) 中的 `RSODStorageInit`
+- `RSODStorageInit` in [pkg/rsod/rsod.go](pkg/rsod/rsod.go)
 
-### Rust 目标函数
+### Rust Target Function
 
-- `rsod/crates/rsod-ffi/src/lib.rs`（crate 已移除，见 git 历史） 中的 `rsod_storage_init`
+- `rsod_storage_init` in `rsod/crates/rsod-ffi/src/lib.rs` (crate removed, see git history)
 
-### 参数
+### Parameters
 
-| 参数 | 类型 | 含义 |
+| Parameter | Type | Semantics |
 |---|---|---|
-| `trial_mode` | `bool` | `true` 表示内存 SQLite，`false` 表示 PostgreSQL |
-| `pg_dsn` | `const char*` | PostgreSQL DSN，`trial_mode=true` 时可为空 |
+| `trial_mode` | `bool` | `true` means in-memory SQLite, `false` means PostgreSQL |
+| `pg_dsn` | `const char*` | PostgreSQL DSN; may be empty when `trial_mode=true` |
 
-### 返回
+### Return
 
-- `true`: 初始化成功
-- `false`: 初始化失败或 Rust 内部发生 panic
+- `true`: initialization succeeded
+- `false`: initialization failed or a panic occurred inside Rust
 
-当前 Rust 实现会用 `catch_unwind` 包住初始化流程，避免插件进程因存储初始化 panic 直接崩溃。
+The current Rust implementation wraps the initialization flow with `catch_unwind` so the plugin process does not crash from a storage-init panic.
 
-## 7. 错误语义
+## 7. Error Semantics
 
-Go-Rust 边界当前采用“窄接口 + bool 结果”模型：
+The Go-Rust boundary currently uses a "narrow interface + bool result" model:
 
-- Rust FFI 不把结构化错误返回给 Go
-- FFI 失败统一表现为 `false`
-- Go 包装层再把 `false` 转为固定错误文本，例如：
+- The Rust FFI does not return structured errors to Go
+- FFI failures uniformly manifest as `false`
+- The Go wrapper layer then converts `false` into fixed error texts, e.g.:
   - `outlier fit predict failed`
   - `baseline fit predict failed (duration: ...)`
   - `dynamics fit predict failed (duration: ...)`
   - `forecaster failed (duration: ...)`
 
-这意味着：
+This means:
 
-- FFI 调用方可以判断成功或失败
-- 但无法仅凭返回值区分是 Arrow 导入失败、JSON 解析失败、算法执行失败还是 Arrow 导出失败
+- FFI callers can tell success from failure
+- But they cannot tell from the return value alone whether the failure was Arrow import, JSON parsing, algorithm execution, or Arrow export
 
-## 8. 当前实现下的关键约束与已知不一致
+## 8. Key Constraints and Known Inconsistencies in the Current Implementation
 
-### 8.1 输入按位置，不按列名
+### 8.1 Input by Position, Not by Column Name
 
-Rust 当前只读取第 0 列和第 1 列，因此列顺序是硬契约。
+Rust currently reads only columns 0 and 1, so column order is a hard contract.
 
-### 8.2 时间戳语义尚未完全统一
+### 8.2 Timestamp Semantics Not Fully Unified
 
-从当前代码可直接观察到：
+Directly observable from the current code:
 
-- `baseline_detect` / `dynamics_detect` 会把输入时间戳乘以 `1000` 生成 `ts_ms`，最终经 FFI 作为 `Int64` 导出
-- `rsod_forecaster` 在构造 `DetectionResult` 时直接把输入 `timestamps[i]` 转成 `i64`
-- `outlier_fit_predict` 导出时也只是把 `DetectionResult.timestamps` 转成 `Float64`
+- `baseline_detect` / `dynamics_detect` multiply input timestamps by `1000` to produce `ts_ms`, eventually exported through the FFI as `Int64`
+- `rsod_forecaster` converts the input `timestamps[i]` to `i64` directly when constructing `DetectionResult`
+- `outlier_fit_predict` also just converts `DetectionResult.timestamps` to `Float64` on export
 
-因此当前代码路径里的“时间戳单位”并非所有算法完全一致。文档应以代码实际行为为准，任何后续统一都需要同步更新本文件。
+Therefore the "timestamp unit" is not identical across all algorithms in the current code paths. The documentation should defer to the actual code behavior; any future unification must update this document accordingly.
 
-### 8.3 nullable 语义仅适用于 5 列输出
+### 8.3 Nullable Semantics Only Apply to 5-Column Outputs
 
-`baseline` / `dynamics` / `forecast` 三类输出在 Rust FFI 中会执行 `nan_to_option`：
+The `baseline` / `dynamics` / `forecast` outputs run `nan_to_option` in the Rust FFI:
 
 - `NaN` -> `null`
-- 非 `NaN` -> 普通 `Float64`
+- non-`NaN` -> regular `Float64`
 
-而 `outlier_fit_predict` 当前 2 列输出不会做这一步转换。
+But the current 2-column `outlier_fit_predict` output does not do this conversion.
 
-### 8.4 Go 侧 CString 释放尚未完全对齐
+### 8.4 Go-Side CString Release Not Fully Aligned
 
-当前 `OutlierFitPredict` 和 `RSODForecaster` 没有释放 `C.CString(...)` 创建的字符串，这属于实现层问题，不改变 ABI，但应在后续修正。
+`OutlierFitPredict` and `RSODForecaster` currently do not release the strings created by `C.CString(...)`. This is an implementation-layer issue that does not change the ABI, but should be fixed later.
 
-## 10. 插件路径替换为 grafana-plugin-sdk-rust 后的保真度缺口
+## 10. Fidelity Gaps After Replacing the Plugin Path with grafana-plugin-sdk-rust
 
-> 本文件的 FFI 协议描述的是旧 Go 后端；`rsod/crates/rsod-backend` 已直接调用
-> rsod 算法 crate，不再经过 C ABI。下列缺口是「行为等价迁移」中无法由
-> grafana-plugin-sdk-rust 表达的差异，迁移后必须知晓（详见
-> `rsod/crates/rsod-backend/src/render.rs` 等处的源码注释）。
+> The FFI protocol in this document describes the old Go backend;
+> `rsod/crates/rsod-backend` now calls the rsod algorithm crates directly and
+> no longer goes through the C ABI. The gaps below are differences that a
+> "behavior-equivalent migration" could not express with
+> grafana-plugin-sdk-rust and must be known after the migration (see the source
+> comments in `rsod/crates/rsod-backend/src/render.rs` etc.).
 
-### 10.1 Frame `meta.type` —— 已解决（vendored SDK 扩展）
+### 10.1 Frame `meta.type` — Resolved (vendored SDK extension)
 
-Go 后端通过 `frame.Meta.Type = "timeseries-wide"` 声明帧类型。vendored
-SDK（`rsod/vendor/grafana-plugin-sdk`）的 `Metadata` 已新增
-`type: Option<String>`（serde rename `"type"`），`render.rs` 在 baseline 与
-forecast 帧上设置 `timeseries_wide_meta()`，与 Go 输出一致。旧 JSON 无
-`type` 字段时反序列化为 `None`，向后兼容。
+The Go backend declared the frame type via `frame.Meta.Type = "timeseries-wide"`. The vendored SDK (`rsod/vendor/grafana-plugin-sdk`) `Metadata` now adds `type: Option<String>` (serde rename `"type"`), and `render.rs` sets `timeseries_wide_meta()` on baseline and forecast frames, matching the Go output. Old JSON without a `type` field deserializes to `None`, keeping backward compatibility.
 
-### 10.2 `FieldConfig.color` —— 已解决（vendored SDK 扩展）
+### 10.2 `FieldConfig.color` — Resolved (vendored SDK extension)
 
-Go 的 `FieldConfig` 支持 `Color`（异常点渲染为红色等）。vendored SDK 已新增
-`ColorConfig { mode, fixedColor }`（`FieldConfig.color: Option<ColorConfig>`），
-`render.rs` 复刻 Go：bounds 列 `#808080`/fixed、异常列 `red`/fixed（baseline
-值列与 pred 列无颜色，与 Go 注释掉的 `Color` 一致）；outlier 帧值列 `red`。
-None 时 `skip_serializing_none` 不输出，向后兼容。
+Go's `FieldConfig` supports `Color` (anomaly points rendered in red, etc.). The vendored SDK now adds `ColorConfig { mode, fixedColor }` (`FieldConfig.color: Option<ColorConfig>`), and `render.rs` replicates Go: bounds columns `#808080`/fixed, anomaly column `red`/fixed (the baseline value column and the pred column have no color, matching Go's commented-out `Color`); the outlier frame value column is `red`. When `None`, `skip_serializing_none` omits it, keeping backward compatibility.
 
-### 10.3 错误语义：全请求失败 → 单查询失败
+### 10.3 Error Semantics: Whole-Request Failure → Per-Query Failure
 
-Go 后端任一查询出错即整个 `QueryData` 请求失败；SDK 是流式响应，Rust
-迁移后错误以 per-query 的 `QueryError::Internal` 返回，Grafana 只对失败的
-那个查询显示错误。错误文本与 Go 保持逐字一致（如 `datasource query: ...`、
-`funnel history query returned no frames for refId ...`）。
+In the Go backend, any failing query fails the entire `QueryData` request; the SDK is streaming. After the Rust migration, errors are returned per query as `QueryError::Internal`, and Grafana only shows an error for the failing query. Error texts match Go verbatim (e.g. `datasource query: ...`, `funnel history query returned no frames for refId ...`).
 
-### 10.4 存储初始化：从「从不初始化」改为「按配置初始化」
+### 10.4 Storage Init: From "Never Initialized" to "Initialized on Demand"
 
-Go 后端的 `RSODStorageInit` 从未被调用，因此即使配置了 PostgreSQL，
-funnel 模型持久化也总是落到 SQLite in-memory。Rust 迁移在健康检查和
-funnel 查询前 best-effort 调用 `rsod_storage::init_db_with_config`，
-trial_mode=false 且有合法 DSN 时会真正使用 PostgreSQL —— 这是对旧行为的
-有意修正，不是回归。
+The Go backend never called `RSODStorageInit`, so even with PostgreSQL configured, funnel model persistence always fell back to SQLite in-memory. The Rust migration best-effort calls `rsod_storage::init_db_with_config` before health checks and funnel queries; with `trial_mode=false` and a valid DSN it actually uses PostgreSQL — an intentional fix of the old behavior, not a regression.
 
-### 10.5 非异常值：NaN → null
+### 10.5 Non-Anomaly Values: NaN → null
 
-Go 的 outlier 输出对非异常位置写 `math.NaN()`；Rust 迁移写 Arrow null。
-两种值在 Grafana 渲染中都表现为数据缺口，效果等价。
+Go's outlier output writes `math.NaN()` at non-anomaly positions; the Rust migration writes Arrow null. Both render as data gaps in Grafana with equivalent effect.
 
-### 10.6 健康检查的 URL 校验时机
+### 10.6 Health Check URL Validation Timing
 
-Go 先 `url.Parse` 再 ping，坏 URL 报 `invalid URL: ...`；Rust 用 reqwest
-在请求时暴露坏 URL，错误消息来自 reqwest。其余健康检查分支（API Token、
-登录 ping、trial 模式、PG 字段检查、PG ping）与 Go 逐字一致。
+Go parses the URL with `url.Parse` before pinging, reporting `invalid URL: ...` for bad URLs; Rust uses reqwest and surfaces bad URLs at request time, with the error message coming from reqwest. The remaining health check branches (API Token, login ping, trial mode, PG field checks, PG ping) match Go verbatim.
 
-### 10.7 未迁移的 Go 死代码
+### 10.7 Unmigrated Go Dead Code
 
-以下 Go 函数定义后从未被调用，未迁移：`RenderFrameWithOutlier`、
-`removeAnomalyField`、`UniqueSlice`、`DebugFrame*`、`WriteArrowRecordToCSV`、
-`frameToArrowIPC`/`arrowIPCToFrame`、`getGrafanaPluginDir`。
+The following Go functions were defined but never called and were not migrated: `RenderFrameWithOutlier`, `removeAnomalyField`, `UniqueSlice`, `DebugFrame*`, `WriteArrowRecordToCSV`, `frameToArrowIPC`/`arrowIPCToFrame`, `getGrafanaPluginDir`.
 
-### 10.8 插件 buildinfo 元数据
+### 10.8 Plugin buildinfo Metadata
 
-Go 二进制通过 ldflags 嵌入 `buildinfoJSON`（Grafana 插件诊断页展示构建
-时间/版本）；grafana-plugin-sdk-rust 无对应机制，Rust 二进制不携带该
-元数据。Grafana 将其视为可选信息，插件功能不受影响。
+The Go binary embedded `buildinfoJSON` via ldflags (shown on the Grafana plugin diagnostics page: build time/version); grafana-plugin-sdk-rust has no such mechanism, so the Rust binary does not carry this metadata. Grafana treats it as optional information; plugin functionality is unaffected.
 
-## 9. 文档更新触发条件
+## 9. Document Update Triggers
 
-以下任何变更都必须同步更新本文件：
+This document must be updated in sync with any of the following changes:
 
-- FFI 函数签名变化
-- 参数顺序变化
-- 输入列顺序、类型或可空性变化
-- 输出 schema 列名、列数、类型或可空性变化
-- options JSON 字段变化
-- 时间戳单位变化
-- Arrow 所有权或释放路径变化
+- FFI function signature changes
+- Parameter order changes
+- Input column order, type, or nullability changes
+- Output schema column name, count, type, or nullability changes
+- options JSON field changes
+- Timestamp unit changes
+- Arrow ownership or release path changes
