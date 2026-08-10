@@ -1,4 +1,62 @@
 # Changelog
+# 0.4.0 (2026-08-10)
+
+### Bug fixes
+- Fix(en): translate
+
+### Features and enhancements
+- Docs: update documents for architecture
+- Merge pull request #18 from IBUMBLEBEE/feat/grafana-plugin-sdk-rust
+
+chore(rust): bump rsod-outlier/forecaster/utils to 0.1.3
+- Chore(rust): bump rsod-outlier/forecaster/utils to 0.1.3
+
+Patch bump for the Go->Rust migration commit changes:
+- rsod-outlier: constant-series guard + epoch-millis result timestamps
+- rsod-forecaster: epoch-millis result timestamps
+- rsod-utils: new read_testdata_pairs test fixture helper
+
+rsod-funnel and rsod-backend versions unchanged.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+- Merge pull request #17 from IBUMBLEBEE/feat/grafana-plugin-sdk-rust
+
+fix(en): translate
+- Merge pull request #16 from IBUMBLEBEE/feat/grafana-plugin-sdk-rust
+
+feat(rust): migrate backend from Go to Rust with vendored SDK
+- Feat(rust): migrate backend from Go to Rust with vendored SDK
+
+Complete the Go→Rust migration on this branch:
+
+- Remove the Go backend entirely (pkg/, go.mod, go.sum, Magefile,
+  go-builder action, rsod-ffi CGO layer)
+- Add rsod-backend crate on grafana-plugin-sdk-rust (grpc plugin
+  protocol, /api/ds/query proxying, per-query detect orchestration)
+- Vendor grafana-plugin-sdk 0.5.0 with extensions for Grafana graph
+  styles: Frame.meta.type (timeseries-wide) and FieldConfig.color
+- Fix DetectionResult timestamps to epoch millis — forecaster and
+  outlier emitted seconds, collapsing the panel axis into 1970 and
+  hiding the bounds band entirely
+- Add Series Label query option (frontend configurable display names)
+  with auto fallback to frame name / field labels
+- Accept integer logIterations in forecast hyper params (fixes real
+  query parse failure)
+- Re-render Go's field configs (fillBelowTo, dash/points styles,
+  fixed colors) and move unit tests to dataset/testdata fixtures
+- Update docs, CI workflow, Makefile and skills for the Rust-only
+  toolchain
+- Merge pull request #15 from IBUMBLEBEE/feat/docs-drawio
+
+docs: add Alert4ML architecture diagram
+- Docs: add Alert4ML architecture diagram
+
+Add layered architecture diagram showing Grafana → Frontend → Go Backend
+→ FFI Bridge → Rust ML Engine → Data Layer. Replace outdated architecture
+image in README with the new editable SVG.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+**Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/v0.3.1...v0.4.0
 # 0.3.1 (2026-07-13)
 
 ### Bug fixes
