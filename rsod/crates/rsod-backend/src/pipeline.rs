@@ -53,6 +53,24 @@ fn ml_call<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     })
 }
 
+/// Series segment of the result display names, in priority order:
+/// 1. the frontend-configured `seriesLabel` override (supports `{{label}}`
+///    placeholders resolved per-frame against the upstream labels);
+/// 2. the upstream frame name;
+/// 3. the value field's labels (Prometheus etc. omit the name).
+///
+/// Shared by every detect type so all result frames render as
+/// `{refID}-{seriesName}-{column}`.
+fn series_display_name(frame: &Frame, series_label: &str) -> String {
+    if !series_label.trim().is_empty() {
+        crate::render::interpolate_series_label(series_label, frame)
+    } else if frame.name.trim().is_empty() {
+        crate::render::series_label_name(frame)
+    } else {
+        frame.name.clone()
+    }
+}
+
 /// Entry point for one backend query. Returns a `DataResponse` whose frames
 /// are stamped with the query's `refId` by the SDK.
 pub async fn process_query(
@@ -203,6 +221,7 @@ fn process_detect(
                 extension_level: rp.extension_level.map(|v| v as usize),
             };
 
+            let series_name = series_display_name(frame, &query_json.series_label);
             let values = field_f64s(&frame.fields()[1])?;
             let missing = calculate_missing_rate(&values);
             let anomalies: Vec<f64> = if missing {
@@ -216,7 +235,7 @@ fn process_detect(
                 .map_err(|e| format!("outlier fit predict failed: {}", e))?;
                 det.anomalies
             };
-            new_data_frame_from_result(frame, ref_id, &anomalies)
+            new_data_frame_from_result(frame, ref_id, &series_name, &anomalies)
         }
         constant::BASELINE_DETECT_TYPE_DYNAMICS => {
             let dp: &DynamicsHyperParams = match hyper_params {
@@ -244,7 +263,8 @@ fn process_detect(
                 split_frames(frame, body.from, body.to, query_json.history_time_range)?;
             let det = fit_dynamics(current, history, config)?;
             let mut out = detection_frame(&det, BASELINE_VALUE_COL);
-            render_frame_with_baseline(&mut out, ref_id);
+            let series_name = series_display_name(frame, &query_json.series_label);
+            render_frame_with_baseline(&mut out, ref_id, &series_name);
             if query_json.show_anomaly_points {
                 remove_non_anomaly_fields(&mut out)?;
             }
@@ -304,17 +324,7 @@ fn process_detect(
             })?)
             .map_err(|e| format!("forecaster failed: {}", e))?;
             let mut out = detection_frame(&det, PRED_COL);
-            // Series label segment of the display names, in priority order:
-            // 1. the frontend-configured `seriesLabel` override;
-            // 2. the upstream frame name;
-            // 3. the value field's labels (Prometheus etc. omit the name).
-            let series_name = if !query_json.series_label.trim().is_empty() {
-                query_json.series_label.clone()
-            } else if frame.name.trim().is_empty() {
-                crate::render::series_label_name(frame)
-            } else {
-                frame.name.clone()
-            };
+            let series_name = series_display_name(frame, &query_json.series_label);
             render_frame_with_forecast(&mut out, ref_id, &series_name);
             if query_json.show_anomaly_points {
                 remove_non_anomaly_fields(&mut out)?;
@@ -461,7 +471,8 @@ async fn process_funnel_dual_query(
         .map_err(|e| format!("funnel fit predict failed: {}", e))?;
 
         let mut out = detection_frame(&det, BASELINE_VALUE_COL);
-        render_frame_with_baseline(&mut out, &query.ref_id);
+        let series_name = series_display_name(f, &query_json.series_label);
+        render_frame_with_baseline(&mut out, &query.ref_id, &series_name);
         if query_json.show_anomaly_points {
             remove_non_anomaly_fields(&mut out)?;
         }
@@ -523,11 +534,11 @@ fn build_funnel_dual_query_bodies(
 
 #[cfg(test)]
 mod tests {
-    use super::ml_call;
+    use super::{ml_call, series_display_name};
+    use crate::client::ProxyQueryBody;
     use crate::contract::{
         constant, Alert4MLQueryJson, ForecastHyperParams, HistoryTimeRange, HyperParams,
     };
-    use crate::client::ProxyQueryBody;
     use chrono::{DateTime, TimeZone, Utc};
     use grafana_plugin_sdk::prelude::*;
     use serde_json::Value;
@@ -641,8 +652,14 @@ mod tests {
         // names (`A-custom-label-*`, and fillBelowTo stays consistent).
         let fields = value["schema"]["fields"].as_array().expect("schema.fields");
         assert_eq!(fields[1]["config"]["displayName"], "A-custom-label-Pred");
-        assert_eq!(fields[2]["config"]["displayName"], "A-custom-label-lower_bound");
-        assert_eq!(fields[3]["config"]["displayName"], "A-custom-label-upper_bound");
+        assert_eq!(
+            fields[2]["config"]["displayName"],
+            "A-custom-label-lower_bound"
+        );
+        assert_eq!(
+            fields[3]["config"]["displayName"],
+            "A-custom-label-upper_bound"
+        );
         assert_eq!(
             fields[3]["config"]["custom"]["fillBelowTo"],
             "A-custom-label-lower_bound"
@@ -692,10 +709,7 @@ mod tests {
             times_s.push(cols.next().unwrap().parse().unwrap());
             values.push(cols.next().unwrap().parse().unwrap());
         }
-        let (current_ts, current_vs) = (
-            times_s[3936..].to_vec(),
-            values[3936..].to_vec(),
-        );
+        let (current_ts, current_vs) = (times_s[3936..].to_vec(), values[3936..].to_vec());
         let (history_ts, history_vs) = (times_s[..3936].to_vec(), values[..3936].to_vec());
 
         let options = rsod_forecaster::ForecasterOptions {
@@ -721,10 +735,10 @@ mod tests {
         )
         .expect("forecast must succeed");
         assert_eq!(det.timestamps.len(), 96);
-        for i in 0..96 {
+        for (i, ts) in current_ts.iter().enumerate() {
             assert_eq!(
                 det.timestamps[i] as f64,
-                (current_ts[i] * 1000.0).round(),
+                (ts * 1000.0).round(),
                 "timestamp at {i} must be epoch millis (input seconds × 1000)"
             );
             assert!(
@@ -733,5 +747,24 @@ mod tests {
                 det.timestamps[i]
             );
         }
+    }
+
+    /// `seriesLabel` with `{{label}}` placeholders resolves per-frame against
+    /// the upstream value-field labels, so one query with many Prometheus
+    /// series gets distinct display-name segments.
+    #[test]
+    fn series_display_name_interpolates_label_placeholders() {
+        let times: Vec<DateTime<Utc>> = vec![DateTime::from_timestamp(1_700_000_000, 0).unwrap()];
+        let mut value_field: grafana_plugin_sdk::data::Field = vec![1.0].into_field("value");
+        value_field.labels = [("__name__".to_string(), "node_load1".to_string())]
+            .into_iter()
+            .collect();
+        let frame = grafana_plugin_sdk::data::Frame::new("")
+            .with_field(times.into_field("Time"))
+            .with_field(value_field);
+
+        assert_eq!(series_display_name(&frame, "{{__name__}}"), "node_load1");
+        // Without placeholders the override stays literal (existing behavior).
+        assert_eq!(series_display_name(&frame, "custom"), "custom");
     }
 }

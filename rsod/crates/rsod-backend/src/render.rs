@@ -5,7 +5,7 @@
 //! extended with `Frame.meta.type` and `FieldConfig.color` so the Go field
 //! styles (`timeseries-wide`, fixed colors) are fully expressed.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
 use grafana_plugin_sdk::data::{
@@ -77,6 +77,22 @@ fn display_name(config: &mut FieldConfig, name: String) {
     config.display_name = Some(name);
 }
 
+/// Result column display name shared by every detect type:
+/// `{refID}-{seriesName}-{column}` (e.g. `A-{__name__="up"}-Pred`).
+fn result_display_name(ref_id: &str, series_name: &str, column: &str) -> String {
+    format!("{ref_id}-{series_name}-{column}")
+}
+
+/// Labels of the first non-Time field that carries any — Prometheus puts the
+/// series identity there when the frame name is empty.
+fn series_labels(frame: &Frame) -> Option<&BTreeMap<String, String>> {
+    frame
+        .fields()
+        .iter()
+        .find(|f| f.name != constant::GF_FRAME_RESULT_NAME_TIME && !f.labels.is_empty())
+        .map(|f| &f.labels)
+}
+
 /// Series label name for the `refID-label-column` display names.
 ///
 /// Upstream datasources (Prometheus among them) often omit `schema.name` and
@@ -87,19 +103,44 @@ fn display_name(config: &mut FieldConfig, name: String) {
 /// Call with the *upstream* frame (the one the detection ran on), not the
 /// rendered result frame — the result frame's fields carry no labels.
 pub fn series_label_name(frame: &Frame) -> String {
-    frame
-        .fields()
-        .iter()
-        .find(|f| f.name != constant::GF_FRAME_RESULT_NAME_TIME && !f.labels.is_empty())
-        .map(|f| {
-            let inner: Vec<String> = f
-                .labels
-                .iter()
-                .map(|(k, v)| format!("{k}=\"{v}\""))
-                .collect();
+    series_labels(frame)
+        .map(|labels| {
+            let inner: Vec<String> = labels.iter().map(|(k, v)| format!("{k}=\"{v}\"")).collect();
             format!("{{{}}}", inner.join(", "))
         })
         .unwrap_or_default()
+}
+
+/// Resolve Prometheus-legend-style `{{label}}` placeholders in a user-supplied
+/// `seriesLabel` against the upstream value field's labels (`{{__name__}}` →
+/// `node_load1`). Unknown labels — and frames without labels — render as empty
+/// strings, the Prometheus-legend convention; a literal without placeholders
+/// is returned unchanged.
+pub fn interpolate_series_label(template: &str, frame: &Frame) -> String {
+    let labels = match series_labels(frame) {
+        Some(labels) => labels,
+        None => return template.to_string(),
+    };
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find("}}") {
+            Some(end) => {
+                let key = &after[..end];
+                out.push_str(labels.get(key).map(String::as_str).unwrap_or(""));
+                rest = &after[end + 2..];
+            }
+            // Unterminated `{{` — keep it literal.
+            None => {
+                out.push_str("{{");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn field_config_with_custom(display: String, custom: HashMap<String, Value>) -> FieldConfig {
@@ -111,19 +152,19 @@ fn field_config_with_custom(display: String, custom: HashMap<String, Value>) -> 
     config
 }
 
-/// `RenderFrameWithBaseline` (dynamics + funnel): name the frame "Baseline"
-/// and style the baseline/bounds/anomaly columns.
-pub fn render_frame_with_baseline(frame: &mut Frame, ref_id: &str) {
-    frame.name = constant::GF_FRAME_RESULT_NAME_BASELINE.to_string();
+/// `RenderFrameWithBaseline` (dynamics + funnel): name the frame after the
+/// series (same `{refID}-{seriesName}-{column}` display-name convention as
+/// forecast) and style the baseline/bounds/anomaly columns.
+pub fn render_frame_with_baseline(frame: &mut Frame, ref_id: &str, series_name: &str) {
+    frame.name = series_name.to_string();
     frame.meta = Some(timeseries_wide_meta());
     // Captured before the loop: `fields_mut()` borrows `frame` mutably, so
     // `frame.name` cannot be read inside it.
     let frame_name = frame.name.clone();
-    let lower_name = format!(
-        "{}-{}-{}",
+    let lower_name = result_display_name(
         ref_id,
-        frame_name,
-        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND
+        &frame_name,
+        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND,
     );
     for field in frame.fields_mut() {
         match field.name.as_str() {
@@ -134,17 +175,20 @@ pub fn render_frame_with_baseline(frame: &mut Frame, ref_id: &str) {
                 let mut config = FieldConfig::default();
                 display_name(
                     &mut config,
-                    format!("{}-{}", ref_id, constant::GF_FRAME_RESULT_NAME_BASELINE),
+                    result_display_name(
+                        ref_id,
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_BASELINE,
+                    ),
                 );
                 field.config = Some(config);
             }
             constant::GF_FRAME_RESULT_NAME_LOWER_BOUND => {
                 let mut config = field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
+                    result_display_name(
                         ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND,
                     ),
                     custom_config(&[
                         ("lineWidth", json!(0)),
@@ -157,11 +201,10 @@ pub fn render_frame_with_baseline(frame: &mut Frame, ref_id: &str) {
             }
             constant::GF_FRAME_RESULT_NAME_UPPER_BOUND => {
                 let mut config = field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
+                    result_display_name(
                         ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_UPPER_BOUND
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_UPPER_BOUND,
                     ),
                     custom_config(&[
                         ("lineWidth", json!(0)),
@@ -176,11 +219,10 @@ pub fn render_frame_with_baseline(frame: &mut Frame, ref_id: &str) {
             }
             constant::GF_FRAME_RESULT_NAME_ANOMALY | "anomaly" => {
                 let mut config = field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
+                    result_display_name(
                         ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_ANOMALY
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_ANOMALY,
                     ),
                     custom_config(&[
                         ("lineStyle", json!({ "fill": "solid" })),
@@ -202,11 +244,10 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
     frame.name = series_name.to_string();
     frame.meta = Some(timeseries_wide_meta());
     let frame_name = frame.name.clone();
-    let lower_name = format!(
-        "{}-{}-{}",
+    let lower_name = result_display_name(
         ref_id,
-        frame_name,
-        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND
+        &frame_name,
+        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND,
     );
     for field in frame.fields_mut() {
         match field.name.as_str() {
@@ -215,12 +256,7 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
             }
             constant::GF_FRAME_RESULT_NAME_PRED | "pred" => {
                 field.config = Some(field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
-                        ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_PRED
-                    ),
+                    result_display_name(ref_id, &frame_name, constant::GF_FRAME_RESULT_NAME_PRED),
                     custom_config(&[
                         ("lineStyle", json!("dash")),
                         ("drawStyle", json!("lines")),
@@ -230,11 +266,10 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
             }
             constant::GF_FRAME_RESULT_NAME_LOWER_BOUND => {
                 let mut config = field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
+                    result_display_name(
                         ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_LOWER_BOUND,
                     ),
                     custom_config(&[
                         ("lineWidth", json!(0)),
@@ -247,11 +282,10 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
             }
             constant::GF_FRAME_RESULT_NAME_UPPER_BOUND => {
                 let mut config = field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
+                    result_display_name(
                         ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_UPPER_BOUND
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_UPPER_BOUND,
                     ),
                     custom_config(&[
                         ("lineWidth", json!(0)),
@@ -266,11 +300,10 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
             }
             constant::GF_FRAME_RESULT_NAME_ANOMALY | "anomaly" => {
                 let mut config = field_config_with_custom(
-                    format!(
-                        "{}-{}-{}",
+                    result_display_name(
                         ref_id,
-                        frame_name,
-                        constant::GF_FRAME_RESULT_NAME_ANOMALY
+                        &frame_name,
+                        constant::GF_FRAME_RESULT_NAME_ANOMALY,
                     ),
                     custom_config(&[
                         ("lineStyle", json!({ "fill": "solid" })),
@@ -293,6 +326,7 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
 pub fn new_data_frame_from_result(
     source: &Frame,
     ref_id: &str,
+    series_name: &str,
     result: &[f64],
 ) -> Result<Frame, String> {
     if source.fields().len() < 2 {
@@ -329,15 +363,10 @@ pub fn new_data_frame_from_result(
         .into_opt_field(source.fields()[1].name.clone());
     let mut value_field = value_field;
     value_field.labels = source.fields()[1].labels.clone();
-    // Go's `setDataFrameFieldConfigForOutlier`: "{source.name} {refID}-{resultName}",
-    // fixed red.
+    // Same `{refID}-{seriesName}-{column}` display-name convention as the
+    // other detect types; fixed red.
     let mut config = field_config_with_custom(
-        format!(
-            "{} {}-{}",
-            source.name,
-            ref_id,
-            constant::GF_FRAME_RESULT_NAME_ANOMALY
-        ),
+        result_display_name(ref_id, series_name, constant::GF_FRAME_RESULT_NAME_ANOMALY),
         custom_config(&[
             ("lineStyle", json!({ "fill": "solid" })),
             ("drawStyle", json!("points")),
@@ -419,10 +448,7 @@ mod tests {
         assert_eq!(value["schema"]["meta"]["type"], "timeseries-wide");
 
         let fields = value["schema"]["fields"].as_array().expect("schema.fields");
-        let names: Vec<&str> = fields
-            .iter()
-            .map(|f| f["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
         assert_eq!(
             names,
             vec!["Time", "pred", "lower_bound", "upper_bound", "Anomaly"]
@@ -473,31 +499,132 @@ mod tests {
         assert_eq!(anomaly["color"]["fixedColor"], "red");
     }
 
-    /// Go's `RenderFrameWithBaseline`: frame named "Baseline", timeseries-wide
-    /// meta, gray bounds, red anomaly points; the baseline column itself has
-    /// no color (Go comments it out).
+    /// Dynamics/funnel share the forecast display-name convention: the frame
+    /// is named after the series (here a Prometheus label set, since upstream
+    /// frames often omit the name) and every column shows
+    /// `{refID}-{seriesName}-{column}` — gray bounds, red anomaly points, and
+    /// the baseline column itself has no color.
     #[test]
     fn baseline_frame_serializes_meta_and_colors() {
         let det = sample_forecast_result();
         let mut frame = detection_frame(&det, rsod_core::BASELINE_VALUE_COL);
-        render_frame_with_baseline(&mut frame, "A");
+        let series_name = "{__name__=\"up\", instance=\"localhost:9090\"}";
+        render_frame_with_baseline(&mut frame, "A", series_name);
 
         let value = serde_json::to_value(&frame).expect("frame must serialize");
-        assert_eq!(value["schema"]["name"], "Baseline");
+        assert_eq!(value["schema"]["name"], series_name);
         assert_eq!(value["schema"]["meta"]["type"], "timeseries-wide");
 
         let fields = value["schema"]["fields"].as_array().expect("schema.fields");
         let baseline = &fields[1]["config"];
-        assert_eq!(baseline["displayName"], "A-Baseline");
-        assert!(baseline.get("color").is_none(), "baseline column has no color");
+        assert_eq!(
+            baseline["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-Baseline"
+        );
+        assert!(
+            baseline.get("color").is_none(),
+            "baseline column has no color"
+        );
 
         let lower = &fields[2]["config"];
+        assert_eq!(
+            lower["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-lower_bound"
+        );
         assert_eq!(lower["color"]["fixedColor"], "#808080");
         let upper = &fields[3]["config"];
-        assert_eq!(upper["custom"]["fillBelowTo"], "A-Baseline-lower_bound");
+        assert_eq!(
+            upper["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-upper_bound"
+        );
+        assert_eq!(
+            upper["custom"]["fillBelowTo"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-lower_bound"
+        );
         assert_eq!(upper["color"]["fixedColor"], "#808080");
         let anomaly = &fields[4]["config"];
+        assert_eq!(
+            anomaly["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-Anomaly"
+        );
         assert_eq!(anomaly["color"]["fixedColor"], "red");
+    }
+
+    /// Outlier's two-column frame carries the same
+    /// `{refID}-{seriesName}-Anomaly` display name as the other detect types.
+    #[test]
+    fn outlier_frame_uses_series_qualified_display_name() {
+        let times: Vec<DateTime<Utc>> = vec![DateTime::from_timestamp(1_700_000_000, 0).unwrap()];
+        let mut value_field: Field = vec![1.0].into_field("value");
+        value_field.labels = [
+            ("__name__".to_string(), "up".to_string()),
+            ("instance".to_string(), "localhost:9090".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let source = Frame::new("")
+            .with_field(times.into_field("Time"))
+            .with_field(value_field);
+        let series_name = series_label_name(&source);
+        assert_eq!(
+            series_name,
+            "{__name__=\"up\", instance=\"localhost:9090\"}"
+        );
+
+        let frame = new_data_frame_from_result(&source, "A", &series_name, &[1.0])
+            .expect("outlier frame must be built");
+        let value = serde_json::to_value(&frame).expect("frame must serialize");
+        let fields = value["schema"]["fields"].as_array().expect("schema.fields");
+        assert_eq!(fields.len(), 2);
+        let anomaly = &fields[1]["config"];
+        assert_eq!(
+            anomaly["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-Anomaly"
+        );
+        assert_eq!(anomaly["custom"]["pointSize"], 10);
+        assert_eq!(anomaly["color"]["fixedColor"], "red");
+    }
+
+    /// `{{label}}` placeholders in a seriesLabel override resolve against the
+    /// upstream value field's labels (Prometheus-legend style); unknown labels
+    /// and unterminated braces degrade to empty/literal.
+    #[test]
+    fn interpolate_series_label_replaces_label_placeholders() {
+        let times: Vec<DateTime<Utc>> = vec![DateTime::from_timestamp(1_700_000_000, 0).unwrap()];
+        let mut value_field: Field = vec![1.0].into_field("value");
+        value_field.labels = [
+            ("__name__".to_string(), "node_load1".to_string()),
+            ("instance".to_string(), "10.22.12.218:9100".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let upstream = Frame::new("")
+            .with_field(times.clone().into_field("Time"))
+            .with_field(value_field);
+
+        assert_eq!(
+            interpolate_series_label("{{__name__}}", &upstream),
+            "node_load1"
+        );
+        assert_eq!(
+            interpolate_series_label("{{__name__}}/{{instance}}", &upstream),
+            "node_load1/10.22.12.218:9100"
+        );
+        // Unknown label → empty (Prometheus-legend convention).
+        assert_eq!(
+            interpolate_series_label("custom-{{job}}", &upstream),
+            "custom-"
+        );
+        // No placeholders → literal, unchanged.
+        assert_eq!(interpolate_series_label("my-label", &upstream), "my-label");
+        // Unterminated `{{` stays literal.
+        assert_eq!(interpolate_series_label("a{{b", &upstream), "a{{b");
+        // Frame without labels → template unchanged.
+        let plain = Frame::new("s").with_field(times.clone().into_field("Time"));
+        assert_eq!(
+            interpolate_series_label("{{__name__}}", &plain),
+            "{{__name__}}"
+        );
     }
 
     /// Regression for `A--Pred`: upstream datasources (Prometheus among them)
@@ -516,12 +643,17 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let upstream = Frame::new("").with_field(times.into_field("Time")).with_field(value_field);
+        let upstream = Frame::new("")
+            .with_field(times.into_field("Time"))
+            .with_field(value_field);
         assert!(upstream.name.is_empty());
 
         // What the pipeline computes before calling the renderer.
         let series_name = series_label_name(&upstream);
-        assert_eq!(series_name, "{__name__=\"up\", instance=\"localhost:9090\"}");
+        assert_eq!(
+            series_name,
+            "{__name__=\"up\", instance=\"localhost:9090\"}"
+        );
 
         let det = sample_forecast_result();
         let mut frame = detection_frame(&det, PRED_COL);
@@ -530,20 +662,29 @@ mod tests {
         let value = serde_json::to_value(&frame).expect("frame must serialize");
         let fields = value["schema"]["fields"].as_array().expect("schema.fields");
         let pred = &fields[1]["config"];
-        assert_eq!(pred["displayName"], "A-{__name__=\"up\", instance=\"localhost:9090\"}-Pred");
+        assert_eq!(
+            pred["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-Pred"
+        );
         let lower = &fields[2]["config"];
         assert_eq!(
             lower["displayName"],
             "A-{__name__=\"up\", instance=\"localhost:9090\"}-lower_bound"
         );
         let upper = &fields[3]["config"];
-        assert_eq!(upper["displayName"], "A-{__name__=\"up\", instance=\"localhost:9090\"}-upper_bound");
+        assert_eq!(
+            upper["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-upper_bound"
+        );
         assert_eq!(
             upper["custom"]["fillBelowTo"],
             "A-{__name__=\"up\", instance=\"localhost:9090\"}-lower_bound"
         );
         let anomaly = &fields[4]["config"];
-        assert_eq!(anomaly["displayName"], "A-{__name__=\"up\", instance=\"localhost:9090\"}-Anomaly");
+        assert_eq!(
+            anomaly["displayName"],
+            "A-{__name__=\"up\", instance=\"localhost:9090\"}-Anomaly"
+        );
     }
 
     /// A result without bounds still emits the wide frame shape with null

@@ -100,6 +100,6 @@ This spec is designed to be machine-readable and follows these conventions:
 
 1. TS→backend serialization format: JSON, camelCase field names
 2. backend→algorithm: direct function calls (`TimeSeriesInput` + Options), no cross-language boundary
-3. Result frames: SDK `Frame` (arrow2 arrays); column names carry over from the Go era: `Time`/`Anomaly`/`Baseline`/`Pred`/`lower_bound`/`upper_bound`
+3. Result frames: SDK `Frame` (arrow2 arrays); column names carry over from the Go era: `Time`/`Anomaly`/`Baseline`/`Pred`/`lower_bound`/`upper_bound`. All detect types render field display names as `{refId}-{seriesName}-{column}` (e.g. `A-{__name__="up", instance="x"}-Pred`), where `seriesName` = `seriesLabel` override (supports `{{label}}` placeholders resolved per-series from the value-field labels, Prometheus-legend style) → upstream frame name → value-field labels
 4. Model key: UUID v5; `unique_keys_uuid` + `derive_uuid` are byte-level compatible with Go (see `rsod-backend/src/uuid_util.rs`)
 5. Error handling: TS→backend uses the standard Grafana SDK error path; a single failing query returns a per-query `QueryError::Internal`

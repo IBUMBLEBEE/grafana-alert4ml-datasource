@@ -409,7 +409,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         />
         <InlineField
           label="Series Label"
-          tooltip="Overrides the series name segment of the result field display names (A-{label}-Pred). Leave empty to auto-detect from the upstream frame name or its labels."
+          tooltip="Overrides the series name segment of the result field display names (A-{label}-Pred). Supports {{label}} placeholders resolved per-series from the upstream labels (e.g. {{__name__}}). Leave empty to auto-detect from the upstream frame name or its labels."
         >
           <Input
             width={24}
