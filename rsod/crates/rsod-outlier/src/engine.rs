@@ -8,13 +8,15 @@ use rsod_core::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{outlier, OutlierOptions};
+use crate::{outlier, DetectMode, OutlierOptions};
 
 /// Outlier hyper-parameters with Go-side defaults (frontend camelCase wire).
 #[derive(Clone, Debug)]
 pub struct RsodHyperParams {
     pub periods: String,
     pub model_name: String,
+    /// `"lite"` (default) or `"full"`. Unknown values fall back to lite.
+    pub detect_mode: DetectMode,
     pub n_trees: Option<i64>,
     pub sample_size: Option<i64>,
     pub max_tree_depth: Option<i64>,
@@ -26,6 +28,7 @@ impl Default for RsodHyperParams {
         Self {
             periods: String::new(),
             model_name: "rsod_model".to_string(),
+            detect_mode: DetectMode::Lite,
             n_trees: None,
             sample_size: None,
             max_tree_depth: None,
@@ -45,6 +48,8 @@ pub fn parse_rsod_hyper_params(value: &Value) -> rsod_core::Result<RsodHyperPara
         periods: Option<String>,
         #[serde(rename = "model_name", default)]
         model_name: Option<String>,
+        #[serde(rename = "detectMode", default)]
+        detect_mode: Option<String>,
         #[serde(rename = "nTrees", default)]
         n_trees: Option<i64>,
         #[serde(rename = "sampleSize", default)]
@@ -62,6 +67,12 @@ pub fn parse_rsod_hyper_params(value: &Value) -> rsod_core::Result<RsodHyperPara
     }
     if let Some(v) = raw.model_name {
         p.model_name = v;
+    }
+    if let Some(mode) = raw.detect_mode {
+        p.detect_mode = match mode.to_ascii_lowercase().as_str() {
+            "full" => DetectMode::Full,
+            _ => DetectMode::Lite,
+        };
     }
     p.n_trees = raw.n_trees;
     p.sample_size = raw.sample_size;
@@ -102,6 +113,7 @@ impl Detector for OutlierEngine {
             model_name: hp.model_name,
             periods: periods.iter().map(|&p| p as usize).collect(),
             uuid: req.uuid.clone(),
+            detect_mode: hp.detect_mode,
             n_trees: hp.n_trees.map(|v| v as usize),
             sample_size: hp.sample_size.map(|v| v as usize),
             max_tree_depth: hp.max_tree_depth.map(|v| v as usize),
@@ -143,4 +155,29 @@ inventory::submit! {
 #[doc(hidden)]
 pub fn force_link() {
     std::hint::black_box(&OUTLIER_ENGINE as &dyn Detector);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DetectMode;
+    use serde_json::json;
+
+    #[test]
+    fn parse_defaults_to_lite() {
+        let p = parse_rsod_hyper_params(&json!({})).unwrap();
+        assert_eq!(p.detect_mode, DetectMode::Lite);
+    }
+
+    #[test]
+    fn parse_detect_mode_full() {
+        let p = parse_rsod_hyper_params(&json!({ "detectMode": "full" })).unwrap();
+        assert_eq!(p.detect_mode, DetectMode::Full);
+    }
+
+    #[test]
+    fn parse_unknown_detect_mode_falls_back_to_lite() {
+        let p = parse_rsod_hyper_params(&json!({ "detectMode": "turbo" })).unwrap();
+        assert_eq!(p.detect_mode, DetectMode::Lite);
+    }
 }

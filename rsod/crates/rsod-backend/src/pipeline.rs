@@ -20,14 +20,15 @@ use crate::contract::{Alert4MLQueryJson, HistoryTimeRange};
 use crate::frame_ops::extract_timeseries;
 use crate::render::render_detection;
 use crate::tools::{
-    build_targets_with_interval, effective_funnel_history_interval, effective_history_time_range,
-    ensure_funnel_frames, get_recalculate_time_range, match_history_frame, split_frames,
+    build_targets_with_interval, effective_detect_interval, effective_funnel_history_interval,
+    effective_history_time_range, ensure_funnel_frames, get_recalculate_time_range,
+    match_history_frame, max_data_points_for_range, split_frames,
 };
 use crate::uuid_util::UniqueKeysUuid;
 
 use rsod_core::{
-    detector_by_name, iter_detectors, DetectOutput, DetectRequest, InputKind, QueryKind, RsodError,
-    TimeSeriesInput,
+    derive_uuid, detector_by_name, iter_detectors, DetectOutput, DetectRequest, InputKind,
+    QueryKind, RsodError, TimeSeriesInput,
 };
 
 /// Run a fallible algorithm call with panic isolation.
@@ -156,8 +157,12 @@ async fn process_regular_query(
         engine.default_history_duration_ms(),
     );
     let (from, to) = get_recalculate_time_range(query.time_range.from, query.time_range.to, htr);
-    let interval_ms = query.interval.as_millis() as i64;
-    let targets = build_targets_with_interval(&query_json.targets, &ref_id, interval_ms)?;
+    let panel_interval_ms = query.interval.as_millis() as i64;
+    let interval_ms =
+        effective_detect_interval(panel_interval_ms, query_json.detect_interval_ms);
+    let max_dp = max_data_points_for_range(from, to, interval_ms, query.max_data_points);
+    let targets =
+        build_targets_with_interval(&query_json.targets, &ref_id, interval_ms, max_dp, from, to)?;
     let body = ProxyQueryBody {
         queries: targets,
         from,
@@ -216,6 +221,9 @@ fn process_detect(
         series_name: &frame.name,
     }
     .to_uuid();
+    // When a fixed detect interval is configured, fold it into the model key
+    // so caches trained at another resolution are not reused.
+    let uk_uuid = model_uuid_for_interval(&uk_uuid, query_json.detect_interval_ms)?;
 
     // Prepare (current, history) per the engine's declared input contract.
     let cts: Vec<f64>;
@@ -231,8 +239,15 @@ fn process_detect(
             hvals = Vec::new();
         }
         InputKind::HistoryCurrent => {
-            let (current, history) =
-                split_frames(frame, body.from, body.to, query_json.history_time_range)?;
+            // Must match the lookback used to extend `body.from` in
+            // `process_regular_query`. Using the raw query value here left
+            // history empty whenever the engine default filled in a duration
+            // for the fetch (`durationMs == 0` → fetch extended, split at 0).
+            let htr = effective_history_time_range(
+                query_json.history_time_range,
+                engine.default_history_duration_ms(),
+            );
+            let (current, history) = split_frames(frame, body.from, body.to, htr)?;
             let (a, b) = extract_timeseries(&current)?;
             let (c, d) = extract_timeseries(&history)?;
             cts = a;
@@ -332,6 +347,7 @@ async fn process_funnel_dual_query(
             series_name: &f.name,
         }
         .to_uuid();
+        let uk_uuid = model_uuid_for_interval(&uk_uuid, query_json.detect_interval_ms)?;
 
         let req = DetectRequest {
             current: TimeSeriesInput::new(&cts, &cvals),
@@ -378,19 +394,39 @@ fn build_funnel_dual_query_bodies(
     if panel_to < panel_from {
         return Err("funnel: panel time range is empty".to_string().into());
     }
-    let panel_interval = query.interval.as_millis() as i64;
+    let panel_interval = effective_detect_interval(
+        query.interval.as_millis() as i64,
+        query_json.detect_interval_ms,
+    );
     if panel_interval <= 0 {
         return Err("funnel: panel interval must be > 0".to_string().into());
     }
     let history_interval =
         effective_funnel_history_interval(panel_interval, htr.duration_ms, query.max_data_points);
 
-    let hist_targets =
-        build_targets_with_interval(&query_json.targets, &query.ref_id, history_interval)?;
-    let cur_targets =
-        build_targets_with_interval(&query_json.targets, &query.ref_id, panel_interval)?;
-
     let history_from = panel_from - chrono::Duration::milliseconds(htr.duration_ms);
+    let hist_max_dp =
+        max_data_points_for_range(history_from, panel_from, history_interval, query.max_data_points);
+    let cur_max_dp =
+        max_data_points_for_range(panel_from, panel_to, panel_interval, query.max_data_points);
+
+    let hist_targets = build_targets_with_interval(
+        &query_json.targets,
+        &query.ref_id,
+        history_interval,
+        hist_max_dp,
+        history_from,
+        panel_from,
+    )?;
+    let cur_targets = build_targets_with_interval(
+        &query_json.targets,
+        &query.ref_id,
+        panel_interval,
+        cur_max_dp,
+        panel_from,
+        panel_to,
+    )?;
+
     Ok((
         ProxyQueryBody {
             queries: hist_targets,
@@ -405,6 +441,17 @@ fn build_funnel_dual_query_bodies(
             interval_ms: panel_interval,
         },
     ))
+}
+
+/// When `detect_interval_ms > 0`, derive a resolution-specific model key so a
+/// fixed-interval run does not reuse caches trained under another step.
+fn model_uuid_for_interval(base_uuid: &str, detect_interval_ms: i64) -> rsod_core::Result<String> {
+    if detect_interval_ms <= 0 {
+        return Ok(base_uuid.to_string());
+    }
+    // Go-JSON object with stable field order (single key).
+    let extra = format!("{{\"intervalMs\":{}}}", detect_interval_ms);
+    derive_uuid(base_uuid, &extra)
 }
 
 #[cfg(test)]
@@ -529,6 +576,7 @@ mod tests {
             show_anomaly_points: false,
             series_label: "custom-label".to_string(),
             history_time_range: htr,
+            detect_interval_ms: 0,
             unique_keys: Default::default(),
         };
 

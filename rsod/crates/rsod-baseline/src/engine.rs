@@ -15,6 +15,7 @@ pub struct DynamicsHyperParams {
     pub trend: String,
     pub period_days: i64,
     pub std_dev_multiplier: f64,
+    pub transition_minutes: u32,
 }
 
 impl Default for DynamicsHyperParams {
@@ -23,6 +24,7 @@ impl Default for DynamicsHyperParams {
             trend: "weekly".to_string(),
             period_days: 0,
             std_dev_multiplier: 2.0,
+            transition_minutes: 15,
         }
     }
 }
@@ -40,6 +42,8 @@ pub fn parse_dynamics_hyper_params(value: &Value) -> rsod_core::Result<DynamicsH
         period_days: Option<i64>,
         #[serde(rename = "stdDevMultiplier", default)]
         std_dev_multiplier: Option<f64>,
+        #[serde(rename = "transitionMinutes", default)]
+        transition_minutes: Option<u32>,
     }
     let raw: Raw = serde_json::from_value(value.clone())
         .map_err(|e| RsodError::InvalidConfig(format!("failed to parse dynamics hyper params: {}", e)))?;
@@ -52,6 +56,9 @@ pub fn parse_dynamics_hyper_params(value: &Value) -> rsod_core::Result<DynamicsH
     }
     if let Some(v) = raw.std_dev_multiplier {
         p.std_dev_multiplier = v;
+    }
+    if let Some(v) = raw.transition_minutes {
+        p.transition_minutes = v;
     }
     Ok(p)
 }
@@ -78,6 +85,12 @@ impl Detector for DynamicsEngine {
         InputKind::HistoryCurrent
     }
 
+    fn default_history_duration_ms(&self) -> i64 {
+        // Weekly trend needs ≥1 week of same-weekday samples; 7d matches the
+        // funnel / frontend contract when `historyTimeRange` is unset.
+        604_800_000
+    }
+
     fn detect(&self, req: &DetectRequest) -> rsod_core::Result<DetectOutput> {
         let hp = parse_dynamics_hyper_params(&req.hyper_params)?;
         let trend = trend_from_str(&hp.trend)?;
@@ -89,6 +102,7 @@ impl Detector for DynamicsEngine {
                 None
             },
             std_dev_multiplier: hp.std_dev_multiplier,
+            transition_minutes: hp.transition_minutes,
         };
 
         // Mirror the Go wrapper's row checks (`fit_dynamics`).
@@ -97,7 +111,10 @@ impl Detector for DynamicsEngine {
         }
         if req.history.is_empty() {
             return Err(RsodError::Detection(
-                "historyFrame has no rows (filtered out by time range)".to_string(),
+                "historyFrame has no rows (filtered out by time range): \
+                 extend History TimeRange (Weekly needs ≥7d) and confirm the \
+                 upstream query returns data before the panel start"
+                    .to_string(),
             ));
         }
 

@@ -6,10 +6,9 @@ import {
   Collapse,
   InlineSwitch,
   Input,
-  TimeRangePicker,
 } from '@grafana/ui';
 import type { ComboboxOption } from '@grafana/ui';
-import { QueryEditorProps, DataSourceApi, TimeRange, dateTime, getTimeZone, CoreApp } from '@grafana/data';
+import { QueryEditorProps, DataSourceApi, CoreApp } from '@grafana/data';
 import {getTemplateSrv, getDataSourceSrv} from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { DataSource } from '../datasource';
@@ -30,9 +29,12 @@ import {
   FunnelParams,
   DEFAULT_FUNNEL_PARAMS,
   DEFAULT_FUNNEL_HISTORY,
+  DEFAULT_BASELINE_HISTORY,
   DynamicsParams,
   DEFAULT_DYNAMICS_PARAMS,
   HistoryDuration,
+  DETECT_INTERVAL_OPTIONS,
+  HISTORY_TIME_RANGE_OPTIONS,
 } from '../types';
 import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
@@ -268,6 +270,11 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     const updates: Partial<Alert4MLQuery> = { detectType: opt.value, hyperParams: defaultParams };
     if (opt.value === Alert4MLDetectType.Funnel) {
       updates.historyTimeRange = DEFAULT_FUNNEL_HISTORY;
+    } else if (
+      opt.value === Alert4MLBaselineDetectType.Dynamics ||
+      opt.value === Alert4MLDetectType.Forecast
+    ) {
+      updates.historyTimeRange = DEFAULT_BASELINE_HISTORY;
     }
     runDebouncedQueryWithTempTargets(updates);
   };
@@ -288,39 +295,54 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     runDebouncedQueryWithTempTargets({ seriesLabel: value.trim() || undefined });
   };
 
-  const onHistoryTimeRangeChange = (v: TimeRange) => {
-    // Only the width of the picked window is meaningful — the `to` anchor is always
-    // pinned to panel.timeRange.from on render, so users may pick any absolute range
-    // and we keep the duration they intended.
-    const fromMs = v?.from?.valueOf?.();
-    const toMs = v?.to?.valueOf?.();
-    if (typeof fromMs !== 'number' || typeof toMs !== 'number') {
-      return;
+  const onDetectIntervalChange = (opt: ComboboxOption<number>) => {
+    const ms = typeof opt.value === 'number' ? opt.value : 0;
+    runDebouncedQueryWithTempTargets({
+      detectIntervalMs: ms > 0 ? ms : undefined,
+    });
+  };
+
+  const detectIntervalOptions: ComboboxOption<number>[] = useMemo(
+    () =>
+      DETECT_INTERVAL_OPTIONS.map((o) => ({
+        label: o.label ?? String(o.value),
+        value: o.value as number,
+        description: o.description,
+      })),
+    []
+  );
+
+  const historyDurationMs = historyTimeRange?.durationMs ?? DEFAULT_TIME_RANGE.durationMs;
+
+  const historyTimeRangeOptions: ComboboxOption<number>[] = useMemo(() => {
+    const presets = HISTORY_TIME_RANGE_OPTIONS.map((o) => ({
+      label: o.label ?? String(o.value),
+      value: o.value as number,
+      description: o.description,
+    }));
+    // Saved dashboards may carry a duration that isn't in the preset list —
+    // keep it selectable so the Combobox still shows the current value.
+    if (!presets.some((o) => o.value === historyDurationMs)) {
+      const hours = historyDurationMs / (60 * 60 * 1000);
+      const label =
+        hours >= 24
+          ? `Custom (${(hours / 24).toFixed(hours % 24 === 0 ? 0 : 1)}d)`
+          : hours >= 1
+            ? `Custom (${hours % 1 === 0 ? hours : hours.toFixed(1)}h)`
+            : `Custom (${Math.round(historyDurationMs / 60000)}m)`;
+      presets.unshift({ label, value: historyDurationMs, description: 'Previously saved duration' });
     }
-    const durationMs = Math.max(0, Math.abs(toMs - fromMs));
-    if (durationMs === 0) {
+    return presets;
+  }, [historyDurationMs]);
+
+  const onHistoryDurationChange = (opt: ComboboxOption<number>) => {
+    const durationMs = typeof opt.value === 'number' ? opt.value : 0;
+    if (durationMs <= 0) {
       return;
     }
     const next: HistoryDuration = { durationMs };
     runDebouncedQueryWithTempTargets({ historyTimeRange: next });
   };
-
-  // Derive a TimeRange to display in the picker.
-  // Anchor: history.to = panel.timeRange.from; history.from = history.to - durationMs.
-  // Falls back to `now` when the panel range is not yet available (initial mount).
-  const historyTimeZone = useMemo(() => getTimeZone(), []);
-  const historyDisplayRange: TimeRange = useMemo(() => {
-    const panelFromMs = data?.timeRange?.from?.valueOf?.();
-    const anchor = typeof panelFromMs === 'number' ? panelFromMs : Date.now();
-    const durationMs = historyTimeRange?.durationMs ?? DEFAULT_TIME_RANGE.durationMs;
-    const toDate = dateTime(anchor);
-    const fromDate = dateTime(anchor - durationMs);
-    return {
-      from: fromDate,
-      to: toDate,
-      raw: { from: fromDate, to: toDate },
-    };
-  }, [data, historyTimeRange]);
 
   const debouncedRunQuery = useCallback(
     debounce(() => {
@@ -370,62 +392,80 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       <fieldset style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}>
         <legend style={{ fontSize: 14, fontWeight: 500, padding: '0 6px', width: 'auto' }}>Alert4ML Detection</legend>
         <Stack direction="column" gap={1}>
-          <Stack gap={0}>
-              <InlineField label="Support Detect">
-          <Combobox
-            options={supportDetectComboboxOptions}
-            onChange={(opt) => onSupportDetectChange(opt)}
-            value={supportDetect || null}
-          />
-        </InlineField>
-        <InlineField label="Detect Types" disabled={detectTypeComboboxOptions.length === 0}>
-          <Combobox
-            options={detectTypeComboboxOptions}
-            onChange={(opt) => onDetectTypeChange(opt)}
-            value={detectType || null}
-          />
-        </InlineField>
-      </Stack>
-      <Stack gap={0}>
-        <InlineField
-          label="History TimeRange"
-          tooltip="Historical window is pinned to end at the panel's start time. Picking a range only adjusts the duration (from = panelStart - duration)."
-        >
-          <TimeRangePicker
-            timeZone={historyTimeZone}
-            value={historyDisplayRange}
-            onChange={(range) => range && onHistoryTimeRangeChange(range)}
-            onChangeTimeZone={() => undefined}
-            onMoveBackward={() => undefined}
-            onMoveForward={() => undefined}
-            onZoom={() => undefined}
-          />
-        </InlineField>
-        <InlineSwitch
-          label="Only Anomaly Points"
-          showLabel={true}
-          value={showAnomalyPoints || false}
-          onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
-        />
-        <InlineField
-          label="Series Label"
-          tooltip="Overrides the series name segment of the result field display names (A-{label}-Pred). Supports {{label}} placeholders resolved per-series from the upstream labels (e.g. {{__name__}}). Leave empty to auto-detect from the upstream frame name or its labels."
-        >
-          <Input
-            width={24}
-            placeholder="Auto"
-            value={query.seriesLabel || ''}
-            onChange={(e) => onSeriesLabelChange(e.currentTarget.value)}
-          />
-        </InlineField>
+          <Stack gap={1} wrap="wrap">
+            <InlineField label="Support Detect" labelWidth={16}>
+              <Combobox
+                options={supportDetectComboboxOptions}
+                onChange={(opt) => onSupportDetectChange(opt)}
+                value={supportDetect || null}
+                width={24}
+              />
+            </InlineField>
+            <InlineField
+              label="Detect Types"
+              labelWidth={14}
+              disabled={detectTypeComboboxOptions.length === 0}
+            >
+              <Combobox
+                options={detectTypeComboboxOptions}
+                onChange={(opt) => onDetectTypeChange(opt)}
+                value={detectType || null}
+                width={24}
+              />
+            </InlineField>
+          </Stack>
 
-      </Stack>
-      <Stack gap={0}>
-        <Collapse
-          label="Hyperparameter Settings"
-          isOpen={isHyperParamsOpen}
-          onToggle={() => setIsHyperParamsOpen(prev => !prev)}
-          collapsible
+            <InlineField
+            label="History TimeRange"
+            labelWidth={20}
+            tooltip="How far back before the panel start to fetch training/history data. Relative lookback only — the window always ends at the panel's from time."
+          >
+            <Combobox
+              options={historyTimeRangeOptions}
+              onChange={onHistoryDurationChange}
+              value={historyDurationMs}
+              width={28}
+            />
+          </InlineField>
+
+          <Stack gap={1} wrap="wrap" alignItems="center">
+            <InlineField
+              label="Detect Interval"
+              labelWidth={16}
+              tooltip="Fixed upstream scrape step for detection. Prefer a stable value (e.g. 1m) so zooming the panel does not change history resolution or detection results. Auto keeps Grafana's panel $__interval."
+            >
+              <Combobox
+                options={detectIntervalOptions}
+                onChange={onDetectIntervalChange}
+                value={query.detectIntervalMs ?? 0}
+                width={18}
+              />
+            </InlineField>
+            <InlineField label="Only Anomaly Points" labelWidth={18}>
+              <InlineSwitch
+                value={showAnomalyPoints || false}
+                onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
+              />
+            </InlineField>
+            <InlineField
+              label="Series Label"
+              labelWidth={16}
+              tooltip="Overrides the series name segment of the result field display names (A-{label}-Pred). Supports {{label}} placeholders resolved per-series from the upstream labels (e.g. {{__name__}}). Leave empty to auto-detect from the upstream frame name or its labels."
+            >
+              <Input
+                width={24}
+                placeholder="Auto"
+                value={query.seriesLabel || ''}
+                onChange={(e) => onSeriesLabelChange(e.currentTarget.value)}
+              />
+            </InlineField>
+          </Stack>
+
+          <Collapse
+            label="Hyperparameter Settings"
+            isOpen={isHyperParamsOpen}
+            onToggle={() => setIsHyperParamsOpen((prev) => !prev)}
+            collapsible
           >
             {detectType === Alert4MLBaselineDetectType.Dynamics && (
               <Dynamics
@@ -440,9 +480,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
               />
             )}
             {detectType === Alert4MLDetectType.Outlier && (
-            <RsodHyperParams
-               params={(hyperParams as RsodParams) || DEFAULT_RSOD_PARAMS}
-               onParamsChange={(params) => params && onHyperParamsChange(params)}
+              <RsodHyperParams
+                params={(hyperParams as RsodParams) || DEFAULT_RSOD_PARAMS}
+                onParamsChange={(params) => params && onHyperParamsChange(params)}
               />
             )}
             {detectType === Alert4MLDetectType.Forecast && (
@@ -452,7 +492,6 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
               />
             )}
           </Collapse>
-      </Stack>
         </Stack>
       </fieldset>
     </Stack>

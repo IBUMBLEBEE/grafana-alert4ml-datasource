@@ -17,7 +17,7 @@ const TREND_OPTIONS = [
 ];
 
 // Keys managed by dedicated UI controls
-const DEDICATED_KEYS: (keyof DynamicsParams)[] = ['trend', 'stdDevMultiplier'];
+const DEDICATED_KEYS: (keyof DynamicsParams)[] = ['trend', 'stdDevMultiplier', 'transitionMinutes'];
 
 function getAdvancedParams(params: DynamicsParams): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -96,6 +96,24 @@ export const Dynamics: React.FC<DynamicsProps> = ({ params, onParamsChange }) =>
           type="number"
           step="0.1"
           min="0.1"
+        />
+      </InlineField>
+      <InlineField
+        label="Transition Minutes"
+        tooltip="Soft-blend window across hour buckets (default 15). Reduces false anomalies at hour boundaries. Set 0 for stair-step buckets."
+      >
+        <Input
+          value={params.transitionMinutes ?? DEFAULT_DYNAMICS_PARAMS.transitionMinutes}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            const val = parseInt(event.target.value, 10);
+            if (!isNaN(val) && val >= 0) {
+              onParamsChange({ ...params, transitionMinutes: val });
+            }
+          }}
+          type="number"
+          step="1"
+          min="0"
+          max="30"
         />
       </InlineField>
       <Collapse

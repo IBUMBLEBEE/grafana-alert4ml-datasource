@@ -69,7 +69,7 @@ pub fn split_frames(
     Ok((current, history))
 }
 
-/// `splitFrameByTime`: keep rows whose field-0 time is in `[from, to)`.
+/// `splitFrameByTime`: keep rows whose time field is in `[from, to)`.
 pub fn split_frame_by_time(
     frame: &Frame,
     from: DateTime<Utc>,
@@ -80,7 +80,18 @@ pub fn split_frame_by_time(
     }
     let from_ns = from.timestamp_nanos_opt().ok_or("timestamp out of range")?;
     let to_ns = to.timestamp_nanos_opt().ok_or("timestamp out of range")?;
-    let times = field_time_ns(&frame.fields()[0]);
+    // Prefer a named time column (Infinity JSON); fall back to field 0.
+    let time_field = frame
+        .fields()
+        .iter()
+        .find(|f| {
+            matches!(
+                f.name.to_ascii_lowercase().as_str(),
+                "time" | "timestamp" | "ts" | "__timestamp"
+            )
+        })
+        .unwrap_or(&frame.fields()[0]);
+    let times = field_time_ns(time_field);
     let indices: Vec<usize> = times
         .iter()
         .enumerate()
@@ -172,6 +183,19 @@ pub fn split_history_tail_for_eval(history: &Frame) -> rsod_core::Result<(Frame,
     split_frame_by_index(history, split_at)
 }
 
+/// Resolve the interval used for upstream detection queries.
+///
+/// Grafana's panel `$__interval` scales with the visible time range; when the
+/// query sets [`crate::contract::Alert4MLQueryJson::detect_interval_ms`] `> 0`,
+/// that fixed step wins so ML inputs stay resolution-stable.
+pub fn effective_detect_interval(panel_interval_ms: i64, detect_interval_ms: i64) -> i64 {
+    if detect_interval_ms > 0 {
+        detect_interval_ms
+    } else {
+        panel_interval_ms
+    }
+}
+
 /// `effectiveFunnelHistoryInterval`: coarsen the panel interval so the
 /// history window stays within `maxDataPoints`.
 pub fn effective_funnel_history_interval(
@@ -195,30 +219,137 @@ pub fn effective_funnel_history_interval(
     }
 }
 
-/// `buildTargetsWithInterval`: inject `intervalMs` and `refId` into every
-/// target of the query payload.
+/// `buildTargetsWithInterval`: inject `intervalMs`, `maxDataPoints`, and `refId`
+/// into every target of the query payload, and rewrite embedded time params so
+/// datasources that ignore body-level `from`/`to` (Infinity URL params, etc.)
+/// still fetch the extended history window.
+///
+/// `max_data_points` must cover the **proxied** `[from, to]` at `interval_ms`.
+/// Extending the range for history without raising `maxDataPoints` makes
+/// Prometheus coarsen the step (`range / maxDataPoints`), which is why a
+/// 1h panel with a multi-hour lookback often showed ~5-minute points.
 pub fn build_targets_with_interval(
     targets: &[serde_json::Value],
     ref_id: &str,
     interval_ms: i64,
+    max_data_points: i64,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
 ) -> rsod_core::Result<Vec<serde_json::Value>> {
     if interval_ms <= 0 {
         return Err(format!("intervalMs must be > 0, got {}", interval_ms).into());
     }
+    let max_data_points = max_data_points.max(1);
+    let from_ms = from.timestamp_millis();
+    let to_ms = to.timestamp_millis();
     let mut out = Vec::with_capacity(targets.len());
     for target in targets {
         let mut obj = target
             .as_object()
             .cloned()
             .ok_or_else(|| "target is not a JSON object".to_string())?;
+        rewrite_embedded_time_range(&mut obj, from_ms, to_ms);
         obj.insert(
             "intervalMs".to_string(),
             serde_json::Value::from(interval_ms),
+        );
+        obj.insert(
+            "maxDataPoints".to_string(),
+            serde_json::Value::from(max_data_points),
         );
         obj.insert("refId".to_string(), serde_json::Value::from(ref_id));
         out.push(serde_json::Value::Object(obj));
     }
     Ok(out)
+}
+
+/// Rewrite Infinity-style `url_options.params` and `url` query keys so the
+/// proxied fetch matches Alert4ML's extended `[from, to]` (panel macros are
+/// already expanded to the *panel* window by Grafana before we see them).
+fn rewrite_embedded_time_range(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    from_ms: i64,
+    to_ms: i64,
+) {
+    if let Some(serde_json::Value::Object(url_opts)) = target.get_mut("url_options") {
+        if let Some(serde_json::Value::Array(params)) = url_opts.get_mut("params") {
+            for p in params.iter_mut() {
+                let Some(obj) = p.as_object_mut() else {
+                    continue;
+                };
+                let key = obj
+                    .get("key")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match key.as_str() {
+                    "from" | "start" | "__from" => {
+                        obj.insert("value".into(), serde_json::Value::String(from_ms.to_string()));
+                    }
+                    "to" | "end" | "__to" => {
+                        obj.insert("value".into(), serde_json::Value::String(to_ms.to_string()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    if let Some(serde_json::Value::String(url)) = target.get_mut("url") {
+        *url = rewrite_url_time_query(url, from_ms, to_ms);
+    }
+}
+
+fn rewrite_url_time_query(url: &str, from_ms: i64, to_ms: i64) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (k, v) = match pair.split_once('=') {
+            Some((k, v)) => (k, v),
+            None => {
+                parts.push(pair.to_string());
+                continue;
+            }
+        };
+        let kl = k.to_ascii_lowercase();
+        let new_v = match kl.as_str() {
+            "from" | "start" | "__from" => from_ms.to_string(),
+            "to" | "end" | "__to" => to_ms.to_string(),
+            _ => v.to_string(),
+        };
+        parts.push(format!("{k}={new_v}"));
+    }
+    if parts.is_empty() {
+        url.to_string()
+    } else {
+        format!("{base}?{}", parts.join("&"))
+    }
+}
+
+/// How many points are needed so an upstream DS keeps `interval_ms` across
+/// `[from, to]` (Prometheus uses `max(interval, range/maxDataPoints)`).
+pub fn max_data_points_for_range(
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    interval_ms: i64,
+    panel_max_data_points: i64,
+) -> i64 {
+    if interval_ms <= 0 {
+        return panel_max_data_points.max(1);
+    }
+    let range_ms = (to - from).num_milliseconds().max(0);
+    // Ceiling division so the last partial bucket still fits.
+    let needed = (range_ms + interval_ms - 1) / interval_ms;
+    // Cap runaway lookbacks (e.g. 90d @ 5s) while still beating the panel budget.
+    const HARD_CAP: i64 = 50_000;
+    needed
+        .max(panel_max_data_points)
+        .max(1)
+        .min(HARD_CAP)
 }
 
 /// `frameSeriesKey`: series identity for history/current frame matching —
@@ -282,6 +413,7 @@ pub fn clone_frame(src: &Frame) -> rsod_core::Result<Frame> {
 mod tests {
     use super::*;
     use crate::contract::HistoryTimeRange;
+    use chrono::TimeZone;
 
     #[test]
     fn funnel_interval() {
@@ -314,5 +446,76 @@ mod tests {
 
         let no_default = effective_history_time_range(unset, 0);
         assert_eq!(no_default.duration_ms, 0);
+    }
+
+    #[test]
+    fn detect_interval_override_wins_when_set() {
+        assert_eq!(effective_detect_interval(300_000, 0), 300_000);
+        assert_eq!(effective_detect_interval(300_000, 60_000), 60_000);
+        assert_eq!(effective_detect_interval(15_000, -1), 15_000);
+    }
+
+    #[test]
+    fn max_data_points_covers_extended_history_range() {
+        // Panel 1h @ 5s wants ~720 points; with 6h history the proxied range is 7h.
+        // Without raising maxDataPoints, Prometheus would coarsen to ~range/698 ≈ 36s+
+        // (and often round to 5m) — the sparse chart the user reported.
+        let to = Utc.with_ymd_and_hms(2026, 8, 16, 0, 0, 0).unwrap();
+        let from = to - Duration::milliseconds(7 * 3_600_000);
+        let max_dp = max_data_points_for_range(from, to, 5_000, 698);
+        assert!(
+            max_dp >= (7 * 3_600_000) / 5_000,
+            "expected ≥5040 points to keep 5s step, got {max_dp}"
+        );
+    }
+
+    #[test]
+    fn build_targets_injects_max_data_points() {
+        let targets = vec![serde_json::json!({
+            "expr": "up",
+            "refId": "X"
+        })];
+        let from = Utc.with_ymd_and_hms(2026, 8, 16, 0, 0, 0).unwrap();
+        let to = from + Duration::milliseconds(3_600_000);
+        let out = build_targets_with_interval(&targets, "A", 5_000, 5040, from, to).unwrap();
+        assert_eq!(out[0]["intervalMs"], 5_000);
+        assert_eq!(out[0]["maxDataPoints"], 5040);
+        assert_eq!(out[0]["refId"], "A");
+    }
+
+    #[test]
+    fn build_targets_rewrites_infinity_from_to_params() {
+        let targets = vec![serde_json::json!({
+            "type": "json",
+            "url": "http://mock-metrics:9108/api/series?scenario=weekly&from=1&to=2",
+            "url_options": {
+                "method": "GET",
+                "params": [
+                    {"key": "scenario", "value": "weekly"},
+                    {"key": "from", "value": "111"},
+                    {"key": "to", "value": "222"},
+                    {"key": "step", "value": "60000"},
+                    {"key": "format", "value": "array"}
+                ]
+            }
+        })];
+        let from = Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 8, 8, 0, 0, 0).unwrap();
+        let out = build_targets_with_interval(&targets, "A", 60_000, 10_000, from, to).unwrap();
+        let params = out[0]["url_options"]["params"].as_array().unwrap();
+        let mut got_from = None;
+        let mut got_to = None;
+        for p in params {
+            match p["key"].as_str() {
+                Some("from") => got_from = p["value"].as_str().map(|s| s.to_string()),
+                Some("to") => got_to = p["value"].as_str().map(|s| s.to_string()),
+                _ => {}
+            }
+        }
+        assert_eq!(got_from.as_deref(), Some(from.timestamp_millis().to_string().as_str()));
+        assert_eq!(got_to.as_deref(), Some(to.timestamp_millis().to_string().as_str()));
+        let url = out[0]["url"].as_str().unwrap();
+        assert!(url.contains(&format!("from={}", from.timestamp_millis())));
+        assert!(url.contains(&format!("to={}", to.timestamp_millis())));
     }
 }

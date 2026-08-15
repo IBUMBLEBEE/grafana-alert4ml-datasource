@@ -4,6 +4,7 @@ mod engine;
 mod evt;
 mod ext_iforest;
 mod iqr;
+mod lite;
 mod seasons;
 mod skew;
 mod stl;
@@ -16,11 +17,25 @@ pub use ext_iforest::{
     SavedIForestModel,
 };
 pub use engine::{parse_rsod_hyper_params, force_link, OutlierEngine, RsodHyperParams};
+use lite::robust_detect;
 use rsod_core::{DetectionResult, TimeSeriesInput};
 use serde::{Deserialize, Serialize};
 
 pub use rsod_core::TIMESTAMP_COL;
 pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
+
+/// Product detection intensity for the outlier engine.
+///
+/// - [`DetectMode::Lite`] (default): seasonal residuals (when periods are set)
+///   plus MAD/IQR/EVT — no Extended Isolation Forest / PELT.
+/// - [`DetectMode::Full`]: legacy ensemble (MSTL + EIF + changepoints).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectMode {
+    #[default]
+    Lite,
+    Full,
+}
 
 /// Detect changepoints using PELT algorithm from anofox-forecast
 ///
@@ -50,13 +65,16 @@ pub struct OutlierOptions {
     pub model_name: String,
     pub periods: Vec<usize>,
     pub uuid: String,
-    /// Number of isolation trees (default 100)
+    /// Compact default path vs legacy EIF ensemble. Defaults to [`DetectMode::Lite`].
+    #[serde(default)]
+    pub detect_mode: DetectMode,
+    /// Number of isolation trees (default 100). Used only in [`DetectMode::Full`].
     pub n_trees: Option<usize>,
-    /// Subsample size per tree (default 256)
+    /// Subsample size per tree (default 256). Used only in [`DetectMode::Full`].
     pub sample_size: Option<usize>,
-    /// Maximum tree depth (default None = unlimited)
+    /// Maximum tree depth (default None = unlimited). Used only in [`DetectMode::Full`].
     pub max_tree_depth: Option<usize>,
-    /// Extension level for EIF (default 0)
+    /// Extension level for EIF (default 0). Used only in [`DetectMode::Full`].
     pub extension_level: Option<usize>,
 }
 
@@ -122,6 +140,16 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_cor
     let data_filled_f32: Vec<[f32; 2]> = input.timestamps.iter().zip(input.values.iter())
         .map(|(&t, &v)| [t as f32, v as f32])
         .collect();
+
+    if options.detect_mode == DetectMode::Lite {
+        return Ok(DetectionResult {
+            timestamps: time_cols,
+            values: input.values.to_vec(),
+            anomalies: lite_detect(input.values, &data_filled_f32, periods),
+            upper_bound: None,
+            lower_bound: None,
+        });
+    }
 
     // let pvalue = adf(data_filled);
     // if pvalue < STATIONARY_P_VALUE {
@@ -218,6 +246,19 @@ fn ensemble_detect(data: &[[f64; 2]], uuid: &str, eif_opts: EIFOptions) -> rsod_
     return Ok(outlier_result);
 }
 
+/// Lite path: optional MSTL residuals, then MAD/IQR/EVT — no EIF / PELT.
+fn lite_detect(values: &[f64], series_f32: &[[f32; 2]], periods: &[usize]) -> Vec<f64> {
+    if periods.is_empty() {
+        return robust_detect(values);
+    }
+    let mres = auto_mstl(series_f32, periods);
+    if mres.periods.is_empty() {
+        return robust_detect(values);
+    }
+    let residual: Vec<f64> = mres.residual.iter().map(|&v| v as f64).collect();
+    robust_detect(&residual)
+}
+
 /// Threshold constants for outlier detection
 const HIGH_SKEW_THRESHOLD: f64 = 1.0;
 const MEDIUM_SKEW_THRESHOLD: f64 = 0.8;
@@ -296,6 +337,7 @@ mod tests {
             model_name: "test_model".to_string(),
             periods: vec![],
             uuid: "test-outlier-uuid".to_string(),
+            detect_mode: DetectMode::Lite,
             n_trees: None,
             sample_size: None,
             max_tree_depth: None,
@@ -342,6 +384,7 @@ mod tests {
             model_name: "test_model".to_string(),
             periods: vec![1],
             uuid: "test-constant-uuid".to_string(),
+            detect_mode: DetectMode::Lite,
             n_trees: None,
             sample_size: None,
             max_tree_depth: None,
@@ -368,6 +411,7 @@ mod tests {
             model_name: "test_model_clean".to_string(),
             periods: vec![],
             uuid: "test-outlier-uuid-clean".to_string(),
+            detect_mode: DetectMode::Lite,
             n_trees: None,
             sample_size: None,
             max_tree_depth: None,

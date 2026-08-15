@@ -176,6 +176,10 @@ impl Detector for ForecastEngine {
         InputKind::HistoryCurrent
     }
 
+    fn default_history_duration_ms(&self) -> i64 {
+        604_800_000 // 7 days — same unset-history contract as funnel/dynamics
+    }
+
     fn detect(&self, req: &DetectRequest) -> rsod_core::Result<DetectOutput> {
         let fp = parse_forecast_hyper_params(&req.hyper_params)?;
         let periods = parse_periods(&fp.periods, req.interval_ms)?;

@@ -27,6 +27,9 @@ pub fn field_f64s(field: &Field) -> rsod_core::Result<Vec<Option<f64>>> {
     if let Some(arr) = array.as_any().downcast_ref::<Float64Array>() {
         return Ok(arr.iter().map(|v| v.copied()).collect());
     }
+    if let Some(arr) = array.as_any().downcast_ref::<Float32Array>() {
+        return Ok(arr.iter().map(|v| v.map(|v| *v as f64)).collect());
+    }
     if let Some(arr) = array.as_any().downcast_ref::<Int64Array>() {
         return Ok(arr.iter().map(|v| v.map(|v| *v as f64)).collect());
     }
@@ -43,6 +46,13 @@ pub fn field_f64s(field: &Field) -> rsod_core::Result<Vec<Option<f64>>> {
         // substitute 0.0 instead).
         return Ok(arr.iter().map(|v| v.map(|v| *v as f64)).collect());
     }
+    // Infinity (and some JSON APIs) may deliver numeric columns as Utf8.
+    if let Some(arr) = array.as_any().downcast_ref::<Utf8Array<i32>>() {
+        return Ok(arr
+            .iter()
+            .map(|v| v.and_then(|s| s.parse::<f64>().ok()))
+            .collect());
+    }
     Err(format!(
         "unsupported value field type: {:?}",
         array.data_type()
@@ -55,6 +65,11 @@ pub fn field_f64s(field: &Field) -> rsod_core::Result<Vec<Option<f64>>> {
 /// Mirrors the Go `fieldTime` semantics: timestamp arrays map 1:1, numeric
 /// arrays are interpreted as Unix *seconds* (`time.Unix(int64(v), 0)`),
 /// anything else yields `None` (the Go filter drops those rows).
+///
+/// Heuristic for numeric / string epochs (Infinity JSON):
+/// - `|v| >= 1e15` → nanoseconds
+/// - `|v| >= 1e11` → milliseconds (typical Grafana `${__from}`)
+/// - otherwise → seconds
 pub fn field_time_ns(field: &Field) -> Vec<Option<i64>> {
     let array = field.values();
     // Timestamp arrays are `PrimitiveArray<i64>`; match on the data type
@@ -82,7 +97,16 @@ pub fn field_time_ns(field: &Field) -> Vec<Option<i64>> {
                 .downcast_ref::<Float64Array>()
                 .expect("Float64 array");
             arr.iter()
-                .map(|v| v.map(|v| (*v as i64).saturating_mul(1_000_000_000)))
+                .map(|v| v.map(|v| epoch_number_to_ns(*v)))
+                .collect()
+        }
+        DataType::Float32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .expect("Float32 array");
+            arr.iter()
+                .map(|v| v.map(|v| epoch_number_to_ns(*v as f64)))
                 .collect()
         }
         DataType::Int64 => {
@@ -91,17 +115,82 @@ pub fn field_time_ns(field: &Field) -> Vec<Option<i64>> {
                 .downcast_ref::<Int64Array>()
                 .expect("Int64 array");
             arr.iter()
-                .map(|v| v.map(|v| v.saturating_mul(1_000_000_000)))
+                .map(|v| v.map(|v| epoch_number_to_ns(*v as f64)))
+                .collect()
+        }
+        DataType::Utf8 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<Utf8Array<i32>>()
+                .expect("Utf8 array");
+            arr.iter()
+                .map(|v| {
+                    v.and_then(|s| s.parse::<f64>().ok())
+                        .map(epoch_number_to_ns)
+                })
                 .collect()
         }
         _ => vec![None; array.len()],
     }
 }
 
+fn epoch_number_to_ns(v: f64) -> i64 {
+    let abs = v.abs();
+    if abs >= 1e15 {
+        v as i64
+    } else if abs >= 1e11 {
+        (v as i64).saturating_mul(1_000_000)
+    } else {
+        (v as i64).saturating_mul(1_000_000_000)
+    }
+}
+
+fn field_name_is_time(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "time" | "timestamp" | "ts" | "__timestamp"
+    )
+}
+
+fn field_name_is_value(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "value" | "values" | "metric" | "v"
+    )
+}
+
+fn pick_time_field(frame: &Frame) -> Option<&Field> {
+    frame
+        .fields()
+        .iter()
+        .find(|f| field_name_is_time(&f.name))
+        .or_else(|| frame.fields().first())
+}
+
+fn pick_value_field<'a>(frame: &'a Frame, time_field: &Field) -> Option<&'a Field> {
+    if let Some(f) = frame
+        .fields()
+        .iter()
+        .find(|f| !std::ptr::eq(*f, time_field) && field_name_is_value(&f.name))
+    {
+        return Some(f);
+    }
+    // First non-time field that can coerce to f64.
+    frame.fields().iter().find(|f| {
+        if std::ptr::eq(*f, time_field) {
+            return false;
+        }
+        field_f64s(f).is_ok()
+    })
+}
+
 /// Build the (timestamps-seconds, values) inputs for the rsod algorithms.
 ///
 /// Null values are passed as `0.0` — this is exactly what the Go FFI layer
 /// handed to Rust (the raw buffer behind a null arrow slot).
+///
+/// Time / value columns are resolved by name when possible (`time`/`value`),
+/// so Infinity JSON frames with extra string columns still work.
 pub fn extract_timeseries(frame: &Frame) -> rsod_core::Result<(Vec<f64>, Vec<f64>)> {
     let n = frame_row_count(frame);
     if n == 0 {
@@ -110,8 +199,16 @@ pub fn extract_timeseries(frame: &Frame) -> rsod_core::Result<(Vec<f64>, Vec<f64
     if frame.fields().len() < 2 {
         return Err("frame has insufficient fields".to_string().into());
     }
-    let times = field_time_ns(&frame.fields()[0]);
-    let values = field_f64s(&frame.fields()[1])?;
+    let time_field = pick_time_field(frame)
+        .ok_or_else(|| "frame has no time field".to_string())?;
+    let value_field = pick_value_field(frame, time_field).ok_or_else(|| {
+        format!(
+            "frame has no numeric value field (fields: {:?})",
+            frame.fields().iter().map(|f| f.name.as_str()).collect::<Vec<_>>()
+        )
+    })?;
+    let times = field_time_ns(time_field);
+    let values = field_f64s(value_field)?;
     let mut ts = Vec::with_capacity(n);
     let mut vs = Vec::with_capacity(n);
     for i in 0..n {

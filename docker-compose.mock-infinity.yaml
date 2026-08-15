@@ -1,0 +1,26 @@
+# Overlay: mock-metrics API + Infinity plugin (compatible with Grafana 11.5.3).
+#
+#   make -f Makefile.cross.local docker-up
+#
+# Infinity 4.x needs Grafana >=11.6.11 and shows "Type: undefined" on 11.5.3.
+# We vendor Infinity 3.6.0 and install from local zip (no grafana.com at boot).
+#
+# Infinity URL (from Grafana container): http://mock-metrics:9108
+
+services:
+  grafana:
+    environment:
+      # Local zip mounted below — avoids GF_INSTALL_PLUGINS 404 / network failures.
+      GF_INSTALL_PLUGINS: /opt/grafana-plugins/yesoreyeram-infinity-datasource-3.6.0.zip;yesoreyeram-infinity-datasource
+    volumes:
+      - ./scripts/mock-metrics/vendor/yesoreyeram-infinity-datasource-3.6.0.zip:/opt/grafana-plugins/yesoreyeram-infinity-datasource-3.6.0.zip:ro
+    depends_on:
+      - mock-metrics
+
+  mock-metrics:
+    build:
+      context: ./scripts/mock-metrics
+    container_name: alert4ml-mock-metrics
+    ports:
+      - "9108:9108"
+    restart: unless-stopped

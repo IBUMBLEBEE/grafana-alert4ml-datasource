@@ -78,7 +78,7 @@ pub fn iqr_anomaly_detection(data: &[f64], window_size: usize, upper_percentile:
 }
 
 /// Calculate percentile
-fn percentile(data: &[f64], p: f64, interpolation: &str) -> f64 {
+pub(crate) fn percentile(data: &[f64], p: f64, interpolation: &str) -> f64 {
     if data.is_empty() {
         return f64::NAN;
     }

@@ -61,12 +61,25 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
 ];
 
 
-export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue[] = [
-  { label: '15m', value: '15m' },
-  { label: '1h', value: '1h' },
-  { label: '24h', value: '24h' },
-  { label: '7d', value: '7d' },
-  { label: '30d', value: '30d' },
+export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue<number>[] = [
+  { label: 'Last 15 minutes', value: 15 * 60 * 1000 },
+  { label: 'Last 1 hour', value: 60 * 60 * 1000 },
+  { label: 'Last 6 hours', value: 6 * 60 * 60 * 1000 },
+  { label: 'Last 1 day', value: 24 * 60 * 60 * 1000 },
+  { label: 'Last 1 week', value: 7 * 24 * 60 * 60 * 1000, description: 'Recommended for Weekly dynamics' },
+  { label: 'Last 2 weeks', value: 14 * 24 * 60 * 60 * 1000 },
+  { label: 'Last 1 month', value: 30 * 24 * 60 * 60 * 1000 },
+  { label: 'Last 90 days', value: 90 * 24 * 60 * 60 * 1000, description: 'Matches dynamics Weekly lookback default' },
+];
+
+/** Fixed detect scrape step presets (ms). `0` = follow Grafana panel `$__interval`. */
+export const DETECT_INTERVAL_OPTIONS: SelectableValue<number>[] = [
+  { label: 'Auto (panel)', value: 0, description: 'Follow Grafana $__interval (changes with zoom)' },
+  { label: '15s', value: 15_000 },
+  { label: '30s', value: 30_000 },
+  { label: '1m', value: 60_000 },
+  { label: '5m', value: 300_000 },
+  { label: '15m', value: 900_000 },
 ];
 
 export type AlertOutputMode = 'full' | 'latest_only' | 'dedupe';
@@ -176,16 +189,29 @@ export const DEFAULT_FUNNEL_HISTORY: HistoryDuration = {
   durationMs: 7 * 24 * 60 * 60 * 1000,
 };
 
+/** Recommended history for Dynamics / Forecast (Weekly baseline needs ≥7d). */
+export const DEFAULT_BASELINE_HISTORY: HistoryDuration = {
+  durationMs: 7 * 24 * 60 * 60 * 1000,
+};
+
 export interface DynamicsParams {
   trend?: string;
   periodDays?: number;
   stdDevMultiplier?: number;
+  /** Soft-blend window (minutes) across hour buckets; 0 disables. Default 15. */
+  transitionMinutes?: number;
 }
 
 export interface RsodParams {
   periods?: string;
   modelName?: string;
-  // Extended Isolation Forest advanced parameters
+  /**
+   * Detection intensity.
+   * - `lite` (default): robust MAD/IQR/EVT path — compact product default
+   * - `full`: legacy MSTL + Extended Isolation Forest + changepoints
+   */
+  detectMode?: 'lite' | 'full';
+  // Extended Isolation Forest advanced parameters (full mode only)
   nTrees?: number;
   sampleSize?: number | null;
   maxTreeDepth?: number | null;
@@ -235,6 +261,14 @@ export const DEFAULT_TIME_RANGE: HistoryDuration = {
 export const DEFAULT_RSOD_PARAMS: RsodParams = {
   periods: '',
   modelName: 'rsod_model',
+  detectMode: 'lite',
+};
+
+/** EIF knobs — only meaningful when `detectMode` is `full`. */
+export const DEFAULT_RSOD_FULL_ADVANCED: Pick<
+  RsodParams,
+  'nTrees' | 'sampleSize' | 'maxTreeDepth' | 'extensionLevel'
+> = {
   nTrees: 100,
   sampleSize: 256,
   maxTreeDepth: null,
@@ -244,6 +278,7 @@ export const DEFAULT_RSOD_PARAMS: RsodParams = {
 export const DEFAULT_DYNAMICS_PARAMS: DynamicsParams = {
   trend: 'weekly',
   stdDevMultiplier: 2.0,
+  transitionMinutes: 15,
 };
 
 export interface UniqueKeys {
@@ -265,6 +300,12 @@ export interface Alert4MLQuery extends DataQuery {
   hyperParams: RsodParams | DynamicsParams | ForecastParams | FunnelParams;
   targets: DataQuery[];
   historyTimeRange: HistoryDuration;
+  /**
+   * Fixed upstream query step for detection (milliseconds). When set (> 0),
+   * overrides Grafana's panel `$__interval` so history resolution stays stable
+   * across time-range zoom. Omit / 0 = use the panel interval.
+   */
+  detectIntervalMs?: number;
   showAnomalyPoints: boolean;
   uniqueKeys: UniqueKeys;
   baseDsUid?: string;

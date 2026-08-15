@@ -3,7 +3,7 @@ use rsod_core::{
     decide, DetectionMethod, DetectionResult, SeriesCharacteristic, TimeSeriesInput, TrendType,
 };
 use rsod_forecaster::{forecast, ForecasterOptions};
-use rsod_outlier::{outlier, OutlierOptions};
+use rsod_outlier::{outlier, DetectMode, OutlierOptions};
 
 use crate::config::FunnelOptions;
 use crate::l1::FilterVerdict;
@@ -33,6 +33,7 @@ pub fn run_l2(
                 model_name: options.model_name.clone(),
                 periods: options.periods.clone(),
                 uuid: options.uuid.clone(),
+                detect_mode: DetectMode::Lite,
                 n_trees: None,
                 sample_size: None,
                 max_tree_depth: None,
@@ -64,6 +65,7 @@ pub fn run_l2(
                 trend: trend_type_to_baseline(profile_trend),
                 period_days: None,
                 std_dev_multiplier: options.std_dev_multiplier,
+                ..Default::default()
             };
             dynamics_detect(current, history, &cfg)
         }

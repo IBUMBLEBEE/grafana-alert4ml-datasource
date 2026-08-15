@@ -1,0 +1,31 @@
+# Example Infinity datasource pointing at the mock-metrics API.
+# Requires the Infinity plugin: yesoreyeram-infinity-datasource
+# Install: grafana-cli plugins install yesoreyeram-infinity-datasource
+# (or add GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource to Grafana env)
+#
+# Copy into provisioning/datasources/ when you want it auto-provisioned,
+# or create the datasource manually in the UI using the same URL.
+
+apiVersion: 1
+
+datasources:
+  - name: Alert4ML Mock (Infinity)
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    isDefault: false
+    editable: true
+    jsonData:
+      # From inside the Grafana container; host-run API use http://host.docker.internal:9108
+      auth_method: none
+      allowedHosts:
+        - http://mock-metrics:9108
+        - mock-metrics:9108
+        - http://host.docker.internal:9108
+        - host.docker.internal:9108
+        - http://127.0.0.1:9108
+        - 127.0.0.1:9108
+        - http://localhost:9108
+        - localhost:9108
+        # Host LAN IP when Grafana (or browser URL mode) calls the published :9108 port
+        - http://192.168.59.128:9108
+        - 192.168.59.128:9108

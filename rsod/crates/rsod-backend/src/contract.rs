@@ -48,6 +48,12 @@ pub struct Alert4MLQueryJson {
     pub series_label: String,
     #[serde(rename = "historyTimeRange", default)]
     pub history_time_range: HistoryTimeRange,
+    /// Fixed upstream scrape step for detection queries (milliseconds).
+    /// When `> 0`, overrides Grafana's panel-derived `$__interval` so history
+    /// resolution (and therefore detection results) stay stable across zoom.
+    /// `0` / omitted keeps the panel interval (backward compatible).
+    #[serde(rename = "detectIntervalMs", default)]
+    pub detect_interval_ms: i64,
     #[serde(rename = "uniqueKeys", default)]
     pub unique_keys: UniqueKeys,
 }
@@ -124,5 +130,16 @@ mod tests {
         let bare = serde_json::json!({ "detectType": "forecast" });
         let q: Alert4MLQueryJson = serde_json::from_value(bare).expect("must parse");
         assert_eq!(q.series_label, "");
+        assert_eq!(q.detect_interval_ms, 0);
+    }
+
+    #[test]
+    fn query_json_parses_detect_interval_ms() {
+        let value = serde_json::json!({
+            "detectType": "outlier",
+            "detectIntervalMs": 60_000,
+        });
+        let q: Alert4MLQueryJson = serde_json::from_value(value).expect("must parse");
+        assert_eq!(q.detect_interval_ms, 60_000);
     }
 }

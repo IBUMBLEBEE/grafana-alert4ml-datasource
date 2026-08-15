@@ -1,0 +1,16 @@
+# Alert4ML mock metrics (scheme 2) for Grafana Infinity.
+#
+# Start with the main stack:
+#   docker compose -f docker-compose.yaml -f scripts/mock-metrics/docker-compose.mock.yaml up -d
+#
+# Or run the API alone:
+#   python3 scripts/mock-metrics/server.py
+
+services:
+  mock-metrics:
+    build:
+      context: .
+    container_name: alert4ml-mock-metrics
+    ports:
+      - "9108:9108"
+    restart: unless-stopped
