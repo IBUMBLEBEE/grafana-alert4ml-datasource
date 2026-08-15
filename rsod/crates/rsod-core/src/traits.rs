@@ -1,23 +1,4 @@
 use crate::error::Result;
-use crate::types::{DetectionResult, TimeSeriesData};
-
-/// Unified detector interface.
-///
-/// All anomaly detection strategies (baseline, outlier, forecast)
-/// implement this trait to provide a consistent API for FFI and orchestration.
-pub trait Detector: Send + Sync {
-    /// Train the detector on historical data.
-    fn fit(&mut self, data: &TimeSeriesData) -> Result<()>;
-
-    /// Run anomaly detection on the given data.
-    fn predict(&self, data: &TimeSeriesData) -> Result<DetectionResult>;
-
-    /// Convenience: train then predict in one step.
-    fn fit_predict(&mut self, data: &TimeSeriesData) -> Result<DetectionResult> {
-        self.fit(data)?;
-        self.predict(data)
-    }
-}
 
 /// Ability to serialize/deserialize a trained model for persistence.
 ///

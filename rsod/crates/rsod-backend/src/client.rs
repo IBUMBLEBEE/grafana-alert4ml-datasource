@@ -68,9 +68,10 @@ impl GrafanaClient {
     /// surface as a clear `invalid URL '...': <reason>` (Go reported the same
     /// via `url.Parse` / `http.NewRequest`) instead of reqwest's opaque
     /// "builder error".
-    fn url(&self, path: &str) -> Result<reqwest::Url, String> {
+    fn url(&self, path: &str) -> rsod_core::Result<reqwest::Url> {
         let full = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
-        reqwest::Url::parse(&full).map_err(|e| format!("invalid URL '{}': {}", full, e))
+        reqwest::Url::parse(&full)
+            .map_err(|e| format!("invalid URL '{}': {}", full, e).into())
     }
 
     fn headers(&self) -> reqwest::header::HeaderMap {
@@ -93,7 +94,7 @@ impl GrafanaClient {
     pub async fn data_source_query(
         &self,
         body: &ProxyQueryBody,
-    ) -> Result<GrafanaQueryDataResponse, String> {
+    ) -> rsod_core::Result<GrafanaQueryDataResponse> {
         let response = self
             .http
             .post(self.url("api/ds/query")?)
@@ -105,16 +106,16 @@ impl GrafanaClient {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(format!("received error response: {}", text));
+            return Err(format!("received error response: {}", text).into());
         }
         response
             .json::<GrafanaQueryDataResponse>()
             .await
-            .map_err(|e| format!("failed to decode /api/ds/query response: {}", e))
+            .map_err(|e| format!("failed to decode /api/ds/query response: {}", e).into())
     }
 
     /// GET /api/login/ping — health check against the configured Grafana.
-    pub async fn login_ping(&self) -> Result<(), String> {
+    pub async fn login_ping(&self) -> rsod_core::Result<()> {
         let response = self
             .http
             .get(self.url("api/login/ping")?)
@@ -126,7 +127,8 @@ impl GrafanaClient {
             return Err(format!(
                 "login ping failed: received error response: {}",
                 response.text().await.unwrap_or_default()
-            ));
+            )
+            .into());
         }
         Ok(())
     }
@@ -150,7 +152,7 @@ mod tests {
         let c = GrafanaClient::new("192.168.59.132:3000".to_string(), String::new());
         let err = c.url("api/ds/query").unwrap_err();
         assert!(
-            err.contains("invalid URL") && err.contains("192.168.59.132:3000"),
+            err.to_string().contains("invalid URL") && err.to_string().contains("192.168.59.132:3000"),
             "unexpected error: {}",
             err
         );
@@ -160,7 +162,7 @@ mod tests {
     fn url_empty_base_fails_clearly() {
         let c = GrafanaClient::new(String::new(), String::new());
         let err = c.url("api/ds/query").unwrap_err();
-        assert!(err.contains("invalid URL"), "unexpected error: {}", err);
+        assert!(err.to_string().contains("invalid URL"), "unexpected error: {}", err);
     }
 
     /// Regression test for the vendored SDK fix (rsod/vendor): Grafana's

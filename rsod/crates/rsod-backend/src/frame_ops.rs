@@ -22,7 +22,7 @@ pub fn frame_row_count(frame: &Frame) -> usize {
 
 /// Field 1 (value column) as `Vec<Option<f64>>`, mirroring the Go FFI input:
 /// null slots become `Some(0.0)` so the algorithms see the raw buffer value.
-pub fn field_f64s(field: &Field) -> Result<Vec<Option<f64>>, String> {
+pub fn field_f64s(field: &Field) -> rsod_core::Result<Vec<Option<f64>>> {
     let array = field.values();
     if let Some(arr) = array.as_any().downcast_ref::<Float64Array>() {
         return Ok(arr.iter().map(|v| v.copied()).collect());
@@ -46,7 +46,8 @@ pub fn field_f64s(field: &Field) -> Result<Vec<Option<f64>>, String> {
     Err(format!(
         "unsupported value field type: {:?}",
         array.data_type()
-    ))
+    )
+    .into())
 }
 
 /// Field 0 (time column) as `Vec<Option<i64>>` nanoseconds since epoch.
@@ -101,13 +102,13 @@ pub fn field_time_ns(field: &Field) -> Vec<Option<i64>> {
 ///
 /// Null values are passed as `0.0` — this is exactly what the Go FFI layer
 /// handed to Rust (the raw buffer behind a null arrow slot).
-pub fn extract_timeseries(frame: &Frame) -> Result<(Vec<f64>, Vec<f64>), String> {
+pub fn extract_timeseries(frame: &Frame) -> rsod_core::Result<(Vec<f64>, Vec<f64>)> {
     let n = frame_row_count(frame);
     if n == 0 {
         return Ok((Vec::new(), Vec::new()));
     }
     if frame.fields().len() < 2 {
-        return Err("frame has insufficient fields".to_string());
+        return Err("frame has insufficient fields".to_string().into());
     }
     let times = field_time_ns(&frame.fields()[0]);
     let values = field_f64s(&frame.fields()[1])?;
@@ -126,6 +127,10 @@ pub fn extract_timeseries(frame: &Frame) -> Result<(Vec<f64>, Vec<f64>), String>
 
 /// Outlier missing-data gate: more than 30% of the value slots are null or
 /// zero (strictly greater, matching the Go backend).
+///
+/// Moved into the outlier engine (`rsod-outlier::engine::missing_gate`), which
+/// operates on the extracted `&[f64]` where nulls are already `0.0`.
+#[allow(dead_code)]
 pub fn calculate_missing_rate(values: &[Option<f64>]) -> bool {
     if values.is_empty() {
         return false;
@@ -141,7 +146,7 @@ pub fn calculate_missing_rate(values: &[Option<f64>]) -> bool {
 
 /// Rebuild a field keeping only the given row indices (type-preserving,
 /// nulls preserved). Mirrors Go's `FilterRowsByField`.
-pub fn filter_field_by_indices(field: &Field, indices: &[usize]) -> Result<Field, String> {
+pub fn filter_field_by_indices(field: &Field, indices: &[usize]) -> rsod_core::Result<Field> {
     let array = field.values();
     let mut growable = make_growable(&[array], true, indices.len());
     for &i in indices {
@@ -151,7 +156,7 @@ pub fn filter_field_by_indices(field: &Field, indices: &[usize]) -> Result<Field
 }
 
 /// Rebuild a field keeping rows in `[start, start+len)` (type-preserving).
-pub fn slice_field(field: &Field, start: usize, len: usize) -> Result<Field, String> {
+pub fn slice_field(field: &Field, start: usize, len: usize) -> rsod_core::Result<Field> {
     let array = field.values();
     let mut growable = make_growable(&[array], true, len);
     if len > 0 {
@@ -168,7 +173,7 @@ pub fn slice_field(field: &Field, start: usize, len: usize) -> Result<Field, Str
 fn field_from_growable<'a>(
     field: &Field,
     mut growable: Box<dyn Growable + 'a>,
-) -> Result<Field, String> {
+) -> rsod_core::Result<Field> {
     let boxed = growable.as_box();
     let name = field.name.clone();
     let mut out: Field = if let Some(arr) = boxed.as_any().downcast_ref::<Float64Array>() {
@@ -190,7 +195,8 @@ fn field_from_growable<'a>(
         return Err(format!(
             "unsupported field type for rebuild: {:?}",
             boxed.data_type()
-        ));
+        )
+        .into());
     }
     .map_err(|e| e.to_string())?;
     out.labels = field.labels.clone();

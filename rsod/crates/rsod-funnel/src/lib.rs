@@ -8,6 +8,7 @@
 
 mod alert_output;
 mod config;
+mod engine;
 mod l1;
 mod l2;
 mod metrics;
@@ -18,6 +19,7 @@ mod stats;
 mod storage;
 
 pub use config::{AlertOutputMode, FunnelOptions};
+pub use engine::{force_link, parse_funnel_hyper_params, FunnelEngine, FunnelHyperParams};
 pub use l1::{FilterVerdict, L1Result, L1Stats};
 pub use metrics::{FunnelMetrics, FunnelRun};
 pub use model::{FunnelModel, FUNNEL_MODEL_VERSION};

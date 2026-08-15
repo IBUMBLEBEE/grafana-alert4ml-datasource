@@ -13,9 +13,9 @@ impl Model {
         Self { uuid, artifacts }
     }
 
-    pub fn write(&self) -> Result<(), std::io::Error> {
+    pub fn write(&self) -> rsod_core::Result<()> {
         println!("Model::write called for uuid: {}", self.uuid);
-        crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        crate::init_db()?;
 
         let backend = get_backend();
         match backend {
@@ -24,9 +24,9 @@ impl Model {
         }
     }
 
-    pub fn read(&mut self) -> Result<(), std::io::Error> {
+    pub fn read(&mut self) -> rsod_core::Result<()> {
         println!("Model::read called for uuid: {}", self.uuid);
-        crate::init_db().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        crate::init_db()?;
 
         let backend = get_backend();
         match backend {
@@ -35,10 +35,10 @@ impl Model {
         }
     }
 
-    fn write_sqlite(&self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> Result<(), std::io::Error> {
-        let db = mutex.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock SQLite database")
-        })?;
+    fn write_sqlite(&self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> rsod_core::Result<()> {
+        let db = mutex
+            .lock()
+            .map_err(|_| RsodError::Storage("Failed to lock SQLite database".into()))?;
 
         let mut stmt = db
             .prepare(
@@ -46,26 +46,20 @@ impl Model {
                  VALUES (?1, ?2, strftime('%s', 'now'))",
             )
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Prepare insert statement failed: {}", e),
-                )
+                RsodError::Storage(format!("Prepare insert statement failed: {}", e))
             })?;
 
         stmt.execute((&self.uuid, &self.artifacts))
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Execute insert failed: {}", e),
-                )
+                RsodError::Storage(format!("Execute insert failed: {}", e))
             })?;
         Ok(())
     }
 
-    fn write_postgres(&self, mutex: &std::sync::Mutex<postgres::Client>) -> Result<(), std::io::Error> {
-        let mut client = mutex.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock PostgreSQL client")
-        })?;
+    fn write_postgres(&self, mutex: &std::sync::Mutex<postgres::Client>) -> rsod_core::Result<()> {
+        let mut client = mutex
+            .lock()
+            .map_err(|_| RsodError::Storage("Failed to lock PostgreSQL client".into()))?;
 
         client
             .execute(
@@ -75,26 +69,20 @@ impl Model {
                 &[&self.uuid, &self.artifacts],
             )
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PostgreSQL insert failed: {}", e),
-                )
+                RsodError::Storage(format!("PostgreSQL insert failed: {}", e))
             })?;
         Ok(())
     }
 
-    fn read_sqlite(&mut self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> Result<(), std::io::Error> {
-        let db = mutex.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock SQLite database")
-        })?;
+    fn read_sqlite(&mut self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> rsod_core::Result<()> {
+        let db = mutex
+            .lock()
+            .map_err(|_| RsodError::Storage("Failed to lock SQLite database".into()))?;
 
         let mut stmt = db
             .prepare("SELECT uuid, artifacts FROM models WHERE uuid = ?")
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Prepare select statement failed: {}", e),
-                )
+                RsodError::Storage(format!("Prepare select statement failed: {}", e))
             })?;
 
         let rows = stmt
@@ -102,18 +90,12 @@ impl Model {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
             })
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Query map failed: {}", e),
-                )
+                RsodError::Storage(format!("Query map failed: {}", e))
             })?;
 
         for row_result in rows {
             let (uuid, artifacts) = row_result.map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Row processing failed: {}", e),
-                )
+                RsodError::Storage(format!("Row processing failed: {}", e))
             })?;
             self.uuid = uuid;
             self.artifacts = artifacts;
@@ -122,10 +104,10 @@ impl Model {
         Ok(())
     }
 
-    fn read_postgres(&mut self, mutex: &std::sync::Mutex<postgres::Client>) -> Result<(), std::io::Error> {
-        let mut client = mutex.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock PostgreSQL client")
-        })?;
+    fn read_postgres(&mut self, mutex: &std::sync::Mutex<postgres::Client>) -> rsod_core::Result<()> {
+        let mut client = mutex
+            .lock()
+            .map_err(|_| RsodError::Storage("Failed to lock PostgreSQL client".into()))?;
 
         let rows = client
             .query(
@@ -133,10 +115,7 @@ impl Model {
                 &[&self.uuid],
             )
             .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("PostgreSQL query failed: {}", e),
-                )
+                RsodError::Storage(format!("PostgreSQL query failed: {}", e))
             })?;
 
         for row in rows {
@@ -165,12 +144,12 @@ impl GlobalStorage {
 impl ModelStorage for GlobalStorage {
     fn save(&self, uuid: &str, artifacts: &[u8]) -> rsod_core::Result<()> {
         let model = Model::new(uuid.to_string(), artifacts.to_vec());
-        model.write().map_err(|e| RsodError::Storage(e.to_string()))
+        model.write()
     }
 
     fn load(&self, uuid: &str) -> rsod_core::Result<Option<Vec<u8>>> {
         let mut model = Model::new(uuid.to_string(), vec![]);
-        model.read().map_err(|e| RsodError::Storage(e.to_string()))?;
+        model.read()?;
         if model.artifacts.is_empty() {
             Ok(None)
         } else {
@@ -179,7 +158,7 @@ impl ModelStorage for GlobalStorage {
     }
 
     fn delete(&self, uuid: &str) -> rsod_core::Result<()> {
-        crate::init_db().map_err(|e| RsodError::Storage(e))?;
+        crate::init_db()?;
         let backend = get_backend();
         match backend {
             DbBackend::Sqlite(mutex) => {

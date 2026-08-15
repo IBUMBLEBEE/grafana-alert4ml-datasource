@@ -58,7 +58,6 @@ pub fn run_l2(
                 log_iterations: Some(0),
             };
             forecast(current, history, &fc_opts)
-                .map_err(|e| rsod_core::RsodError::Detection(e.to_string()))
         }
         DetectionMethod::Baseline => {
             let cfg = BaselineConfig {
@@ -67,7 +66,6 @@ pub fn run_l2(
                 std_dev_multiplier: options.std_dev_multiplier,
             };
             dynamics_detect(current, history, &cfg)
-                .map_err(|e| rsod_core::RsodError::Detection(e.to_string()))
         }
     }?;
 
@@ -81,8 +79,7 @@ fn outlier_with_history(
     options: &OutlierOptions,
 ) -> rsod_core::Result<DetectionResult> {
     if history.is_empty() {
-        return outlier(current, options)
-            .map_err(|e| rsod_core::RsodError::Detection(e.to_string()));
+        return outlier(current, options);
     }
 
     let mut ts = history.timestamps.to_vec();
@@ -91,8 +88,7 @@ fn outlier_with_history(
     vs.extend_from_slice(current.values);
 
     let combined = TimeSeriesInput::new(&ts, &vs);
-    let full =
-        outlier(combined, options).map_err(|e| rsod_core::RsodError::Detection(e.to_string()))?;
+    let full = outlier(combined, options)?;
 
     let n = current.len();
     let start = full.anomalies.len().saturating_sub(n);

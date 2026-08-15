@@ -21,7 +21,7 @@ static STORAGE_CONFIG: OnceLock<StorageConfig> = OnceLock::new();
 /// Call this before any model read/write operations.
 /// - `trial_mode = true`: uses SQLite in-memory (volatile, data lost on restart)
 /// - `trial_mode = false`: uses PostgreSQL (persistent, requires valid `pg_dsn`)
-pub fn init_db_with_config(trial_mode: bool, pg_dsn: &str) -> Result<(), String> {
+pub fn init_db_with_config(trial_mode: bool, pg_dsn: &str) -> rsod_core::Result<()> {
     let _ = STORAGE_CONFIG.set(StorageConfig {
         trial_mode,
         pg_dsn: pg_dsn.to_string(),
@@ -31,7 +31,7 @@ pub fn init_db_with_config(trial_mode: bool, pg_dsn: &str) -> Result<(), String>
 
 /// Initialize the database backend.
 /// Uses previously stored config from `init_db_with_config`, or defaults to trial mode (SQLite in-memory).
-pub fn init_db() -> Result<(), String> {
+pub fn init_db() -> rsod_core::Result<()> {
     if let Ok(mut error_guard) = INIT_ERROR.lock() {
         *error_guard = None;
     }
@@ -49,14 +49,14 @@ pub fn init_db() -> Result<(), String> {
 
     if let Err(e) = &result {
         if let Ok(mut error_guard) = INIT_ERROR.lock() {
-            *error_guard = Some(e.clone());
+            *error_guard = Some(e.to_string());
         }
     }
 
     result
 }
 
-fn init_sqlite_backend() -> Result<(), String> {
+fn init_sqlite_backend() -> rsod_core::Result<()> {
     let backend = init_sqlite()?;
 
     match backend {
@@ -91,14 +91,14 @@ fn init_sqlite_backend() -> Result<(), String> {
             .map_err(|e| format!("Failed to set journal mode: {}", e))?;
         }
         DbBackend::Postgres(_) => {
-            return Err("Expected SQLite backend but got PostgreSQL".to_string());
+            return Err("Expected SQLite backend but got PostgreSQL".to_string().into());
         }
     }
 
     Ok(())
 }
 
-fn init_postgres_backend(dsn: &str) -> Result<(), String> {
+fn init_postgres_backend(dsn: &str) -> rsod_core::Result<()> {
     let backend = init_postgres(dsn)?;
 
     match backend {
@@ -122,7 +122,7 @@ fn init_postgres_backend(dsn: &str) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create tables in PostgreSQL: {}", e))?;
         }
         DbBackend::Sqlite(_) => {
-            return Err("Expected PostgreSQL backend but got SQLite".to_string());
+            return Err("Expected PostgreSQL backend but got SQLite".to_string().into());
         }
     }
 

@@ -18,5 +18,6 @@ use plugin::PluginService;
 
 #[grafana_plugin_sdk::main(services(data, diagnostics), init_subscriber = true)]
 async fn plugin() -> PluginService {
+    pipeline::assert_engines_registered();
     PluginService::new()
 }

@@ -1,8 +1,10 @@
-//! Query pipeline — per-query orchestration of the four detect types.
+//! Query pipeline — per-query orchestration, decoupled from the algorithms.
 //!
 //! Port of the former Go backend (`pkg/plugin/datasource.go`,
-//! `funnel_query.go`). All ML work happens here via direct calls into the
-//! `rsod-*` crates (the FFI layer no longer exists for the plugin path).
+//! `funnel_query.go`). Detection is dispatched through the `rsod-core`
+//! registry (`detector_by_name`), so the backend never references a concrete
+//! algorithm's options type — swapping a model means adding/registering a new
+//! engine crate without touching this file.
 //!
 //! Error semantics: the Go backend failed the whole request on any error; the
 //! Rust SDK is stream-based, so failures are reported per-query as
@@ -14,26 +16,19 @@ use tracing::debug;
 
 use crate::client::{GrafanaClient, ProxyQueryBody};
 use crate::config::{PluginSettings, SecretPluginSettings};
-use crate::contract::{
-    constant, parse_hyper_params, Alert4MLQueryJson, DynamicsHyperParams, ForecastHyperParams,
-    FunnelHyperParams, HistoryTimeRange, HyperParams, RsodHyperParams,
-};
-use crate::frame_ops::{calculate_missing_rate, extract_timeseries, field_f64s, frame_row_count};
-use crate::render::{
-    detection_frame, new_data_frame_from_result, remove_non_anomaly_fields,
-    render_frame_with_baseline, render_frame_with_forecast,
-};
+use crate::contract::{Alert4MLQueryJson, HistoryTimeRange};
+use crate::frame_ops::extract_timeseries;
+use crate::render::render_detection;
 use crate::tools::{
     build_targets_with_interval, effective_funnel_history_interval, effective_history_time_range,
-    ensure_funnel_frames, get_recalculate_time_range, match_history_frame, parse_periods,
-    split_frames,
+    ensure_funnel_frames, get_recalculate_time_range, match_history_frame, split_frames,
 };
-use crate::uuid_util::{derive_uuid, ForecastTrainingKey, UniqueKeysUuid};
+use crate::uuid_util::UniqueKeysUuid;
 
-use rsod_baseline::dynamics::{BaselineConfig, Trend};
-use rsod_core::{DetectionResult, TimeSeriesInput, BASELINE_VALUE_COL, PRED_COL};
-use rsod_funnel::{AlertOutputMode, FunnelOptions};
-use rsod_outlier::OutlierOptions;
+use rsod_core::{
+    detector_by_name, iter_detectors, DetectOutput, DetectRequest, InputKind, QueryKind, RsodError,
+    TimeSeriesInput,
+};
 
 /// Run a fallible algorithm call with panic isolation.
 ///
@@ -42,15 +37,37 @@ use rsod_outlier::OutlierOptions;
 /// has no such boundary, so a panic would unwind through the SDK's query
 /// stream and abort the whole backend. Report it as an ordinary per-query
 /// error instead.
-fn ml_call<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+fn ml_call<T>(f: impl FnOnce() -> T) -> rsod_core::Result<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
         let msg = payload
             .downcast_ref::<&str>()
             .map(|s| (*s).to_string())
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "unknown panic".to_string());
-        format!("algorithm panicked: {}", msg)
+        RsodError::Other(format!("algorithm panicked: {}", msg))
     })
+}
+
+/// Force-link every engine crate so `inventory::submit!` statics survive
+/// linking, then log the live registry.
+///
+/// Adding a new engine: (1) `Cargo.toml` dependency, (2) one `force_link()`
+/// call below. Pipeline / contract / render stay untouched. The linker cannot
+/// pull in a crate from a dependency alone when nothing references it.
+///
+/// Called once from `main` before serving queries.
+pub fn assert_engines_registered() {
+    rsod_outlier::force_link();
+    rsod_baseline::force_link();
+    rsod_forecaster::force_link();
+    rsod_funnel::force_link();
+
+    let registered: Vec<&'static str> = iter_detectors().map(|d| d.name()).collect();
+    if registered.is_empty() {
+        tracing::error!("no detection engines registered — check force_link anchors");
+        return;
+    }
+    tracing::info!(?registered, "detection engines registered");
 }
 
 /// Series segment of the result display names, in priority order:
@@ -78,14 +95,16 @@ pub async fn process_query(
     query: backend::DataQuery<Value>,
     settings: &PluginSettings,
     secrets: &SecretPluginSettings,
-) -> Result<backend::DataResponse, String> {
+) -> rsod_core::Result<backend::DataResponse> {
     let ref_id = query.ref_id.clone();
 
     let query_json: Alert4MLQueryJson = serde_json::from_value(query.query.clone())
         .map_err(|e| format!("failed to parse query JSON: {}", e))?;
 
-    if query_json.detect_type == constant::DETECT_TYPE_FUNNEL {
-        let hyper_params = parse_hyper_params(&query_json.detect_type, &query_json.hyper_params)?;
+    let engine = detector_by_name(&query_json.detect_type)
+        .ok_or_else(|| format!("unknown detect type: {}", query_json.detect_type))?;
+
+    if engine.query_kind() == QueryKind::FunnelDual {
         // Storage is one-shot: initialize best-effort so funnel persistence
         // uses the configured backend (SQLite in-memory in trial mode).
         // Panic-isolated (the Go-era FFI boundary caught panics here too).
@@ -97,7 +116,7 @@ pub async fn process_query(
             Err(e) => debug!(error = %e, "storage initialization panicked"),
         }
         let (new_frames, current_frames) =
-            process_funnel_dual_query(client, &query, &query_json, &hyper_params).await?;
+            process_funnel_dual_query(client, &query, &query_json).await?;
         let frames = if query_json.show_anomaly_points {
             new_frames
         } else {
@@ -111,7 +130,7 @@ pub async fn process_query(
     process_regular_query(client, &query, &query_json).await
 }
 
-fn checked_response(ref_id: String, frames: Vec<Frame>) -> Result<backend::DataResponse, String> {
+fn checked_response(ref_id: String, frames: Vec<Frame>) -> rsod_core::Result<backend::DataResponse> {
     let checked = frames
         .iter()
         .map(|f| f.check())
@@ -128,9 +147,14 @@ async fn process_regular_query(
     client: &GrafanaClient,
     query: &backend::DataQuery<Value>,
     query_json: &Alert4MLQueryJson,
-) -> Result<backend::DataResponse, String> {
+) -> rsod_core::Result<backend::DataResponse> {
     let ref_id = query.ref_id.clone();
-    let htr = effective_history_time_range(&query_json.detect_type, query_json.history_time_range);
+    let engine = detector_by_name(&query_json.detect_type)
+        .ok_or_else(|| format!("unknown detect type: {}", query_json.detect_type))?;
+    let htr = effective_history_time_range(
+        query_json.history_time_range,
+        engine.default_history_duration_ms(),
+    );
     let (from, to) = get_recalculate_time_range(query.time_range.from, query.time_range.to, htr);
     let interval_ms = query.interval.as_millis() as i64;
     let targets = build_targets_with_interval(&query_json.targets, &ref_id, interval_ms)?;
@@ -145,8 +169,6 @@ async fn process_regular_query(
         .await
         .map_err(|e| format!("datasource query: {}", e))?;
 
-    let hyper_params = parse_hyper_params(&query_json.detect_type, &query_json.hyper_params)?;
-
     let mut frames_out: Vec<Frame> = Vec::new();
     for (resp_ref_id, data_response) in rsp.results {
         if data_response.frames.is_empty() {
@@ -154,20 +176,14 @@ async fn process_regular_query(
         }
         if resp_ref_id != ref_id {
             // Only our own refId can appear (it was injected into the targets).
-            return Err("refId not found".to_string());
+            return Err("refId not found".to_string().into());
         }
         let mut new_frames = Vec::new();
         for frame in &data_response.frames {
             if frame.fields().is_empty() {
                 continue;
             }
-            new_frames.push(process_detect(
-                query_json,
-                &hyper_params,
-                &body,
-                frame,
-                &ref_id,
-            )?);
+            new_frames.push(process_detect(query_json, &body, frame, &ref_id)?);
         }
         if query_json.show_anomaly_points {
             frames_out.extend(new_frames);
@@ -179,15 +195,18 @@ async fn process_regular_query(
     checked_response(ref_id, frames_out)
 }
 
-/// Run the detect-type-specific evaluation for one frame. Mirrors the Go
-/// `switch queryJson.DetectType` loop body.
+/// Run the engine's detection for one frame and render the result. Mirrors the
+/// Go `switch queryJson.DetectType` loop body, but dispatch is registry-driven
+/// (`detector_by_name`) and rendering is driven by the result's `method`.
 fn process_detect(
     query_json: &Alert4MLQueryJson,
-    hyper_params: &HyperParams,
     body: &ProxyQueryBody,
     frame: &Frame,
     ref_id: &str,
-) -> Result<Frame, String> {
+) -> rsod_core::Result<Frame> {
+    let engine = detector_by_name(&query_json.detect_type)
+        .ok_or_else(|| format!("unknown detect type: {}", query_json.detect_type))?;
+
     let uk_uuid = UniqueKeysUuid {
         detect_type: &query_json.detect_type,
         support_detect: &query_json.support_detect,
@@ -198,166 +217,50 @@ fn process_detect(
     }
     .to_uuid();
 
-    match query_json.detect_type.as_str() {
-        constant::DETECT_TYPE_OUTLIER => {
-            if frame.fields().len() < 2 {
-                return Err("frame has insufficient fields".to_string());
-            }
-            if frame_row_count(frame) == 0 {
-                return Err("frame has no rows".to_string());
-            }
-            let rp: &RsodHyperParams = match hyper_params {
-                HyperParams::Outlier(p) => p,
-                _ => return Err("hyper params type mismatch".to_string()),
-            };
-            let periods = parse_periods(&rp.periods, body.interval_ms)?;
-            let options = OutlierOptions {
-                model_name: rp.model_name.clone(),
-                periods: periods.iter().map(|&p| p as usize).collect(),
-                uuid: uk_uuid,
-                n_trees: rp.n_trees.map(|v| v as usize),
-                sample_size: rp.sample_size.map(|v| v as usize),
-                max_tree_depth: rp.max_tree_depth.map(|v| v as usize),
-                extension_level: rp.extension_level.map(|v| v as usize),
-            };
-
-            let series_name = series_display_name(frame, &query_json.series_label);
-            let values = field_f64s(&frame.fields()[1])?;
-            let missing = calculate_missing_rate(&values);
-            let anomalies: Vec<f64> = if missing {
-                // >30% missing → all-zero flags (Go gate, MISSDATA_THRESHOLD=30).
-                vec![0.0; frame_row_count(frame)]
-            } else {
-                let (ts, vals) = extract_timeseries(frame)?;
-                let det = (ml_call(|| {
-                    rsod_outlier::outlier(TimeSeriesInput::new(&ts, &vals), &options)
-                })?)
-                .map_err(|e| format!("outlier fit predict failed: {}", e))?;
-                det.anomalies
-            };
-            new_data_frame_from_result(frame, ref_id, &series_name, &anomalies)
+    // Prepare (current, history) per the engine's declared input contract.
+    let cts: Vec<f64>;
+    let cvals: Vec<f64>;
+    let hts: Vec<f64>;
+    let hvals: Vec<f64>;
+    match engine.input_kind() {
+        InputKind::WholeFrame => {
+            let (ts, vals) = extract_timeseries(frame)?;
+            cts = ts;
+            cvals = vals;
+            hts = Vec::new();
+            hvals = Vec::new();
         }
-        constant::BASELINE_DETECT_TYPE_DYNAMICS => {
-            let dp: &DynamicsHyperParams = match hyper_params {
-                HyperParams::Dynamics(p) => p,
-                _ => return Err("hyper params type mismatch".to_string()),
-            };
-            let trend = match dp.trend.to_lowercase().as_str() {
-                "daily" => Trend::Daily,
-                "weekly" => Trend::Weekly,
-                "monthly" => Trend::Monthly,
-                "none" => Trend::None,
-                other => return Err(format!("unknown trend: {}", other)),
-            };
-            let config = BaselineConfig {
-                trend,
-                period_days: if dp.period_days > 0 {
-                    Some(dp.period_days as u32)
-                } else {
-                    None
-                },
-                std_dev_multiplier: dp.std_dev_multiplier,
-            };
-
+        InputKind::HistoryCurrent => {
             let (current, history) =
                 split_frames(frame, body.from, body.to, query_json.history_time_range)?;
-            let det = fit_dynamics(current, history, config)?;
-            let mut out = detection_frame(&det, BASELINE_VALUE_COL);
-            let series_name = series_display_name(frame, &query_json.series_label);
-            render_frame_with_baseline(&mut out, ref_id, &series_name);
-            if query_json.show_anomaly_points {
-                remove_non_anomaly_fields(&mut out)?;
-            }
-            Ok(out)
+            let (a, b) = extract_timeseries(&current)?;
+            let (c, d) = extract_timeseries(&history)?;
+            cts = a;
+            cvals = b;
+            hts = c;
+            hvals = d;
         }
-        constant::DETECT_TYPE_FORECAST => {
-            let fp: &ForecastHyperParams = match hyper_params {
-                HyperParams::Forecast(p) => p,
-                _ => return Err("hyper params type mismatch".to_string()),
-            };
-            let periods = parse_periods(&fp.periods, body.interval_ms)?;
-            // Any change in training-affecting params yields a different
-            // UUID → model retraining.
-            let training_key = ForecastTrainingKey {
-                periods: &periods,
-                budget: fp.budget,
-                num_threads: fp.num_threads,
-                max_bin: fp.max_bin,
-                iteration_limit: fp.iteration_limit,
-                timeout: fp.timeout.map(|v| v as f32),
-                stopping_rounds: fp.stopping_rounds,
-                seed: fp.seed.map(|v| v as u64),
-            };
-            let derived_uuid = derive_uuid(&uk_uuid, &training_key.to_go_json())?;
-
-            let options = rsod_forecaster::ForecasterOptions {
-                model_name: fp.model_name.clone(),
-                periods: periods.iter().map(|&p| p as usize).collect(),
-                uuid: derived_uuid,
-                budget: Some(fp.budget),
-                num_threads: Some(fp.num_threads),
-                n_lags: Some(fp.n_lags),
-                std_dev_multiplier: Some(fp.std_dev_multiplier),
-                allow_negative_bounds: if fp.allow_negative_bounds {
-                    Some(true)
-                } else {
-                    None
-                },
-                max_bin: Some(fp.max_bin),
-                iteration_limit: fp.iteration_limit.map(|v| v as usize),
-                timeout: fp.timeout.map(|v| v as f32),
-                stopping_rounds: fp.stopping_rounds.map(|v| v as usize),
-                seed: fp.seed.map(|v| v as u64),
-                log_iterations: fp.log_iterations.map(|v| v as usize),
-            };
-
-            let (current, history) =
-                split_frames(frame, body.from, body.to, query_json.history_time_range)?;
-            let (cts, cvals) = extract_timeseries(&current)?;
-            let (hts, hvals) = extract_timeseries(&history)?;
-            let det = (ml_call(|| {
-                rsod_forecaster::forecast(
-                    TimeSeriesInput::new(&cts, &cvals),
-                    TimeSeriesInput::new(&hts, &hvals),
-                    &options,
-                )
-            })?)
-            .map_err(|e| format!("forecaster failed: {}", e))?;
-            let mut out = detection_frame(&det, PRED_COL);
-            let series_name = series_display_name(frame, &query_json.series_label);
-            render_frame_with_forecast(&mut out, ref_id, &series_name);
-            if query_json.show_anomaly_points {
-                remove_non_anomaly_fields(&mut out)?;
-            }
-            Ok(out)
-        }
-        other => Err(format!("unknown detect type: {}", other)),
     }
-}
 
-/// Dynamics fit with the Go wrapper's row checks (`frame has no rows`,
-/// `historyFrame has no rows (filtered out by time range)`).
-fn fit_dynamics(
-    current: Frame,
-    history: Frame,
-    config: BaselineConfig,
-) -> Result<DetectionResult, String> {
-    if frame_row_count(&current) == 0 {
-        return Err("frame has no rows".to_string());
-    }
-    if frame_row_count(&history) == 0 {
-        return Err("historyFrame has no rows (filtered out by time range)".to_string());
-    }
-    let (cts, cvals) = extract_timeseries(&current)?;
-    let (hts, hvals) = extract_timeseries(&history)?;
-    (ml_call(|| {
-        rsod_baseline::dynamics::dynamics_detect(
-            TimeSeriesInput::new(&cts, &cvals),
-            TimeSeriesInput::new(&hts, &hvals),
-            &config,
-        )
-    })?)
-    .map_err(|e| format!("dynamics fit predict failed: {}", e))
+    let req = DetectRequest {
+        current: TimeSeriesInput::new(&cts, &cvals),
+        history: TimeSeriesInput::new(&hts, &hvals),
+        hyper_params: query_json.hyper_params.clone(),
+        uuid: uk_uuid,
+        interval_ms: body.interval_ms,
+    };
+
+    let DetectOutput { result, method } = ml_call(|| engine.detect(&req))??;
+
+    let series_name = series_display_name(frame, &query_json.series_label);
+    render_detection(
+        frame,
+        &result,
+        method,
+        ref_id,
+        &series_name,
+        query_json.show_anomaly_points,
+    )
 }
 
 /// Funnel: two upstream queries (profile history + panel current), then one
@@ -366,13 +269,13 @@ async fn process_funnel_dual_query(
     client: &GrafanaClient,
     query: &backend::DataQuery<Value>,
     query_json: &Alert4MLQueryJson,
-    hyper_params: &HyperParams,
-) -> Result<(Vec<Frame>, Vec<Frame>), String> {
-    let fp: &FunnelHyperParams = match hyper_params {
-        HyperParams::Funnel(p) => p,
-        _ => return Err("hyper params type mismatch".to_string()),
-    };
-    let htr = effective_history_time_range(&query_json.detect_type, query_json.history_time_range);
+) -> rsod_core::Result<(Vec<Frame>, Vec<Frame>)> {
+    let engine = detector_by_name(&query_json.detect_type)
+        .ok_or_else(|| format!("unknown detect type: {}", query_json.detect_type))?;
+    let htr = effective_history_time_range(
+        query_json.history_time_range,
+        engine.default_history_duration_ms(),
+    );
 
     let (history_body, current_body) = build_funnel_dual_query_bodies(query, query_json, htr)?;
 
@@ -404,15 +307,6 @@ async fn process_funnel_dual_query(
         .filter(|frames| !frames.is_empty())
         .ok_or_else(|| missing_frames_err("current"))?;
 
-    let periods = parse_periods(&fp.periods, current_body.interval_ms)?;
-    let persist_profile = fp.persist_profile.unwrap_or(true);
-    let alert_mode = match fp.alert_output_mode.as_str() {
-        "full" => AlertOutputMode::Full,
-        "latest_only" => AlertOutputMode::LatestOnly,
-        "dedupe" => AlertOutputMode::Dedupe,
-        other => return Err(format!("unknown alert output mode: {}", other)),
-    };
-
     let mut new_frames = Vec::new();
     for (frame_idx, f) in cur_frames.iter().enumerate() {
         if f.fields().is_empty() {
@@ -439,44 +333,25 @@ async fn process_funnel_dual_query(
         }
         .to_uuid();
 
-        let options = FunnelOptions {
+        let req = DetectRequest {
+            current: TimeSeriesInput::new(&cts, &cvals),
+            history: TimeSeriesInput::new(&hts, &hvals),
+            hyper_params: query_json.hyper_params.clone(),
             uuid: uk_uuid,
-            trend: crate::tools::funnel_trend_for_rust(&fp.trend),
-            bucket_slot_secs: fp.bucket_slot_secs as u32,
-            auto_trend: fp.auto_trend,
-            k_outer: fp.k_outer,
-            k_inner: fp.k_inner,
-            min_samples: fp.min_samples as u64,
-            std_dev_multiplier: fp.std_dev_multiplier,
-            // Hardcoded false in the Go backend (EnableL2 was never surfaced).
-            enable_l2: false,
-            persist_profile,
-            periods: periods.iter().map(|&p| p as usize).collect(),
-            model_name: fp.model_name.clone(),
-            max_sparse_bucket_ratio: fp.max_sparse_bucket_ratio,
-            lookback_days: fp.lookback_days as u32,
-            eval_window_secs: fp.eval_window_secs.unwrap_or(0) as u32,
-            alert_output_mode: alert_mode,
-            // Go's FFI JSON omitted this field → serde default 3.5.
-            profile_outlier_k: 3.5,
+            interval_ms: current_body.interval_ms,
         };
 
-        let det = (ml_call(|| {
-            rsod_funnel::funnel_detect(
-                TimeSeriesInput::new(&cts, &cvals),
-                TimeSeriesInput::new(&hts, &hvals),
-                &options,
-            )
-        })?)
-        .map_err(|e| format!("funnel fit predict failed: {}", e))?;
+        let DetectOutput { result, method } = ml_call(|| engine.detect(&req))??;
 
-        let mut out = detection_frame(&det, BASELINE_VALUE_COL);
         let series_name = series_display_name(f, &query_json.series_label);
-        render_frame_with_baseline(&mut out, &query.ref_id, &series_name);
-        if query_json.show_anomaly_points {
-            remove_non_anomaly_fields(&mut out)?;
-        }
-        new_frames.push(out);
+        new_frames.push(render_detection(
+            f,
+            &result,
+            method,
+            &query.ref_id,
+            &series_name,
+            query_json.show_anomaly_points,
+        )?);
     }
     // Rebuild the current frames (SDK frames do not implement Clone) — they
     // are returned so the caller can emit them alongside the new frames.
@@ -497,15 +372,15 @@ fn build_funnel_dual_query_bodies(
     query: &backend::DataQuery<Value>,
     query_json: &Alert4MLQueryJson,
     htr: HistoryTimeRange,
-) -> Result<(ProxyQueryBody, ProxyQueryBody), String> {
+) -> rsod_core::Result<(ProxyQueryBody, ProxyQueryBody)> {
     let panel_from = query.time_range.from;
     let panel_to = query.time_range.to;
     if panel_to < panel_from {
-        return Err("funnel: panel time range is empty".to_string());
+        return Err("funnel: panel time range is empty".to_string().into());
     }
     let panel_interval = query.interval.as_millis() as i64;
     if panel_interval <= 0 {
-        return Err("funnel: panel interval must be > 0".to_string());
+        return Err("funnel: panel interval must be > 0".to_string().into());
     }
     let history_interval =
         effective_funnel_history_interval(panel_interval, htr.duration_ms, query.max_data_points);
@@ -536,12 +411,9 @@ fn build_funnel_dual_query_bodies(
 mod tests {
     use super::{ml_call, series_display_name};
     use crate::client::ProxyQueryBody;
-    use crate::contract::{
-        constant, Alert4MLQueryJson, ForecastHyperParams, HistoryTimeRange, HyperParams,
-    };
+    use crate::contract::{constant, Alert4MLQueryJson, HistoryTimeRange};
     use chrono::{DateTime, TimeZone, Utc};
     use grafana_plugin_sdk::prelude::*;
-    use serde_json::Value;
 
     /// The Go-era FFI boundary caught algorithm panics; the direct-call path
     /// must do the same so a degenerate series degrades to a per-query error
@@ -552,6 +424,7 @@ mod tests {
             panic!("Uniform::new called with `low >= high`");
         })
         .unwrap_err();
+        let err = err.to_string();
         assert!(
             err.contains("algorithm panicked") && err.contains("low >= high"),
             "unexpected error: {}",
@@ -565,6 +438,25 @@ mod tests {
         assert_eq!(ok.unwrap(), 42);
         let err: Result<i32, String> = ml_call(|| Err("boom".to_string())).unwrap();
         assert_eq!(err.unwrap_err(), "boom");
+    }
+
+    /// Every expected engine must be self-registered once the engine crates
+    /// are linked into the binary (`force_link` / `assert_engines_registered`
+    /// guarantee this).
+    #[test]
+    fn all_engines_are_registered() {
+        super::assert_engines_registered();
+        for name in [
+            constant::DETECT_TYPE_OUTLIER,
+            constant::BASELINE_DETECT_TYPE_DYNAMICS,
+            constant::DETECT_TYPE_FORECAST,
+            constant::DETECT_TYPE_FUNNEL,
+        ] {
+            assert!(
+                rsod_core::detector_by_name(name).is_some(),
+                "engine '{name}' must be registered"
+            );
+        }
     }
 
     /// Regression for "bounds chart not shown in the panel": the forecaster
@@ -621,29 +513,26 @@ mod tests {
             interval_ms: 300_000,
         };
 
-        let mut query_json = Alert4MLQueryJson {
+        let query_json = Alert4MLQueryJson {
             detect_type: constant::DETECT_TYPE_FORECAST.to_string(),
             support_detect: String::new(),
             series_ref_id: String::new(),
-            hyper_params: Value::Null,
+            hyper_params: serde_json::json!({
+                "periods": "24h,7d",
+                "nLags": 5,
+                "seed": 0,
+                "logIterations": 0,
+                "budget": 1.0,
+                "numThreads": 1,
+            }),
             targets: Vec::new(),
             show_anomaly_points: false,
             series_label: "custom-label".to_string(),
             history_time_range: htr,
             unique_keys: Default::default(),
         };
-        query_json.history_time_range = htr;
-        let hyper_params = HyperParams::Forecast(ForecastHyperParams {
-            periods: "24h,7d".to_string(),
-            n_lags: 5,
-            seed: Some(0),
-            log_iterations: Some(0),
-            budget: 1.0,
-            num_threads: 1,
-            ..Default::default()
-        });
 
-        let out = super::process_detect(&query_json, &hyper_params, &body, &frame, "A")
+        let out = super::process_detect(&query_json, &body, &frame, "A")
             .expect("forecast pipeline must succeed");
 
         let value = serde_json::to_value(&out).expect("frame must serialize");

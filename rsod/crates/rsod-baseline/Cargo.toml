@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 rsod-core.workspace = true
 rsod-utils.workspace = true
+inventory.workspace = true
 chrono.workspace = true
 polars.workspace = true
 serde.workspace = true

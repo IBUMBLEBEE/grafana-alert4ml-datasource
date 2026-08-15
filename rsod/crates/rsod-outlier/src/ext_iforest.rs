@@ -4,7 +4,7 @@
 use extended_isolation_forest::{Forest, ForestOptions};
 use serde::{Serialize, Deserialize};
 use rsod_storage::model::Model;
-use std::io::{Error, ErrorKind};
+use rsod_core::RsodError;
 
 /// Data structure for saving iForest models
 /// With serde feature enabled, Forest objects can be directly serialized
@@ -51,7 +51,7 @@ pub struct EIFOptions {
 /// 
 /// # Returns
 /// Vector of anomaly scores
-pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<Vec<f64>, Error> {
+pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> rsod_core::Result<Vec<f64>> {
     // First try to load a saved model
     match load_iforest_model(uuid.clone()) {
         Ok(saved_model) => {
@@ -66,7 +66,7 @@ pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<V
             
             Ok(scores)
         }
-        Err(e) if e.kind() == ErrorKind::NotFound => {
+        Err(RsodError::ModelNotFound(_)) => {
             // Model doesn't exist, train a new model
             let (forest, normalized_features, mean, std_dev) = train_iforest(options.clone(), data);
             
@@ -84,7 +84,7 @@ pub fn iforest(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<V
             };
             
             let serialized = bincode::serialize(&saved_model)
-                .map_err(|e| Error::new(ErrorKind::Other, format!("Serialization failed: {}", e)))?;
+                .map_err(|e| RsodError::ModelSerialize(format!("Serialization failed: {}", e)))?;
             
             let model = Model::new(uuid, serialized);
             model.write()?;
@@ -244,7 +244,7 @@ fn extract_and_normalize_features(data: &[[f64; 2]]) -> (Vec<[f64; 4]>, Vec<f64>
 /// let data = vec![[1.0, 2.0], [2.0, 3.0]];
 /// save_iforest_model("model-uuid".to_string(), options, &data).unwrap();
 /// ```
-pub fn save_iforest_model(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> Result<(), Error> {
+pub fn save_iforest_model(uuid: String, options: EIFOptions, data: &[[f64; 2]]) -> rsod_core::Result<()> {
     let (forest, _, mean, std_dev) = train_iforest(options, data);
 
     let saved_model = SavedIForestModel {
@@ -255,7 +255,7 @@ pub fn save_iforest_model(uuid: String, options: EIFOptions, data: &[[f64; 2]]) 
 
     // Use bincode serialization (binary format, more efficient than JSON)
     let serialized = bincode::serialize(&saved_model)
-        .map_err(|e| Error::new(ErrorKind::Other, format!("Serialization failed: {}", e)))?;
+        .map_err(|e| RsodError::ModelSerialize(format!("Serialization failed: {}", e)))?;
 
     // Save to SQLite database
     let model = Model::new(uuid, serialized);
@@ -279,20 +279,20 @@ pub fn save_iforest_model(uuid: String, options: EIFOptions, data: &[[f64; 2]]) 
 /// let saved_model = load_iforest_model("model-uuid".to_string()).unwrap();
 /// let forest = &saved_model.forest;
 /// ```
-pub fn load_iforest_model(uuid: String) -> Result<SavedIForestModel, Error> {
+pub fn load_iforest_model(uuid: String) -> rsod_core::Result<SavedIForestModel> {
     let mut model = Model::new(uuid.clone(), vec![]);
     model.read()?;
 
     if model.artifacts.is_empty() {
-        return Err(Error::new(
-            ErrorKind::NotFound,
-            format!("Model {} does not exist", uuid),
-        ));
+        return Err(RsodError::ModelNotFound(format!(
+            "Model {} does not exist",
+            uuid
+        )));
     }
 
     // Use bincode deserialization
     let saved_model: SavedIForestModel = bincode::deserialize(&model.artifacts)
-        .map_err(|e| Error::new(ErrorKind::InvalidData, format!("Deserialization failed: {}", e)))?;
+        .map_err(|e| RsodError::ModelDeserialize(format!("Deserialization failed: {}", e)))?;
 
     Ok(saved_model)
 }
@@ -372,7 +372,7 @@ fn normalize_features_with_params(
 /// let data = vec![[1.0, 2.0], [2.0, 3.0]];
 /// let scores = predict_with_saved_model("model-uuid".to_string(), &data).unwrap();
 /// ```
-pub fn predict_with_saved_model(uuid: String, data: &[[f64; 2]]) -> Result<Vec<f64>, Error> {
+pub fn predict_with_saved_model(uuid: String, data: &[[f64; 2]]) -> rsod_core::Result<Vec<f64>> {
     let saved_model = load_iforest_model(uuid)?;
 
     // Normalize new data using saved normalization parameters

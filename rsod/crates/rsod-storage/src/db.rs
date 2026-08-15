@@ -16,7 +16,7 @@ pub fn get_backend() -> &'static DbBackend {
         .expect("Database not initialized. Call init_db() first.")
 }
 
-pub fn init_sqlite() -> Result<&'static DbBackend, String> {
+pub fn init_sqlite() -> rsod_core::Result<&'static DbBackend> {
     if let Some(backend) = DB_BACKEND.get() {
         return Ok(backend);
     }
@@ -28,7 +28,7 @@ pub fn init_sqlite() -> Result<&'static DbBackend, String> {
     Ok(DB_BACKEND.get().expect("DB_BACKEND must be initialized"))
 }
 
-pub fn init_postgres(dsn: &str) -> Result<&'static DbBackend, String> {
+pub fn init_postgres(dsn: &str) -> rsod_core::Result<&'static DbBackend> {
     if let Some(backend) = DB_BACKEND.get() {
         return Ok(backend);
     }

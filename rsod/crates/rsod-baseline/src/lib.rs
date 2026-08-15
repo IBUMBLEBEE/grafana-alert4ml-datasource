@@ -1,13 +1,14 @@
 pub mod dynamics;
+mod engine;
 
 use polars::prelude::*;
 use polars::datatypes::DataType;
-use rsod_core::{DetectionResult, TimeSeriesInput};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use serde::{Serialize, Deserialize};
-use std::error::Error;
 
 // Re-export shared column constants from rsod-core
 pub use rsod_core::{TIMESTAMP_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
+pub use engine::{parse_dynamics_hyper_params, force_link, DynamicsEngine, DynamicsHyperParams};
 pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
 
 
@@ -80,20 +81,20 @@ impl BaselineOptions {
         self.std_dev_multiplier.unwrap_or(2.0)
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> rsod_core::Result<()> {
         if let Some(level) = self.confidence_level {
             if level < 50.0 || level > 99.0 {
-                return Err(format!("Confidence level must be between 50.0 and 99.0, current value: {}", level));
+                return Err(format!("Confidence level must be between 50.0 and 99.0, current value: {}", level).into());
             }
         }
         if let Some(interval) = self.interval_mins {
             if interval == 0 {
-                return Err("Time interval cannot be 0".to_string());
+                return Err("Time interval cannot be 0".to_string().into());
             }
         }
         if let Some(multiplier) = self.std_dev_multiplier {
             if multiplier <= 0.0 {
-                return Err("Standard deviation multiplier must be greater than 0".to_string());
+                return Err("Standard deviation multiplier must be greater than 0".to_string().into());
             }
         }
         Ok(())
@@ -107,7 +108,7 @@ impl Default for BaselineOptions {
 }
 
 
-pub fn baseline_detect(data: TimeSeriesInput<'_>, history_data: TimeSeriesInput<'_>, options: &BaselineOptions) -> Result<DetectionResult, Box<dyn Error>> {
+pub fn baseline_detect(data: TimeSeriesInput<'_>, history_data: TimeSeriesInput<'_>, options: &BaselineOptions) -> rsod_core::Result<DetectionResult> {
     // Convert TimeSeriesInput to internal Polars DataFrames
     let df = input_to_dataframe(&data);
     let history_df = input_to_dataframe(&history_data);
@@ -127,33 +128,48 @@ fn input_to_dataframe(input: &TimeSeriesInput<'_>) -> DataFrame {
 }
 
 /// Convert a baseline result DataFrame to DetectionResult (internal bridge).
-fn dataframe_to_result(df: &DataFrame) -> Result<DetectionResult, Box<dyn Error>> {
-    let timestamps: Vec<i64> = df.column(TIMESTAMP_COL)?
-        .i64()?
+fn dataframe_to_result(df: &DataFrame) -> rsod_core::Result<DetectionResult> {
+    let timestamps: Vec<i64> = df
+        .column(TIMESTAMP_COL)
+        .map_err(RsodError::other)?
+        .i64()
+        .map_err(RsodError::other)?
         .into_iter()
         .map(|opt| opt.unwrap_or(0))
         .collect();
 
-    let values: Vec<f64> = df.column(BASELINE_VALUE_COL)?
-        .f64()?
+    let values: Vec<f64> = df
+        .column(BASELINE_VALUE_COL)
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .into_iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
-    let anomalies: Vec<f64> = df.column(ANOMALY_COL)?
-        .f64()?
+    let anomalies: Vec<f64> = df
+        .column(ANOMALY_COL)
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .into_iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
-    let lower_bound: Vec<f64> = df.column(LOWER_BOUND_COL)?
-        .f64()?
+    let lower_bound: Vec<f64> = df
+        .column(LOWER_BOUND_COL)
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .into_iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
-    let upper_bound: Vec<f64> = df.column(UPPER_BOUND_COL)?
-        .f64()?
+    let upper_bound: Vec<f64> = df
+        .column(UPPER_BOUND_COL)
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .into_iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
@@ -178,7 +194,7 @@ fn dataframe_to_result(df: &DataFrame) -> Result<DetectionResult, Box<dyn Error>
 /// - Daily: Group by weekday and hour, aggregate all historical data with the same weekday+hour
 /// - Weekly: Group by weekday and hour, same as Daily
 /// - Monthly: Group by day of month and hour, aggregate all historical data with the same day of month+hour
-pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options: &BaselineOptions) -> Result<DataFrame, Box<dyn Error>> {
+pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options: &BaselineOptions) -> rsod_core::Result<DataFrame> {
     // If trend type is None, return original data directly without any baseline calculation
     if matches!(options.trend_type, TrendType::None) {
         return Ok(df
@@ -190,16 +206,18 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
                 lit(f64::NAN).alias(UPPER_BOUND_COL), // Upper bound of confidence interval is NaN
                 lit(f64::NAN).alias(ANOMALY_COL), // For None type, anomaly flag is NaN (normal, compatible with Golang math.NaN)
             ])
-            .collect()?);
+            .collect()
+            .map_err(RsodError::other)?);
     }
 
     // --- Step 1: Calculate historical time window (based on minimum timestamp of df, look back) ---
     let current_start_ms: i64 = df
-        .column(TIMESTAMP_COL)?
+        .column(TIMESTAMP_COL)
+        .map_err(RsodError::other)?
         .i64()
-        .map_err(|_| PolarsError::ComputeError("timestamp column type invalid".into()))?
+        .map_err(|_| RsodError::Preprocessing("timestamp column type invalid".into()))?
         .min()
-        .ok_or_else(|| PolarsError::NoData("empty df; cannot compute start timestamp".into()))?;
+        .ok_or_else(|| RsodError::Preprocessing("empty df; cannot compute start timestamp".into()))?;
 
     let lookback_days: i64 = match options.trend_type {
         TrendType::Daily => 30,
@@ -421,7 +439,8 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
             col(ANOMALY_COL), // Anomaly flag column (anomalous=original value, normal=NaN, compatible with Golang math.NaN)
         ])
         .sort_by_exprs([col(TIMESTAMP_COL)], SortMultipleOptions::default())
-        .collect()?;
+        .collect()
+        .map_err(RsodError::other)?;
 
     Ok(result)
 }

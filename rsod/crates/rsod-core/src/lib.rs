@@ -1,11 +1,14 @@
 pub mod classify;
 pub mod config;
 pub mod decision;
+pub mod duration;
+pub mod engine;
 pub mod error;
 pub mod preprocessing;
 pub mod season;
 pub mod traits;
 pub mod types;
+pub mod uuid_util;
 
 // Re-export commonly used items at the crate root for convenience.
 pub use error::{Result, RsodError};
@@ -22,7 +25,13 @@ pub use season::{
     season_key_with_slot, season_keys, season_keys_with_slot, snap_bucket_slot,
     ALLOWED_BUCKET_SLOTS, DEFAULT_BUCKET_SLOT_SECS, SeasonKey,
 };
-pub use traits::{Detector, ModelSerializable, ModelStorage};
+pub use traits::{ModelSerializable, ModelStorage};
+pub use engine::{
+    detector_by_name, iter_detectors, DetectOutput, DetectRequest, Detector, InputKind,
+    QueryKind,
+};
+pub use duration::{parse_duration_ms, parse_periods};
+pub use uuid_util::{derive_uuid, go_f32, go_json_string, go_opt_f32, go_opt_i64};
 pub use preprocessing::{check_missing_rate, check_missing_rate_values};
 pub use classify::classify;
 pub use decision::{

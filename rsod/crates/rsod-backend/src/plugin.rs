@@ -93,7 +93,10 @@ impl backend::DataService for PluginService {
                             &settings.decrypted_secure_json_data,
                         )
                         .await
-                        .map_err(|message| QueryError::Internal { ref_id, message })
+                        .map_err(|message| QueryError::Internal {
+                            ref_id,
+                            message: message.to_string(),
+                        })
                     }
                 })
                 .collect::<FuturesOrdered<_>>(),

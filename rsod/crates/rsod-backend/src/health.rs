@@ -11,6 +11,7 @@ use tokio::task::spawn_blocking;
 use tracing::debug;
 
 use crate::config::{PluginSettings, SecretPluginSettings};
+use rsod_core::RsodError;
 
 pub async fn run(
     settings: &PluginSettings,
@@ -24,7 +25,7 @@ pub async fn run(
     // at request time with a clear message, so this check is folded into the ping.
     let client = crate::client::GrafanaClient::new(settings.url.clone(), secrets.api_token.clone());
     if let Err(e) = client.login_ping().await {
-        return backend::CheckHealthResponse::error(e);
+        return backend::CheckHealthResponse::error(e.to_string());
     }
 
     if settings.trial_mode {
@@ -56,20 +57,22 @@ pub async fn run(
 /// `CheckPgHealth`: open + ping with a 5s deadline (mirrors Go's
 /// `db.PingContext` timeout). Uses the sync `postgres` crate (same version
 /// as `rsod-storage`) on a blocking thread.
-async fn pg_ping(dsn: &str) -> Result<(), String> {
+async fn pg_ping(dsn: &str) -> rsod_core::Result<()> {
     let dsn = dsn.to_string();
     let handle = spawn_blocking(move || {
         postgres::Client::connect(&dsn, NoTls)
             .map(|_| ())
-            .map_err(|e| format!("failed to ping PostgreSQL: {}", e))
+            .map_err(|e| RsodError::Storage(format!("failed to ping PostgreSQL: {}", e)))
     });
     // tokio >= 1.53: awaiting a `JoinHandle` yields `Result<T, JoinError>`
     // (it no longer panics on task panic), so there are three levels.
     match tokio::time::timeout(Duration::from_secs(5), handle).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(join_err)) => Err(format!("blocking task failed: {}", join_err)),
-        Err(_) => Err("failed to ping PostgreSQL: context deadline exceeded".to_string()),
+        Ok(Err(join_err)) => Err(RsodError::Storage(format!("blocking task failed: {}", join_err))),
+        Err(_) => Err(RsodError::Storage(
+            "failed to ping PostgreSQL: context deadline exceeded".to_string(),
+        )),
     }
 }
 

@@ -1,15 +1,20 @@
+mod engine;
+
 use serde::{Deserialize, Serialize};
 use perpetual::{objective::Objective, Matrix, PerpetualBooster};
 use perpetual::booster::config::BoosterIO;
-use std::error::Error;
 use std::io::Write;
 use std::fs;
 use rsod_storage::model::Model;
-use rsod_core::{DetectionResult, TimeSeriesInput};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use chrono::{DateTime, Datelike, Timelike};
 
 // Re-export shared column constants from rsod-core
 pub use rsod_core::{TIMESTAMP_COL, VALUE_COL, PRED_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
+pub use engine::{
+    force_link, parse_forecast_hyper_params, ForecastEngine, ForecastHyperParams,
+    ForecastTrainingKey,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForecasterOptions {
@@ -75,7 +80,7 @@ impl Default for ForecasterOptions {
 }
 
 /// Load forecasting model from SQLite database
-fn load_model_from_db(uuid: &str) -> Result<PerpetualBooster, Box<dyn Error>> {
+fn load_model_from_db(uuid: &str) -> rsod_core::Result<PerpetualBooster> {
     let mut model = Model::new(uuid.to_string(), vec![]);
     model.read().map_err(|e| format!("Failed to read database: {}", e))?;
 
@@ -105,7 +110,7 @@ fn load_model_from_db(uuid: &str) -> Result<PerpetualBooster, Box<dyn Error>> {
 fn save_model_to_db(
     uuid: &str,
     model: &PerpetualBooster,
-) -> Result<(), Box<dyn Error>> {
+) -> rsod_core::Result<()> {
     // Save to temporary file
     let temp_path = std::env::temp_dir().join(format!("perpetual_model_{}.json", uuid));
     model.save_booster(temp_path.to_str().unwrap())
@@ -416,7 +421,7 @@ pub fn forecast(
     data: TimeSeriesInput<'_>,
     history_data: TimeSeriesInput<'_>,
     options: &ForecasterOptions,
-) -> Result<DetectionResult, Box<dyn Error>> {
+) -> rsod_core::Result<DetectionResult> {
     let n_lags = options.n_lags.unwrap_or(24);
     let std_dev_multiplier = options.std_dev_multiplier.unwrap_or(2.0);
     let allow_negative_bounds = options.allow_negative_bounds.unwrap_or(false);
@@ -458,7 +463,9 @@ pub fn forecast(
     // Third parameter is training weights (f64 array), must match full dataset length
     // Fourth parameter is validation set indices (u64 array)
     // Note: Here we use the full matrix and targets, perpetual library will automatically split based on valid_indices
-    model.fit(&matrix_history, &history_targets, None, None)?;
+    model
+        .fit(&matrix_history, &history_targets, None, None)
+        .map_err(RsodError::other)?;
     // After training, save model to database
     if !options.uuid.is_empty() {
         save_model_to_db(&options.uuid, &model)?;

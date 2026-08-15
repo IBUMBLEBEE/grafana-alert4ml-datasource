@@ -24,7 +24,7 @@
 //! 4. **Bounds** — `upper = mean + k·σ`, `lower = max(0, mean − k·σ)`.
 
 use polars::prelude::*;
-use rsod_core::{DetectionResult, TimeSeriesInput};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use serde::{Deserialize, Serialize};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -80,7 +80,7 @@ impl BaselineConfig {
         })
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> rsod_core::Result<()> {
         if self.std_dev_multiplier <= 0.0 {
             return Err("std_dev_multiplier must be > 0".into());
         }
@@ -155,7 +155,7 @@ pub fn dynamics_detect(
     current: TimeSeriesInput<'_>,
     history: TimeSeriesInput<'_>,
     config: &BaselineConfig,
-) -> Result<DetectionResult, Box<dyn std::error::Error>> {
+) -> rsod_core::Result<DetectionResult> {
     let n = current.len();
     if n == 0 {
         return Ok(DetectionResult {
@@ -177,7 +177,8 @@ pub fn dynamics_detect(
         Column::new("ts_ms".into(), &cur_ts_ms),
         Column::new("cur_value".into(), &cur_vals),
         Column::new("season_key".into(), &cur_keys),
-    ])?;
+    ])
+    .map_err(RsodError::other)?;
 
     // ── empty history → cold start (all NaN) ──
     if history.is_empty() {
@@ -200,7 +201,8 @@ pub fn dynamics_detect(
         Column::new("ts_secs".into(), &hist_ts_secs),
         Column::new("value".into(), &hist_vals),
         Column::new("season_key".into(), &hist_keys),
-    ])?;
+    ])
+    .map_err(RsodError::other)?;
 
     // ── Step 1–2: filter + group-by → population stats ──
     let multiplier = config.std_dev_multiplier;
@@ -284,39 +286,50 @@ pub fn dynamics_detect(
             col("anomaly"),
         ])
         .sort(["ts_ms"], Default::default())
-        .collect()?;
+        .collect()
+        .map_err(RsodError::other)?;
 
     // ── Extract → DetectionResult ──
     let timestamps: Vec<i64> = result_df
-        .column("ts_ms")?
-        .i64()?
+        .column("ts_ms")
+        .map_err(RsodError::other)?
+        .i64()
+        .map_err(RsodError::other)?
         .into_no_null_iter()
         .collect();
 
     let values: Vec<f64> = result_df
-        .column("baseline")?
-        .f64()?
+        .column("baseline")
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
     let anomalies: Vec<f64> = result_df
-        .column("anomaly")?
-        .f64()?
+        .column("anomaly")
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
     let upper_bound: Vec<f64> = result_df
-        .column("upper_bound")?
-        .f64()?
+        .column("upper_bound")
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
     let lower_bound: Vec<f64> = result_df
-        .column("lower_bound")?
-        .f64()?
+        .column("lower_bound")
+        .map_err(RsodError::other)?
+        .f64()
+        .map_err(RsodError::other)?
         .iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();

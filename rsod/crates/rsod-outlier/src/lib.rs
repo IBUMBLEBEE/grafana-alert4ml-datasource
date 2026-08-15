@@ -1,5 +1,6 @@
 extern crate rsod_utils;
 mod auto_mstl;
+mod engine;
 mod evt;
 mod ext_iforest;
 mod iqr;
@@ -14,9 +15,9 @@ pub use ext_iforest::{
     iforest, load_iforest_model, predict_with_saved_model, save_iforest_model, EIFOptions,
     SavedIForestModel,
 };
+pub use engine::{parse_rsod_hyper_params, force_link, OutlierEngine, RsodHyperParams};
 use rsod_core::{DetectionResult, TimeSeriesInput};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 pub use rsod_core::TIMESTAMP_COL;
 pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
@@ -80,7 +81,7 @@ impl OutlierOptions {
 /// * `uuid` - Unique identifier for the model, used for saving and loading models
 ///
 /// Returns outlier scores (0 or 1), where 1 indicates an outlier
-pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<DetectionResult, Box<dyn Error>> {
+pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_core::Result<DetectionResult> {
     let periods = &options.periods;
     let uuid = &options.uuid;
     if input.is_empty() {
@@ -182,10 +183,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
         });
     } else {
         // No periodicity, data stationarity is unknown
-        let result = match ensemble_detect(&data, uuid, options.eif_options()) {
-            Ok(v) => v,
-            Err(e) => return Err(e.into()),
-        };
+        let result = ensemble_detect(&data, uuid, options.eif_options())?;
         return Ok(DetectionResult {
             timestamps: time_cols,
             values: input.values.to_vec(),
@@ -196,7 +194,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> Result<D
     }
 }
 
-fn ensemble_detect(data: &[[f64; 2]], uuid: &str, eif_opts: EIFOptions) -> Result<Vec<f64>, Box<dyn Error>> {
+fn ensemble_detect(data: &[[f64; 2]], uuid: &str, eif_opts: EIFOptions) -> rsod_core::Result<Vec<f64>> {
     // Use concurrent computation for EIF and changepoint anomaly detection results
     let uuid_clone = uuid.to_string();
     let data_clone = data.to_vec();
@@ -241,7 +239,7 @@ const IQR_UPPER_PERCENTILE: f64 = 99.0;
 /// # Errors
 ///
 /// Returns an error message if skewness calculation fails
-pub fn outlier_threshold(x: &[[f64; 2]], scores: &[f64]) -> Result<Vec<f64>, String> {
+pub fn outlier_threshold(x: &[[f64; 2]], scores: &[f64]) -> rsod_core::Result<Vec<f64>> {
     // Calculate skewness
     let skew_val = skew::norm_pdf_skew(x)
         .ok_or_else(|| "Skewness calculation failed".to_string())?

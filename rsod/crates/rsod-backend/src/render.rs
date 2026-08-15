@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 
 use crate::contract::constant;
 use crate::frame_ops::field_time_ns;
-use rsod_core::DetectionResult;
+use rsod_core::{DetectionMethod, DetectionResult, BASELINE_VALUE_COL, PRED_COL};
 
 /// Go's `FrameMeta{Type: FrameTypeTimeSeriesWide}` — wide-format time series.
 fn timeseries_wide_meta() -> Metadata {
@@ -328,9 +328,9 @@ pub fn new_data_frame_from_result(
     ref_id: &str,
     series_name: &str,
     result: &[f64],
-) -> Result<Frame, String> {
+) -> rsod_core::Result<Frame> {
     if source.fields().len() < 2 {
-        return Err("frame has insufficient fields".to_string());
+        return Err("frame has insufficient fields".to_string().into());
     }
     let field_len = source.fields()[0].values().len();
     let raw_times = field_time_ns(&source.fields()[0]);
@@ -385,7 +385,7 @@ pub fn new_data_frame_from_result(
 
 /// `removeNonAnomalyFields`: keep only the Time field, any time-typed column
 /// and the anomaly columns (Go's `field.Type() == FieldTypeTime` check).
-pub fn remove_non_anomaly_fields(frame: &mut Frame) -> Result<(), String> {
+pub fn remove_non_anomaly_fields(frame: &mut Frame) -> rsod_core::Result<()> {
     // Fields do not implement Clone — rebuild the survivors via `slice_field`
     // into a fresh frame (the SDK exposes no way to replace the field vec).
     let kept: Vec<Field> = frame
@@ -410,6 +410,39 @@ pub fn remove_non_anomaly_fields(frame: &mut Frame) -> Result<(), String> {
     }
     *frame = out;
     Ok(())
+}
+
+/// Unified render entry point: pick the frame layout/styling from the engine's
+/// [`DetectionMethod`] — the backend never branches on the detect type.
+pub fn render_detection(
+    source: &Frame,
+    det: &DetectionResult,
+    method: DetectionMethod,
+    ref_id: &str,
+    series_name: &str,
+    show_anomaly_points: bool,
+) -> rsod_core::Result<Frame> {
+    match method {
+        DetectionMethod::Outlier => {
+            new_data_frame_from_result(source, ref_id, series_name, &det.anomalies)
+        }
+        DetectionMethod::Baseline => {
+            let mut out = detection_frame(det, BASELINE_VALUE_COL);
+            render_frame_with_baseline(&mut out, ref_id, series_name);
+            if show_anomaly_points {
+                remove_non_anomaly_fields(&mut out)?;
+            }
+            Ok(out)
+        }
+        DetectionMethod::Forecast => {
+            let mut out = detection_frame(det, PRED_COL);
+            render_frame_with_forecast(&mut out, ref_id, series_name);
+            if show_anomaly_points {
+                remove_non_anomaly_fields(&mut out)?;
+            }
+            Ok(out)
+        }
+    }
 }
 
 #[cfg(test)]
