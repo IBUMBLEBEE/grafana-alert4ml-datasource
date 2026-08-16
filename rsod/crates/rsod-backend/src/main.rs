@@ -8,6 +8,7 @@ mod config;
 mod contract;
 mod frame_ops;
 mod health;
+mod history_cache;
 mod pipeline;
 mod plugin;
 mod render;

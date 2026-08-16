@@ -69,7 +69,10 @@ async fn pg_ping(dsn: &str) -> rsod_core::Result<()> {
     match tokio::time::timeout(Duration::from_secs(5), handle).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(join_err)) => Err(RsodError::Storage(format!("blocking task failed: {}", join_err))),
+        Ok(Err(join_err)) => Err(RsodError::Storage(format!(
+            "blocking task failed: {}",
+            join_err
+        ))),
         Err(_) => Err(RsodError::Storage(
             "failed to ping PostgreSQL: context deadline exceeded".to_string(),
         )),

@@ -14,7 +14,6 @@ impl Model {
     }
 
     pub fn write(&self) -> rsod_core::Result<()> {
-        println!("Model::write called for uuid: {}", self.uuid);
         crate::init_db()?;
 
         let backend = get_backend();
@@ -25,7 +24,6 @@ impl Model {
     }
 
     pub fn read(&mut self) -> rsod_core::Result<()> {
-        println!("Model::read called for uuid: {}", self.uuid);
         crate::init_db()?;
 
         let backend = get_backend();

@@ -29,6 +29,17 @@ pub fn init_db_with_config(trial_mode: bool, pg_dsn: &str) -> rsod_core::Result<
     init_db()
 }
 
+/// Whether storage is the in-memory SQLite trial backend (or not yet configured).
+///
+/// History-cache durability should skip trial mode: it cannot survive restart
+/// and only adds sync I/O on the query path.
+pub fn is_trial_mode() -> bool {
+    STORAGE_CONFIG
+        .get()
+        .map(|c| c.trial_mode)
+        .unwrap_or(true)
+}
+
 /// Initialize the database backend.
 /// Uses previously stored config from `init_db_with_config`, or defaults to trial mode (SQLite in-memory).
 pub fn init_db() -> rsod_core::Result<()> {

@@ -53,11 +53,7 @@ pub fn field_f64s(field: &Field) -> rsod_core::Result<Vec<Option<f64>>> {
             .map(|v| v.and_then(|s| s.parse::<f64>().ok()))
             .collect());
     }
-    Err(format!(
-        "unsupported value field type: {:?}",
-        array.data_type()
-    )
-    .into())
+    Err(format!("unsupported value field type: {:?}", array.data_type()).into())
 }
 
 /// Field 0 (time column) as `Vec<Option<i64>>` nanoseconds since epoch.
@@ -199,12 +195,15 @@ pub fn extract_timeseries(frame: &Frame) -> rsod_core::Result<(Vec<f64>, Vec<f64
     if frame.fields().len() < 2 {
         return Err("frame has insufficient fields".to_string().into());
     }
-    let time_field = pick_time_field(frame)
-        .ok_or_else(|| "frame has no time field".to_string())?;
+    let time_field = pick_time_field(frame).ok_or_else(|| "frame has no time field".to_string())?;
     let value_field = pick_value_field(frame, time_field).ok_or_else(|| {
         format!(
             "frame has no numeric value field (fields: {:?})",
-            frame.fields().iter().map(|f| f.name.as_str()).collect::<Vec<_>>()
+            frame
+                .fields()
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>()
         )
     })?;
     let times = field_time_ns(time_field);
@@ -299,4 +298,27 @@ fn field_from_growable<'a>(
     out.labels = field.labels.clone();
     out.config = field.config.clone();
     Ok(out)
+}
+
+/// Concatenate two fields with matching types (row-wise append).
+pub fn concat_fields(left: &Field, right: &Field) -> rsod_core::Result<Field> {
+    if left.values().data_type() != right.values().data_type() {
+        return Err(format!(
+            "cannot concat fields with different types: {:?} vs {:?}",
+            left.values().data_type(),
+            right.values().data_type()
+        )
+        .into());
+    }
+    let left_arr = left.values();
+    let right_arr = right.values();
+    let total = left_arr.len() + right_arr.len();
+    let mut growable = make_growable(&[left_arr, right_arr], true, total);
+    if !left_arr.is_empty() {
+        growable.extend(0, 0, left_arr.len());
+    }
+    if !right_arr.is_empty() {
+        growable.extend(1, 0, right_arr.len());
+    }
+    field_from_growable(left, growable)
 }

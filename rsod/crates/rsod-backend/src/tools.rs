@@ -149,7 +149,9 @@ pub fn ensure_funnel_frames(
     if hist_len > 0 && cur_len == 0 {
         return split_history_tail_for_eval(history);
     }
-    Err("funnel: no data in history or current frame".to_string().into())
+    Err("funnel: no data in history or current frame"
+        .to_string()
+        .into())
 }
 
 /// `splitFrameForFunnelColdStart`: use the trailing ~70% of a single frame as
@@ -266,7 +268,7 @@ pub fn build_targets_with_interval(
 /// Rewrite Infinity-style `url_options.params` and `url` query keys so the
 /// proxied fetch matches Alert4ML's extended `[from, to]` (panel macros are
 /// already expanded to the *panel* window by Grafana before we see them).
-fn rewrite_embedded_time_range(
+pub(crate) fn rewrite_embedded_time_range(
     target: &mut serde_json::Map<String, serde_json::Value>,
     from_ms: i64,
     to_ms: i64,
@@ -284,7 +286,10 @@ fn rewrite_embedded_time_range(
                     .to_ascii_lowercase();
                 match key.as_str() {
                     "from" | "start" | "__from" => {
-                        obj.insert("value".into(), serde_json::Value::String(from_ms.to_string()));
+                        obj.insert(
+                            "value".into(),
+                            serde_json::Value::String(from_ms.to_string()),
+                        );
                     }
                     "to" | "end" | "__to" => {
                         obj.insert("value".into(), serde_json::Value::String(to_ms.to_string()));
@@ -346,10 +351,7 @@ pub fn max_data_points_for_range(
     let needed = (range_ms + interval_ms - 1) / interval_ms;
     // Cap runaway lookbacks (e.g. 90d @ 5s) while still beating the panel budget.
     const HARD_CAP: i64 = 50_000;
-    needed
-        .max(panel_max_data_points)
-        .max(1)
-        .min(HARD_CAP)
+    needed.max(panel_max_data_points).max(1).min(HARD_CAP)
 }
 
 /// `frameSeriesKey`: series identity for history/current frame matching —
@@ -407,6 +409,66 @@ pub fn clone_frame(src: &Frame) -> rsod_core::Result<Frame> {
         .map(|f| slice_field(f, 0, f.values().len()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(frame_with_fields(src, fields))
+}
+
+/// Append `right` rows onto `left` (same field count/types required).
+pub fn concat_frames(left: &Frame, right: &Frame) -> rsod_core::Result<Frame> {
+    if right.fields().is_empty() {
+        return clone_frame(left);
+    }
+    if left.fields().is_empty() {
+        return clone_frame(right);
+    }
+    if left.fields().len() != right.fields().len() {
+        return Err(format!(
+            "cannot concat frames with different field counts: {} vs {}",
+            left.fields().len(),
+            right.fields().len()
+        )
+        .into());
+    }
+    let mut fields = Vec::with_capacity(left.fields().len());
+    for (l, r) in left.fields().iter().zip(right.fields().iter()) {
+        fields.push(crate::frame_ops::concat_fields(l, r)?);
+    }
+    Ok(frame_with_fields(left, fields))
+}
+
+/// Rebuild a proxied body for a different `[from, to)` while keeping interval
+/// and rewriting Infinity embedded time params.
+pub fn body_for_time_range(
+    body: &crate::client::ProxyQueryBody,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> rsod_core::Result<crate::client::ProxyQueryBody> {
+    let from_ms = from.timestamp_millis();
+    let to_ms = to.timestamp_millis();
+    let max_dp =
+        max_data_points_for_range(from, to, body.interval_ms, implied_max_data_points(body));
+    let mut queries = Vec::with_capacity(body.queries.len());
+    for target in &body.queries {
+        let mut obj = target
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "target is not a JSON object".to_string())?;
+        rewrite_embedded_time_range(&mut obj, from_ms, to_ms);
+        obj.insert("maxDataPoints".to_string(), serde_json::Value::from(max_dp));
+        queries.push(serde_json::Value::Object(obj));
+    }
+    Ok(crate::client::ProxyQueryBody {
+        queries,
+        from,
+        to,
+        interval_ms: body.interval_ms,
+    })
+}
+
+fn implied_max_data_points(body: &crate::client::ProxyQueryBody) -> i64 {
+    body.queries
+        .first()
+        .and_then(|q| q.get("maxDataPoints"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(DEFAULT_FUNNEL_MAX_DATA_POINTS)
 }
 
 #[cfg(test)]
@@ -512,8 +574,14 @@ mod tests {
                 _ => {}
             }
         }
-        assert_eq!(got_from.as_deref(), Some(from.timestamp_millis().to_string().as_str()));
-        assert_eq!(got_to.as_deref(), Some(to.timestamp_millis().to_string().as_str()));
+        assert_eq!(
+            got_from.as_deref(),
+            Some(from.timestamp_millis().to_string().as_str())
+        );
+        assert_eq!(
+            got_to.as_deref(),
+            Some(to.timestamp_millis().to_string().as_str())
+        );
         let url = out[0]["url"].as_str().unwrap();
         assert!(url.contains(&format!("from={}", from.timestamp_millis())));
         assert!(url.contains(&format!("to={}", to.timestamp_millis())));

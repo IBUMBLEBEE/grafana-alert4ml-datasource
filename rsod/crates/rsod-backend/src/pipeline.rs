@@ -18,6 +18,7 @@ use crate::client::{GrafanaClient, ProxyQueryBody};
 use crate::config::{PluginSettings, SecretPluginSettings};
 use crate::contract::{Alert4MLQueryJson, HistoryTimeRange};
 use crate::frame_ops::extract_timeseries;
+use crate::history_cache;
 use crate::render::render_detection;
 use crate::tools::{
     build_targets_with_interval, effective_detect_interval, effective_funnel_history_interval,
@@ -131,7 +132,10 @@ pub async fn process_query(
     process_regular_query(client, &query, &query_json).await
 }
 
-fn checked_response(ref_id: String, frames: Vec<Frame>) -> rsod_core::Result<backend::DataResponse> {
+fn checked_response(
+    ref_id: String,
+    frames: Vec<Frame>,
+) -> rsod_core::Result<backend::DataResponse> {
     let checked = frames
         .iter()
         .map(|f| f.check())
@@ -158,8 +162,7 @@ async fn process_regular_query(
     );
     let (from, to) = get_recalculate_time_range(query.time_range.from, query.time_range.to, htr);
     let panel_interval_ms = query.interval.as_millis() as i64;
-    let interval_ms =
-        effective_detect_interval(panel_interval_ms, query_json.detect_interval_ms);
+    let interval_ms = effective_detect_interval(panel_interval_ms, query_json.detect_interval_ms);
     let max_dp = max_data_points_for_range(from, to, interval_ms, query.max_data_points);
     let targets =
         build_targets_with_interval(&query_json.targets, &ref_id, interval_ms, max_dp, from, to)?;
@@ -169,8 +172,10 @@ async fn process_regular_query(
         to,
         interval_ms,
     };
-    let rsp = client
-        .data_source_query(&body)
+    // Extended window includes history+current in one upstream call. Sliding
+    // cache reuses overlap and fetches only the left/right gaps when the panel
+    // window moves.
+    let rsp = history_cache::get_or_fetch(client, &body)
         .await
         .map_err(|e| format!("datasource query: {}", e))?;
 
@@ -294,10 +299,10 @@ async fn process_funnel_dual_query(
 
     let (history_body, current_body) = build_funnel_dual_query_bodies(query, query_json, htr)?;
 
-    let hist_rsp = client
-        .data_source_query(&history_body)
+    let hist_rsp = history_cache::get_or_fetch(client, &history_body)
         .await
         .map_err(|e| format!("funnel history query: {}", e))?;
+    // Current window stays uncached — it must track the live panel range.
     let cur_rsp = client
         .data_source_query(&current_body)
         .await
@@ -405,8 +410,12 @@ fn build_funnel_dual_query_bodies(
         effective_funnel_history_interval(panel_interval, htr.duration_ms, query.max_data_points);
 
     let history_from = panel_from - chrono::Duration::milliseconds(htr.duration_ms);
-    let hist_max_dp =
-        max_data_points_for_range(history_from, panel_from, history_interval, query.max_data_points);
+    let hist_max_dp = max_data_points_for_range(
+        history_from,
+        panel_from,
+        history_interval,
+        query.max_data_points,
+    );
     let cur_max_dp =
         max_data_points_for_range(panel_from, panel_to, panel_interval, query.max_data_points);
 

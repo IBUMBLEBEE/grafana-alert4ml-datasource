@@ -41,12 +41,14 @@ fn ser_time_rfc3339<S: serde::Serializer>(t: &DateTime<Utc>, s: S) -> Result<S::
 /// `/api/ds/query` response: `{ results: { <refId>: { frames: [...] } } }`.
 /// Upstream per-query errors arrive as `status`/`error` — the Go backend
 /// ignored those, so this port only reads `frames`.
-#[derive(serde::Deserialize)]
+///
+/// `Serialize` is required for history-cache persistence (Phase 3).
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct GrafanaQueryDataResponse {
     pub results: HashMap<String, GrafanaDataResponse>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct GrafanaDataResponse {
     pub frames: Vec<Frame>,
 }
@@ -64,14 +66,23 @@ impl GrafanaClient {
         }
     }
 
+    /// Fingerprint of datasource URL + token for cache isolation (not for logging).
+    pub fn cache_scope(&self) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        self.base_url.hash(&mut hasher);
+        self.api_token.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
     /// Build and parse the endpoint URL up front so misconfigured base URLs
     /// surface as a clear `invalid URL '...': <reason>` (Go reported the same
     /// via `url.Parse` / `http.NewRequest`) instead of reqwest's opaque
     /// "builder error".
     fn url(&self, path: &str) -> rsod_core::Result<reqwest::Url> {
         let full = format!("{}/{}", self.base_url.trim_end_matches('/'), path);
-        reqwest::Url::parse(&full)
-            .map_err(|e| format!("invalid URL '{}': {}", full, e).into())
+        reqwest::Url::parse(&full).map_err(|e| format!("invalid URL '{}': {}", full, e).into())
     }
 
     fn headers(&self) -> reqwest::header::HeaderMap {
@@ -152,7 +163,8 @@ mod tests {
         let c = GrafanaClient::new("192.168.59.132:3000".to_string(), String::new());
         let err = c.url("api/ds/query").unwrap_err();
         assert!(
-            err.to_string().contains("invalid URL") && err.to_string().contains("192.168.59.132:3000"),
+            err.to_string().contains("invalid URL")
+                && err.to_string().contains("192.168.59.132:3000"),
             "unexpected error: {}",
             err
         );
@@ -162,7 +174,11 @@ mod tests {
     fn url_empty_base_fails_clearly() {
         let c = GrafanaClient::new(String::new(), String::new());
         let err = c.url("api/ds/query").unwrap_err();
-        assert!(err.to_string().contains("invalid URL"), "unexpected error: {}", err);
+        assert!(
+            err.to_string().contains("invalid URL"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     /// Regression test for the vendored SDK fix (rsod/vendor): Grafana's
