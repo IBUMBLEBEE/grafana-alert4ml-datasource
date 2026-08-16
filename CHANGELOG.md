@@ -1,4 +1,64 @@
 # Changelog
+# 0.5.0 (2026-08-16)
+
+### Bug fixes
+- Fix(query-editor): restore model params when switching detect types
+
+Cache hyperParams and history per detectType in the editor session so
+Support Detect / Detect Type changes no longer reset to defaults.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+### Features and enhancements
+- Feat(funnel): soft-blend L1 baseline across season buckets
+
+Smooth hour-boundary stair-steps by blending adjacent bucket baseline
+and scale over transitionMinutes (default 15; 0 disables).
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+- Feat(backend): add upstream history cache with sliding windows
+
+Cache raw datasource frames in-process (LRU+TTL) with left/right/both
+gap fetches, and durable Postgres write-through off the query path.
+Trial SQLite skips persist to avoid sync I/O with no restart benefit.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+- Refactor(mock-metrics): rewrite Python server in Rust
+
+Keep the same Infinity API and deterministic scenarios while switching
+to an axum service with a multi-stage musl Docker build.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+- Feat: outlier lite path, Dynamics hour soft-blend, and mock Infinity harness
+
+Add MAD/IQR/EVT lite detection as the Outlier default, soften Dynamics
+bounds across adjacent hour buckets to cut boundary false positives, and
+harden Infinity/history proxying with a reproducible mock-metrics stack.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+- Feat(rust): pluggable detection engines and unify on RsodError
+
+Extract outlier/dynamics/forecast/funnel behind an inventory-registered Detector API; backend dispatches by detectType and passes hyperParams JSON through. Converge workspace errors onto rsod-core::RsodError.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+- Feat(rust): unify result display names and support {{label}} seriesLabel
+
+All detect types now render result field display names as
+{refId}-{seriesName}-{column}:
+
+- dynamics/funnel: frame named after the series instead of the hardcoded
+  "Baseline", so multi-series panels keep distinct names and bounds
+  (fillBelowTo) reference the same series-qualified name
+- outlier: display name now {refId}-{seriesName}-Anomaly (was
+  "{source.name} {refId}-Anomaly")
+- seriesLabel override supports Prometheus-legend-style {{label}}
+  placeholders (e.g. {{__name__}}) resolved per-frame against the upstream
+  value-field labels; unknown labels render empty
+- QueryEditorv2 Series Label tooltip and docs/interfaces/README.md updated
+  with the display-name convention
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+**Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/v0.4.0...v0.5.0
 # 0.4.0 (2026-08-10)
 
 ### Bug fixes
