@@ -1,0 +1,22 @@
+[package]
+name = "mock-metrics"
+version = "1.0.0"
+edition = "2021"
+description = "Alert4ML mock metrics API for Grafana Infinity"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

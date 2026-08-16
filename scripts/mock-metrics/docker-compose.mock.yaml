@@ -4,7 +4,7 @@
 #   docker compose -f docker-compose.yaml -f scripts/mock-metrics/docker-compose.mock.yaml up -d
 #
 # Or run the API alone:
-#   python3 scripts/mock-metrics/server.py
+#   cargo run --manifest-path scripts/mock-metrics/Cargo.toml --release
 
 services:
   mock-metrics:

@@ -4,11 +4,13 @@ Synthetic, deterministic time series for Alert4ML panel testing. Values are a
 pure function of `(scenario, timestamp)` — no random state — so History windows
 and restarts stay reproducible.
 
+Implemented in Rust (`cargo run` / Docker multi-stage build).
+
 ## Quick start
 
 ```bash
 # API only (host)
-python3 scripts/mock-metrics/server.py
+cargo run --manifest-path scripts/mock-metrics/Cargo.toml --release
 # → http://127.0.0.1:9108/health
 
 # Or Docker
@@ -20,6 +22,12 @@ Smoke check:
 ```bash
 curl -s 'http://127.0.0.1:9108/api/scenarios' | jq .
 curl -s 'http://127.0.0.1:9108/api/series?scenario=weekly&from=1700000000000&to=1700003600000&step=60000' | jq '.count,.data[0]'
+```
+
+Unit tests:
+
+```bash
+cargo test --manifest-path scripts/mock-metrics/Cargo.toml
 ```
 
 ## Scenarios
