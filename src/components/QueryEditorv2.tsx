@@ -161,6 +161,28 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   // --- End Base DataSource nested QueryEditor ---
 
+  // Cache hyperParams (+ history) per detectType so switching models restores
+  // the user's last edits instead of resetting to defaults.
+  type CachedModelState = {
+    hyperParams: RsodParams | DynamicsParams | ForecastParams | FunnelParams;
+    historyTimeRange: HistoryDuration;
+  };
+  const modelParamsCacheRef = useRef<Record<string, CachedModelState>>({});
+  const lastDetectTypeBySupportRef = useRef<Record<string, string>>({});
+
+  // Seed cache from the saved panel query on mount.
+  useEffect(() => {
+    if (query.detectType && query.hyperParams) {
+      modelParamsCacheRef.current[query.detectType] = {
+        hyperParams: query.hyperParams,
+        historyTimeRange: query.historyTimeRange || DEFAULT_TIME_RANGE,
+      };
+    }
+    if (query.supportDetect && query.detectType) {
+      lastDetectTypeBySupportRef.current[query.supportDetect] = query.detectType;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
     detectType = Alert4MLDetectType.Funnel,
@@ -204,8 +226,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         uniqueKeys: newUniqueKeys,
       });
       runDebouncedQueryWithTempTargets({...query});
+      isInitialized.current = true;
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const supportDetectComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
     return SUPPORT_DETECT_OPTIONS.map(opt => ({
@@ -214,28 +237,6 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       description: opt.description,
     }));
   }, []);
-
-  const onSupportDetectChange = (opt: ComboboxOption<string>) => {
-    if (opt.value === Alert4MLSupportDetect.MachineLearning) {
-      runDebouncedQueryWithTempTargets({
-        supportDetect: opt.value,
-        detectType: Alert4MLDetectType.Funnel,
-        hyperParams: defaultFunnelParams(app),
-        historyTimeRange: DEFAULT_FUNNEL_HISTORY,
-      });
-    } else {
-      runDebouncedQueryWithTempTargets({ supportDetect: opt.value });
-    }
-  };
-
-  const detectTypeComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
-    const types = SUPPORT_DETECT_OPTIONS.find(opt => opt.value === supportDetect)?.detectTypes || [];
-    return types.map(t => ({
-      label: t.label ?? (t.value as string),
-      value: t.value as string,
-      description: t.description,
-    }));
-  }, [supportDetect]);
 
   // Get the default hyperParams for a given detectType
   const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams | FunnelParams => {
@@ -254,33 +255,96 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     return DEFAULT_RSOD_PARAMS;
   }, [app]);
 
-  // detectType options and onSupportDetectChange must stay in sync
-  useEffect(() => {
-    const sd_options = SUPPORT_DETECT_OPTIONS.find((option) => option.value === supportDetect)?.detectTypes || [];
-    if (isInitialized.current) {
-      const newDetectType = sd_options[0]?.value || Alert4MLDetectType.Funnel;
-      const defaultParams = getDefaultHyperParamsByDetectType(newDetectType);
-      onChange({...query, detectType: newDetectType, hyperParams: defaultParams});
+  const getDefaultHistoryByDetectType = useCallback((detectTypeValue: string): HistoryDuration => {
+    if (detectTypeValue === Alert4MLDetectType.Funnel) {
+      return DEFAULT_FUNNEL_HISTORY;
     }
-    isInitialized.current = true;
+    if (
+      detectTypeValue === Alert4MLBaselineDetectType.Dynamics ||
+      detectTypeValue === Alert4MLDetectType.Forecast
+    ) {
+      return DEFAULT_BASELINE_HISTORY;
+    }
+    return DEFAULT_TIME_RANGE;
+  }, []);
+
+  const rememberCurrentModelState = useCallback(() => {
+    if (!detectType) {
+      return;
+    }
+    modelParamsCacheRef.current[detectType] = {
+      hyperParams,
+      historyTimeRange,
+    };
+    if (supportDetect) {
+      lastDetectTypeBySupportRef.current[supportDetect] = detectType;
+    }
+  }, [detectType, hyperParams, historyTimeRange, supportDetect]);
+
+  const resolveModelState = useCallback((detectTypeValue: string): CachedModelState => {
+    const cached = modelParamsCacheRef.current[detectTypeValue];
+    if (cached) {
+      return cached;
+    }
+    return {
+      hyperParams: getDefaultHyperParamsByDetectType(detectTypeValue),
+      historyTimeRange: getDefaultHistoryByDetectType(detectTypeValue),
+    };
+  }, [getDefaultHyperParamsByDetectType, getDefaultHistoryByDetectType]);
+
+  const onSupportDetectChange = (opt: ComboboxOption<string>) => {
+    if (opt.value === supportDetect) {
+      return;
+    }
+    rememberCurrentModelState();
+
+    const types =
+      SUPPORT_DETECT_OPTIONS.find((option) => option.value === opt.value)?.detectTypes || [];
+    const preferred = lastDetectTypeBySupportRef.current[opt.value];
+    const newDetectType =
+      (preferred && types.some((t) => t.value === preferred) ? preferred : undefined) ||
+      (types[0]?.value as string | undefined) ||
+      Alert4MLDetectType.Funnel;
+    const restored = resolveModelState(newDetectType);
+
+    lastDetectTypeBySupportRef.current[opt.value] = newDetectType;
+    runDebouncedQueryWithTempTargets({
+      supportDetect: opt.value,
+      detectType: newDetectType,
+      hyperParams: restored.hyperParams,
+      historyTimeRange: restored.historyTimeRange,
+    });
+  };
+
+  const detectTypeComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
+    const types = SUPPORT_DETECT_OPTIONS.find(opt => opt.value === supportDetect)?.detectTypes || [];
+    return types.map(t => ({
+      label: t.label ?? (t.value as string),
+      value: t.value as string,
+      description: t.description,
+    }));
   }, [supportDetect]);
 
   const onDetectTypeChange = (opt: ComboboxOption<string>) => {
-    const defaultParams = getDefaultHyperParamsByDetectType(opt.value);
-    const updates: Partial<Alert4MLQuery> = { detectType: opt.value, hyperParams: defaultParams };
-    if (opt.value === Alert4MLDetectType.Funnel) {
-      updates.historyTimeRange = DEFAULT_FUNNEL_HISTORY;
-    } else if (
-      opt.value === Alert4MLBaselineDetectType.Dynamics ||
-      opt.value === Alert4MLDetectType.Forecast
-    ) {
-      updates.historyTimeRange = DEFAULT_BASELINE_HISTORY;
+    if (opt.value === detectType) {
+      return;
     }
-    runDebouncedQueryWithTempTargets(updates);
+    rememberCurrentModelState();
+    const restored = resolveModelState(opt.value);
+    lastDetectTypeBySupportRef.current[supportDetect] = opt.value;
+    runDebouncedQueryWithTempTargets({
+      detectType: opt.value,
+      hyperParams: restored.hyperParams,
+      historyTimeRange: restored.historyTimeRange,
+    });
   };
 
   const onHyperParamsChange = (params: RsodParams | DynamicsParams | ForecastParams | FunnelParams) => {
     if (params) {
+      modelParamsCacheRef.current[detectType] = {
+        hyperParams: params,
+        historyTimeRange,
+      };
       runDebouncedQueryWithTempTargets({ hyperParams: params });
     }
   };
@@ -341,6 +405,10 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       return;
     }
     const next: HistoryDuration = { durationMs };
+    modelParamsCacheRef.current[detectType] = {
+      hyperParams,
+      historyTimeRange: next,
+    };
     runDebouncedQueryWithTempTargets({ historyTimeRange: next });
   };
 
