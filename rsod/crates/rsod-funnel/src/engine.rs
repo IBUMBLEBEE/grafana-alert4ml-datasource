@@ -2,7 +2,7 @@
 //! [`Detector`] interface, owning the frontend `hyperParams` contract.
 
 use rsod_core::{
-    parse_periods, DetectionMethod, DetectOutput, DetectRequest, Detector, InputKind, QueryKind,
+    parse_periods, DetectOutput, DetectRequest, DetectionMethod, Detector, InputKind, QueryKind,
     RsodError, TrendType,
 };
 use serde::Deserialize;
@@ -29,6 +29,7 @@ pub struct FunnelHyperParams {
     pub eval_window_secs: Option<i64>,
     pub alert_output_mode: String,
     pub max_sparse_bucket_ratio: f64,
+    pub transition_minutes: u32,
 }
 
 impl Default for FunnelHyperParams {
@@ -49,6 +50,7 @@ impl Default for FunnelHyperParams {
             eval_window_secs: None,
             alert_output_mode: "dedupe".to_string(),
             max_sparse_bucket_ratio: 0.3,
+            transition_minutes: 15,
         }
     }
 }
@@ -90,9 +92,12 @@ pub fn parse_funnel_hyper_params(value: &Value) -> rsod_core::Result<FunnelHyper
         alert_output_mode: Option<String>,
         #[serde(rename = "maxSparseBucketRatio", default)]
         max_sparse_bucket_ratio: Option<f64>,
+        #[serde(rename = "transitionMinutes", default)]
+        transition_minutes: Option<u32>,
     }
-    let raw: Raw = serde_json::from_value(value.clone())
-        .map_err(|e| RsodError::InvalidConfig(format!("failed to parse funnel hyper params: {}", e)))?;
+    let raw: Raw = serde_json::from_value(value.clone()).map_err(|e| {
+        RsodError::InvalidConfig(format!("failed to parse funnel hyper params: {}", e))
+    })?;
     let mut p = FunnelHyperParams::default();
     if let Some(v) = raw.model_name {
         p.model_name = v;
@@ -136,6 +141,9 @@ pub fn parse_funnel_hyper_params(value: &Value) -> rsod_core::Result<FunnelHyper
     }
     if let Some(v) = raw.max_sparse_bucket_ratio {
         p.max_sparse_bucket_ratio = v;
+    }
+    if let Some(v) = raw.transition_minutes {
+        p.transition_minutes = v;
     }
     Ok(p)
 }
@@ -209,6 +217,7 @@ impl Detector for FunnelEngine {
             alert_output_mode: alert_mode,
             // Go's FFI JSON omitted this field → serde default 3.5.
             profile_outlier_k: 3.5,
+            transition_minutes: fp.transition_minutes,
         };
 
         let result = funnel_detect(req.current, req.history, &options)?;

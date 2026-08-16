@@ -84,6 +84,10 @@ pub struct FunnelOptions {
     /// Hampel multiplier when scrubbing outlier samples from profile buckets.
     #[serde(default = "default_profile_outlier_k")]
     pub profile_outlier_k: f64,
+    /// Soft-blend window in minutes on each side of a bucket boundary (default 15).
+    /// `0` disables blending (pure stair-step buckets). Matches Dynamics Weekly.
+    #[serde(default = "default_transition_minutes")]
+    pub transition_minutes: u32,
 }
 
 fn default_profile_outlier_k() -> f64 {
@@ -96,6 +100,10 @@ fn default_sparse_ratio() -> f64 {
 
 fn default_lookback_days() -> u32 {
     90
+}
+
+fn default_transition_minutes() -> u32 {
+    15
 }
 
 impl Default for FunnelOptions {
@@ -118,6 +126,7 @@ impl Default for FunnelOptions {
             eval_window_secs: 0,
             alert_output_mode: AlertOutputMode::default(),
             profile_outlier_k: default_profile_outlier_k(),
+            transition_minutes: default_transition_minutes(),
         }
     }
 }
@@ -131,6 +140,12 @@ impl FunnelOptions {
     /// Lookback duration in seconds for profile sample retention.
     pub fn lookback_secs(&self) -> i64 {
         self.lookback_days as i64 * 86_400
+    }
+
+    /// Soft-blend window in seconds, capped so mid-bucket stays unblended.
+    pub fn effective_transition_secs(&self) -> i64 {
+        let mins = self.transition_minutes.min(30);
+        mins as i64 * 60
     }
 
     pub fn validate(&self) -> rsod_core::Result<()> {

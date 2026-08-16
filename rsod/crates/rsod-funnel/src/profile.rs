@@ -1,14 +1,14 @@
 use rsod_core::{
-    TrendType,
     season::{
         bucket_count_with_slot, coarsen_bucket_slot, downgrade_trend, infer_bucket_slot_secs,
         normalize_bucket_slot_secs, season_key_with_slot,
     },
+    TrendType,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::config::FunnelOptions;
-use crate::stats::{BucketStat, sample_skewness};
+use crate::stats::{sample_skewness, BucketStat};
 
 /// A single timestamped observation stored in a seasonal bucket.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -109,11 +109,7 @@ impl SeasonalProfile {
             return;
         }
 
-        let batch_max = timestamps
-            .iter()
-            .map(|&t| t as i64)
-            .max()
-            .unwrap_or(0);
+        let batch_max = timestamps.iter().map(|&t| t as i64).max().unwrap_or(0);
         let anchor = reference_ts.unwrap_or(batch_max).max(self.last_seen_ts);
         self.last_seen_ts = anchor;
 
@@ -204,12 +200,99 @@ impl SeasonalProfile {
         }
         let key =
             season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
+        self.robust_bucket_at(key)
+    }
+
+    /// Soft-blended robust (median, MAD scale) across adjacent season buckets.
+    ///
+    /// Removes stair-step jumps at slot boundaries — same idea as Dynamics
+    /// `transitionMinutes`. `transition_secs == 0` disables blending.
+    pub fn robust_bucket_blended(&self, ts_secs: i64, transition_secs: i64) -> Option<(f64, f64)> {
+        if self.effective_trend == TrendType::None {
+            return None;
+        }
+        let key =
+            season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
+        let curr = self.robust_bucket_at(key)?;
+        let slot = self.bucket_slot_secs.max(1) as i64;
+        let t = effective_slot_transition(slot, transition_secs);
+        if t <= 0 || self.buckets.len() < 2 {
+            return Some(curr);
+        }
+        let sec_in_slot = ts_secs.rem_euclid(86_400).rem_euclid(slot);
+        let w = soft_blend_weights(sec_in_slot, slot, t);
+        if w.w_prev == 0.0 && w.w_next == 0.0 {
+            return Some(curr);
+        }
+        let (prev_key, next_key) = neighbor_bucket_keys(key, self.buckets.len());
+        let prev = if w.w_prev > 0.0 {
+            self.robust_bucket_at(prev_key)
+        } else {
+            None
+        };
+        let next = if w.w_next > 0.0 {
+            self.robust_bucket_at(next_key)
+        } else {
+            None
+        };
+        Some(blend_stats(curr, prev, next, w))
+    }
+
+    /// Soft-blended mean / scale for the non-seasonal L1 fallback path.
+    pub fn mean_scale_blended(
+        &self,
+        ts_secs: i64,
+        transition_secs: i64,
+        use_mad_scale: bool,
+    ) -> Option<(f64, f64)> {
+        let key =
+            season_key_with_slot(ts_secs, self.effective_trend, self.bucket_slot_secs) as usize;
+        let curr = self.mean_scale_at(key, use_mad_scale)?;
+        let slot = self.bucket_slot_secs.max(1) as i64;
+        let t = effective_slot_transition(slot, transition_secs);
+        if t <= 0 || self.buckets.len() < 2 {
+            return Some(curr);
+        }
+        let sec_in_slot = ts_secs.rem_euclid(86_400).rem_euclid(slot);
+        let w = soft_blend_weights(sec_in_slot, slot, t);
+        if w.w_prev == 0.0 && w.w_next == 0.0 {
+            return Some(curr);
+        }
+        let (prev_key, next_key) = neighbor_bucket_keys(key, self.buckets.len());
+        let prev = if w.w_prev > 0.0 {
+            self.mean_scale_at(prev_key, use_mad_scale)
+        } else {
+            None
+        };
+        let next = if w.w_next > 0.0 {
+            self.mean_scale_at(next_key, use_mad_scale)
+        } else {
+            None
+        };
+        Some(blend_stats(curr, prev, next, w))
+    }
+
+    fn robust_bucket_at(&self, key: usize) -> Option<(f64, f64)> {
         let samples = self.samples.get(key)?;
         if samples.len() < self.min_samples as usize {
             return None;
         }
         let values: Vec<f64> = samples.iter().map(|s| s.value).collect();
         crate::stats::median_and_mad_hampel(&values, self.effective_hampel_k())
+    }
+
+    fn mean_scale_at(&self, key: usize, use_mad_scale: bool) -> Option<(f64, f64)> {
+        let stat = self.buckets.get(key)?;
+        if stat.count < self.min_samples {
+            return None;
+        }
+        let baseline = stat.mean()?;
+        let scale = if use_mad_scale {
+            stat.mad_scale()?
+        } else {
+            stat.std_dev()?
+        };
+        Some((baseline, scale))
     }
 
     /// Remove obvious outlier samples from each bucket (Hampel filter).
@@ -285,6 +368,103 @@ impl SeasonalProfile {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BlendWeights {
+    w_prev: f64,
+    w_curr: f64,
+    w_next: f64,
+}
+
+/// Cap transition so at least half the slot stays pure current-bucket.
+fn effective_slot_transition(slot_secs: i64, transition_secs: i64) -> i64 {
+    if transition_secs <= 0 || slot_secs <= 0 {
+        return 0;
+    }
+    transition_secs.min(slot_secs / 2)
+}
+
+/// Soft-blend weights for a point `sec_in_slot` seconds into its season slot.
+///
+/// Across each slot boundary the blend is continuous: at the start the result
+/// is 50/50 between previous and current; by `transition_secs` it is 100%
+/// current; symmetrically into the next slot at the end.
+fn soft_blend_weights(sec_in_slot: i64, slot_secs: i64, transition_secs: i64) -> BlendWeights {
+    if transition_secs <= 0 || slot_secs <= 0 {
+        return BlendWeights {
+            w_prev: 0.0,
+            w_curr: 1.0,
+            w_next: 0.0,
+        };
+    }
+    let t = transition_secs as f64;
+    let slot = slot_secs as f64;
+    let s = sec_in_slot.clamp(0, slot_secs - 1) as f64;
+    if s < t {
+        let w_curr = 0.5 + 0.5 * (s / t);
+        BlendWeights {
+            w_prev: 1.0 - w_curr,
+            w_curr,
+            w_next: 0.0,
+        }
+    } else if s > slot - t {
+        let w_next = 0.5 * ((s - (slot - t)) / t);
+        BlendWeights {
+            w_prev: 0.0,
+            w_curr: 1.0 - w_next,
+            w_next,
+        }
+    } else {
+        BlendWeights {
+            w_prev: 0.0,
+            w_curr: 1.0,
+            w_next: 0.0,
+        }
+    }
+}
+
+fn neighbor_bucket_keys(key: usize, n: usize) -> (usize, usize) {
+    if n == 0 {
+        return (0, 0);
+    }
+    let prev = if key == 0 { n - 1 } else { key - 1 };
+    let next = (key + 1) % n;
+    (prev, next)
+}
+
+/// Blend (baseline, scale); missing neighbors drop out and weights renormalize.
+fn blend_stats(
+    curr: (f64, f64),
+    prev: Option<(f64, f64)>,
+    next: Option<(f64, f64)>,
+    w: BlendWeights,
+) -> (f64, f64) {
+    let (b0, s0) = curr;
+    let mut w_prev = w.w_prev;
+    let mut w_curr = w.w_curr;
+    let mut w_next = w.w_next;
+    if prev.is_none() {
+        w_curr += w_prev;
+        w_prev = 0.0;
+    }
+    if next.is_none() {
+        w_curr += w_next;
+        w_next = 0.0;
+    }
+    let sum = w_prev + w_curr + w_next;
+    if sum <= 0.0 {
+        return curr;
+    }
+    w_prev /= sum;
+    w_curr /= sum;
+    w_next /= sum;
+    let (b_p, s_p) = prev.unwrap_or(curr);
+    let (b_n, s_n) = next.unwrap_or(curr);
+    (
+        w_prev * b_p + w_curr * b0 + w_next * b_n,
+        w_prev * s_p + w_curr * s0 + w_next * s_n,
+    )
+}
+
 fn upsert_sample(samples: &mut Vec<TimedSample>, ts_secs: i64, value: f64) {
     match samples.binary_search_by_key(&ts_secs, |s| s.ts_secs) {
         Ok(idx) => {
@@ -351,9 +531,11 @@ pub fn compute_trend(timestamps: &[f64], values: &[f64], options: &FunnelOptions
 
 /// Variance ratio of hour-of-day group means to total variance (24h seasonality proxy).
 fn estimate_hour_of_day_effect(timestamps: &[f64], values: &[f64]) -> f64 {
-    group_variance_ratio(values, |i| {
-        Some(((timestamps[i] as i64).rem_euclid(86_400) / 3600) as usize)
-    }, 24)
+    group_variance_ratio(
+        values,
+        |i| Some(((timestamps[i] as i64).rem_euclid(86_400) / 3600) as usize),
+        24,
+    )
 }
 
 /// Resolve bucket slot: explicit option, else infer from timestamps, else hour buckets.
@@ -381,9 +563,7 @@ pub fn build_profile(
         let mut profile = SeasonalProfile::new(attempt, attempt_slot, options);
         profile.ingest_windowed(timestamps, values, None);
 
-        if profile.sparse_ratio() <= options.max_sparse_bucket_ratio
-            || attempt == TrendType::None
-        {
+        if profile.sparse_ratio() <= options.max_sparse_bucket_ratio || attempt == TrendType::None {
             profile.purge_bucket_outliers(options.effective_profile_outlier_k());
             return profile;
         }
@@ -405,9 +585,11 @@ pub fn build_profile(
 
 /// Variance ratio of weekday group means to total variance.
 fn estimate_weekday_effect(timestamps: &[f64], values: &[f64]) -> f64 {
-    group_variance_ratio(values, |i| {
-        Some((((timestamps[i] as i64).div_euclid(86_400) + 3) % 7) as usize)
-    }, 7)
+    group_variance_ratio(
+        values,
+        |i| Some((((timestamps[i] as i64).div_euclid(86_400) + 3) % 7) as usize),
+        7,
+    )
 }
 
 fn group_variance_ratio(
@@ -464,7 +646,12 @@ fn estimate_seasonal_strength(timestamps: &[f64], values: &[f64]) -> f64 {
         return 0.0;
     }
     let finite_n = values.iter().filter(|v| v.is_finite()).count().max(1) as f64;
-    let mean = values.iter().copied().filter(|v| v.is_finite()).sum::<f64>() / finite_n;
+    let mean = values
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite())
+        .sum::<f64>()
+        / finite_n;
     let total: f64 = values
         .iter()
         .filter(|v| v.is_finite())
@@ -490,9 +677,9 @@ fn estimate_seasonal_strength(timestamps: &[f64], values: &[f64]) -> f64 {
             continue;
         }
         let target = timestamps[i] - lag_secs;
-        if let Ok(j) = timestamps[..i].binary_search_by(|t| {
-            t.partial_cmp(&target).unwrap_or(std::cmp::Ordering::Less)
-        }) {
+        if let Ok(j) = timestamps[..i]
+            .binary_search_by(|t| t.partial_cmp(&target).unwrap_or(std::cmp::Ordering::Less))
+        {
             for c in [j.saturating_sub(1), j, j + 1] {
                 if c < i && (timestamps[i] - timestamps[c] - lag_secs).abs() <= tolerance {
                     if values[c].is_finite() {
@@ -520,13 +707,10 @@ pub fn threshold_method_for_history(values: &[f64]) -> crate::stats::ThresholdMe
 mod tests {
     use super::*;
 
-    fn make_series(
-        start: i64,
-        count: usize,
-        step: i64,
-        value: f64,
-    ) -> (Vec<f64>, Vec<f64>) {
-        let ts: Vec<f64> = (0..count).map(|i| (start + i as i64 * step) as f64).collect();
+    fn make_series(start: i64, count: usize, step: i64, value: f64) -> (Vec<f64>, Vec<f64>) {
+        let ts: Vec<f64> = (0..count)
+            .map(|i| (start + i as i64 * step) as f64)
+            .collect();
         let vals = vec![value; count];
         (ts, vals)
     }
@@ -655,9 +839,7 @@ mod tests {
         let hour15 = day_base + 15 * 3600;
         for day in 0..5 {
             let base = hour15 + day * 86_400;
-            let ts: Vec<f64> = (0..12)
-                .map(|i| (base + i * 300) as f64)
-                .collect();
+            let ts: Vec<f64> = (0..12).map(|i| (base + i * 300) as f64).collect();
             let vals: Vec<f64> = (0..12).map(|i| 100.0 + i as f64).collect();
             profile.ingest_windowed(&ts, &vals, None);
         }

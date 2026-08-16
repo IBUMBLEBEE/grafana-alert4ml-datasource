@@ -66,7 +66,13 @@ pub fn funnel_detect_with_metrics(
 
     let method = threshold_method_for_history(history.values);
     let l1_start = Instant::now();
-    let (l1_results, l1_stats) = l1_filter_batch(eval_ts, eval_vals, &profile, method);
+    let (l1_results, l1_stats) = l1_filter_batch(
+        eval_ts,
+        eval_vals,
+        &profile,
+        method,
+        options.effective_transition_secs(),
+    );
     let l1_elapsed_ms = l1_start.elapsed().as_millis();
 
     let mut verdicts = Vec::with_capacity(l1_results.len());
@@ -200,10 +206,7 @@ fn resolve_profile(
     }
 
     if history.is_empty() {
-        return Err(rsod_core::RsodError::InsufficientData {
-            need: 1,
-            got: 0,
-        });
+        return Err(rsod_core::RsodError::InsufficientData { need: 1, got: 0 });
     }
 
     Ok(ResolvedProfile {
@@ -236,11 +239,7 @@ fn format_anomalies_for_display(anomalies: &mut [f64], raw_values: &[f64]) {
 }
 
 /// Timestamps in the eval slice flagged as anomalies — excluded from persisted profile.
-fn profile_skip_timestamps(
-    timestamps: &[f64],
-    eval_start: usize,
-    anomalies: &[f64],
-) -> Vec<f64> {
+fn profile_skip_timestamps(timestamps: &[f64], eval_start: usize, anomalies: &[f64]) -> Vec<f64> {
     timestamps
         .iter()
         .enumerate()
@@ -325,10 +324,7 @@ fn sync_anomalies_with_displayed_bounds(result: &mut DetectionResult, raw_values
         let v = raw_values[i];
         let l = lowers[i];
         let u = uppers[i];
-        result.anomalies[i] = if v.is_finite()
-            && l.is_finite()
-            && u.is_finite()
-            && (v < l || v > u)
+        result.anomalies[i] = if v.is_finite() && l.is_finite() && u.is_finite() && (v < l || v > u)
         {
             1.0
         } else {
@@ -395,23 +391,16 @@ mod tests {
         let _ = init_db_with_config(true, "");
     }
 
-    fn sliding_window(
-        ts: &[f64],
-        vs: &[f64],
-        start: usize,
-        len: usize,
-    ) -> (Vec<f64>, Vec<f64>) {
-        (ts[start..start + len].to_vec(), vs[start..start + len].to_vec())
+    fn sliding_window(ts: &[f64], vs: &[f64], start: usize, len: usize) -> (Vec<f64>, Vec<f64>) {
+        (
+            ts[start..start + len].to_vec(),
+            vs[start..start + len].to_vec(),
+        )
     }
 
-    fn make_alerting_windows(
-        t0: i64,
-        step: i64,
-    ) -> ((Vec<f64>, Vec<f64>), (Vec<f64>, Vec<f64>)) {
+    fn make_alerting_windows(t0: i64, step: i64) -> ((Vec<f64>, Vec<f64>), (Vec<f64>, Vec<f64>)) {
         let n = 240usize; // 1h @ 15s
-        let ts1: Vec<f64> = (0..n)
-            .map(|i| (t0 + i as i64 * step) as f64)
-            .collect();
+        let ts1: Vec<f64> = (0..n).map(|i| (t0 + i as i64 * step) as f64).collect();
         let vals1 = vec![100.0; n];
         let ts2: Vec<f64> = (0..n)
             .map(|i| (t0 + 600 + i as i64 * step) as f64)
@@ -452,7 +441,9 @@ mod tests {
             history_vals.push(if day == 5 { 500.0 } else { 100.0 });
         }
 
-        let current_ts: Vec<f64> = (0..6).map(|i| hour + 10.0 * 86_400.0 + i as f64 * step).collect();
+        let current_ts: Vec<f64> = (0..6)
+            .map(|i| hour + 10.0 * 86_400.0 + i as f64 * step)
+            .collect();
         let current_vals = vec![100.0; 6];
 
         let mut opts = FunnelOptions::default();
@@ -478,11 +469,13 @@ mod tests {
 
     fn f64_slice_eq(a: &[f64], b: &[f64]) -> bool {
         a.len() == b.len()
-            && a.iter().zip(b).all(|(x, y)| match (x.is_nan(), y.is_nan()) {
-                (true, true) => true,
-                (false, false) => x == y,
-                _ => false,
-            })
+            && a.iter()
+                .zip(b)
+                .all(|(x, y)| match (x.is_nan(), y.is_nan()) {
+                    (true, true) => true,
+                    (false, false) => x == y,
+                    _ => false,
+                })
     }
 
     fn optional_f64_slice_eq(a: &Option<Vec<f64>>, b: &Option<Vec<f64>>) -> bool {
@@ -520,14 +513,14 @@ mod tests {
         opts.k_outer = 1.0;
         opts.k_inner = 0.5;
         let det_tight = funnel_detect(current.clone(), history.clone(), &opts).unwrap();
-        let tight_width = det_tight.upper_bound.as_ref().unwrap()[0]
-            - det_tight.lower_bound.as_ref().unwrap()[0];
+        let tight_width =
+            det_tight.upper_bound.as_ref().unwrap()[0] - det_tight.lower_bound.as_ref().unwrap()[0];
 
         opts.k_outer = 10.0;
         opts.k_inner = 2.0;
         let det_wide = funnel_detect(current, history, &opts).unwrap();
-        let wide_width = det_wide.upper_bound.as_ref().unwrap()[0]
-            - det_wide.lower_bound.as_ref().unwrap()[0];
+        let wide_width =
+            det_wide.upper_bound.as_ref().unwrap()[0] - det_wide.lower_bound.as_ref().unwrap()[0];
 
         assert!(
             wide_width > tight_width * 2.0,
@@ -563,7 +556,10 @@ mod tests {
         let det1 = funnel_detect(current.clone(), history.clone(), &opts).unwrap();
         let det2 = funnel_detect(current, history, &opts).unwrap();
 
-        assert!(f64_slice_eq(&det1.anomalies, &det2.anomalies), "panel refresh must be idempotent");
+        assert!(
+            f64_slice_eq(&det1.anomalies, &det2.anomalies),
+            "panel refresh must be idempotent"
+        );
         assert!(f64_slice_eq(&det1.values, &det2.values));
         assert!(optional_f64_slice_eq(&det1.lower_bound, &det2.lower_bound));
         assert!(optional_f64_slice_eq(&det1.upper_bound, &det2.upper_bound));
@@ -588,10 +584,8 @@ mod tests {
         let det = result.unwrap();
         assert_eq!(det.anomalies.len(), cvs.len());
 
-        let metrics = eval::OutlierMetrics::compute(
-            &eval::funnel_display_to_binary(&det.anomalies),
-            &labels,
-        );
+        let metrics =
+            eval::OutlierMetrics::compute(&eval::funnel_display_to_binary(&det.anomalies), &labels);
         assert!(
             metrics.f1 > 0.0,
             "expected non-zero F1, got {:.4}",
@@ -655,6 +649,8 @@ mod tests {
         opts.trend = Some(TrendType::Daily);
         opts.enable_l2 = false;
         opts.lookback_days = 30;
+        // Stair-step buckets: soft-blend can change skip-set → sample counts.
+        opts.transition_minutes = 0;
 
         funnel_detect(current.clone(), history.clone(), &opts).unwrap();
         let count_once = load_profile(&opts.uuid).unwrap().total_sample_count();
@@ -732,6 +728,7 @@ mod tests {
         opts.trend = Some(TrendType::Daily);
         opts.enable_l2 = false;
         opts.lookback_days = 30;
+        opts.transition_minutes = 0;
 
         funnel_detect(current.clone(), history.clone(), &opts).unwrap();
         let count_once = load_profile(&opts.uuid).unwrap().total_sample_count();
@@ -740,7 +737,11 @@ mod tests {
         let count_twice = load_profile(&opts.uuid).unwrap().total_sample_count();
 
         assert_eq!(count_twice, count_once);
-        assert_eq!(count_once, ts.len(), "profile should retain one sample per timestamp");
+        assert_eq!(
+            count_once,
+            ts.len(),
+            "profile should retain one sample per timestamp"
+        );
     }
 
     #[test]
@@ -808,7 +809,10 @@ mod tests {
         opts.eval_window_secs = 0;
 
         let det = funnel_detect(current, history, &opts).unwrap();
-        assert_eq!(det.anomalies[1], 500.0, "full window should detect prefix spike");
+        assert_eq!(
+            det.anomalies[1], 500.0,
+            "full window should detect prefix spike"
+        );
     }
 
     /// Real RDS sliding eval: only the trailing 10min slice may produce anomalies.
@@ -902,7 +906,9 @@ mod tests {
         init_storage();
         let t0 = 1_700_000_000.0;
         let step = 3600.0;
-        let history_ts: Vec<f64> = (0..200).map(|i| t0 - 200.0 * step + i as f64 * step).collect();
+        let history_ts: Vec<f64> = (0..200)
+            .map(|i| t0 - 200.0 * step + i as f64 * step)
+            .collect();
         let history_vals: Vec<f64> = (0..200)
             .map(|i| 100.0 + (i % 5) as f64 * 2.0 - 4.0)
             .collect();

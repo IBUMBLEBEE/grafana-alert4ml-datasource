@@ -1,5 +1,5 @@
 use crate::profile::SeasonalProfile;
-use crate::stats::{BucketStat, ThresholdMethod};
+use crate::stats::ThresholdMethod;
 
 /// L1 filter outcome for a single point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,80 +76,14 @@ fn bands_from_scale(
     }
 }
 
-/// O(1) three-state L1 filter for one point against a seasonal bucket.
-pub fn l1_filter_point(
+fn decide_from_baseline_scale(
     x: f64,
-    ts_secs: i64,
-    profile: &SeasonalProfile,
+    baseline: f64,
+    scale: f64,
     method: ThresholdMethod,
+    k_outer: f64,
+    k_inner: f64,
 ) -> L1Result {
-    if !x.is_finite() {
-        return uncertain_nan();
-    }
-
-    let k_outer = profile.k_outer;
-    let k_inner = profile.k_inner;
-
-    // Seasonal buckets: robust median + true MAD from stored samples.
-    if let Some((baseline, scale)) = profile.robust_bucket(ts_secs) {
-        if scale <= 1e-12 {
-            let eps = 1e-9;
-            let verdict = if (x - baseline).abs() > eps {
-                FilterVerdict::Anomaly
-            } else {
-                FilterVerdict::Normal
-            };
-            return L1Result {
-                verdict,
-                lower: baseline - eps,
-                upper: baseline + eps,
-                inner_lower: baseline - eps,
-                inner_upper: baseline + eps,
-                baseline,
-            };
-        }
-        let (lower, upper, inner_lower, inner_upper) =
-            bands_from_scale(baseline, scale, method, k_outer, k_inner);
-        let verdict = if x < lower || x > upper {
-            FilterVerdict::Anomaly
-        } else if x >= inner_lower && x <= inner_upper {
-            FilterVerdict::Normal
-        } else {
-            FilterVerdict::Uncertain
-        };
-        return L1Result {
-            verdict,
-            lower,
-            upper,
-            inner_lower,
-            inner_upper,
-            baseline,
-        };
-    }
-
-    // Non-seasonal / sparse fallback: mean + std from aggregate stats.
-    let stat = profile
-        .bucket(ts_secs)
-        .copied()
-        .unwrap_or(BucketStat::default());
-
-    if stat.count < profile.min_samples {
-        return uncertain_nan();
-    }
-
-    let Some(baseline) = stat.mean() else {
-        return uncertain_nan();
-    };
-
-    let scale = match method {
-        ThresholdMethod::Mad => stat.mad_scale(),
-        ThresholdMethod::Iqr | ThresholdMethod::ZScore => stat.std_dev(),
-    };
-
-    let Some(scale) = scale else {
-        return uncertain_nan();
-    };
-
     if scale <= 1e-12 {
         let eps = 1e-9;
         let verdict = if (x - baseline).abs() > eps {
@@ -166,10 +100,8 @@ pub fn l1_filter_point(
             baseline,
         };
     }
-
     let (lower, upper, inner_lower, inner_upper) =
         bands_from_scale(baseline, scale, method, k_outer, k_inner);
-
     let verdict = if x < lower || x > upper {
         FilterVerdict::Anomaly
     } else if x >= inner_lower && x <= inner_upper {
@@ -177,7 +109,6 @@ pub fn l1_filter_point(
     } else {
         FilterVerdict::Uncertain
     };
-
     L1Result {
         verdict,
         lower,
@@ -186,6 +117,38 @@ pub fn l1_filter_point(
         inner_upper,
         baseline,
     }
+}
+
+/// O(1) three-state L1 filter for one point against a seasonal bucket.
+///
+/// `transition_secs` soft-blends adjacent buckets near slot boundaries so
+/// bounds do not jump as stairs (same idea as Dynamics Weekly).
+pub fn l1_filter_point(
+    x: f64,
+    ts_secs: i64,
+    profile: &SeasonalProfile,
+    method: ThresholdMethod,
+    transition_secs: i64,
+) -> L1Result {
+    if !x.is_finite() {
+        return uncertain_nan();
+    }
+
+    let k_outer = profile.k_outer;
+    let k_inner = profile.k_inner;
+
+    // Seasonal buckets: robust median + MAD, soft-blended at slot edges.
+    if let Some((baseline, scale)) = profile.robust_bucket_blended(ts_secs, transition_secs) {
+        return decide_from_baseline_scale(x, baseline, scale, method, k_outer, k_inner);
+    }
+
+    // Non-seasonal / sparse fallback: mean + std, also soft-blended when possible.
+    let use_mad = matches!(method, ThresholdMethod::Mad);
+    if let Some((baseline, scale)) = profile.mean_scale_blended(ts_secs, transition_secs, use_mad) {
+        return decide_from_baseline_scale(x, baseline, scale, method, k_outer, k_inner);
+    }
+
+    uncertain_nan()
 }
 
 fn uncertain_nan() -> L1Result {
@@ -205,6 +168,7 @@ pub fn l1_filter_batch(
     values: &[f64],
     profile: &SeasonalProfile,
     method: ThresholdMethod,
+    transition_secs: i64,
 ) -> (Vec<L1Result>, L1Stats) {
     let mut results = Vec::with_capacity(values.len());
     let mut stats = L1Stats {
@@ -213,7 +177,7 @@ pub fn l1_filter_batch(
     };
 
     for (&ts, &v) in timestamps.iter().zip(values.iter()) {
-        let r = l1_filter_point(v, ts as i64, profile, method);
+        let r = l1_filter_point(v, ts as i64, profile, method, transition_secs);
         match r.verdict {
             FilterVerdict::Normal => stats.normal += 1,
             FilterVerdict::Anomaly => stats.anomaly += 1,
@@ -234,15 +198,89 @@ mod tests {
 
     #[test]
     fn constant_series_mostly_normal() {
-        let ts: Vec<f64> = (0..100).map(|i| (1_700_000_000 + i * 3600) as f64).collect();
+        let ts: Vec<f64> = (0..100)
+            .map(|i| (1_700_000_000 + i * 3600) as f64)
+            .collect();
         let vals = vec![42.0; 100];
         let opts = FunnelOptions {
             trend: Some(TrendType::Daily),
             ..Default::default()
         };
         let profile = build_profile(&ts, &vals, &opts);
-        let (results, stats) = l1_filter_batch(&ts, &vals, &profile, ThresholdMethod::ZScore);
+        let (results, stats) = l1_filter_batch(
+            &ts,
+            &vals,
+            &profile,
+            ThresholdMethod::ZScore,
+            opts.effective_transition_secs(),
+        );
         assert_eq!(results.len(), 100);
         assert!(stats.normal + stats.uncertain >= 90);
+    }
+
+    #[test]
+    fn soft_blend_smooths_hour_boundary_baseline() {
+        // Hour 10 ≈ 100, hour 11 ≈ 200. At :00 of hour 11, blended ≈ 150.
+        let opts = FunnelOptions {
+            trend: Some(TrendType::Daily),
+            bucket_slot_secs: 3600,
+            min_samples: 5,
+            transition_minutes: 15,
+            auto_trend: false,
+            // Keep Daily even though only hours 10–11 are populated.
+            max_sparse_bucket_ratio: 1.0,
+            lookback_days: 14,
+            ..Default::default()
+        };
+        // Midnight-aligned epoch so season keys match clock hours.
+        let day0 = (1_700_000_000_i64 / 86_400) * 86_400;
+        let mut hist_ts = Vec::new();
+        let mut hist_vals = Vec::new();
+        for day in 0..10 {
+            for hour in 10..=11 {
+                // Mid-hour samples so training stays away from the soft-blend edges.
+                let ts = day0 + day * 86_400 + hour * 3600 + 30 * 60;
+                hist_ts.push(ts as f64);
+                hist_vals.push(if hour == 10 { 100.0 } else { 200.0 });
+            }
+        }
+        let profile = build_profile(&hist_ts, &hist_vals, &opts);
+
+        let boundary_ts = day0 + 5 * 86_400 + 11 * 3600; // 11:00
+        let mid_ts = day0 + 5 * 86_400 + 11 * 3600 + 30 * 60; // 11:30
+
+        let at_boundary = l1_filter_point(
+            150.0,
+            boundary_ts,
+            &profile,
+            ThresholdMethod::ZScore,
+            opts.effective_transition_secs(),
+        );
+        let at_mid = l1_filter_point(
+            200.0,
+            mid_ts,
+            &profile,
+            ThresholdMethod::ZScore,
+            opts.effective_transition_secs(),
+        );
+
+        assert!(
+            (at_boundary.baseline - 150.0).abs() < 15.0,
+            "boundary baseline should be ~150, got {}",
+            at_boundary.baseline
+        );
+        assert!(
+            (at_mid.baseline - 200.0).abs() < 5.0,
+            "mid-hour baseline should stay ~200, got {}",
+            at_mid.baseline
+        );
+
+        // transition=0 keeps stair-step at :00 of hour 11.
+        let stair = l1_filter_point(200.0, boundary_ts, &profile, ThresholdMethod::ZScore, 0);
+        assert!(
+            (stair.baseline - 200.0).abs() < 5.0,
+            "with transition=0, :00 of hour 11 must stay on hour-11 bucket, got {}",
+            stair.baseline
+        );
     }
 }
