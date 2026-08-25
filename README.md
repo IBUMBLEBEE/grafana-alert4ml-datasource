@@ -2,9 +2,13 @@
 
 Grafana supports a wide range of data sources, including Prometheus, MySQL, and even Datadog. There’s a good chance you can already visualize metrics from the systems you have set up. **Alert4ML** serves as the observability layer for SRE teams, automatically detects anomalies in time-series data based on collected data, thereby reducing the effort required by fixed-threshold methods and manual identification of abnormal system behavior.
 
+![Alert4ML detects anomalies on top of existing monitoring data](assets/alert4ml-illustrations/01-monitoring-anomaly-gate.png)
+
 ## Architecture
 
 ![Architecture](docs/alert4ml-architecture.drawio.svg)
+
+![Alert4ML relays upstream data through ML judgement back to the dashboard](assets/alert4ml-illustrations/02-data-relay-layer.png)
 
 ## Technology Stack
 

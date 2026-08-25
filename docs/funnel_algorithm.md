@@ -11,6 +11,8 @@ Funnel uses a layered, funnel-shaped detection:
 
 The goal is for most normal data to be filtered out in L1, with only a few uncertain points entering L2, balancing accuracy and cost.
 
+![L1 quickly filters clear cases and only sends uncertain points to L2](../assets/alert4ml-illustrations/03-l1-l2-funnel.png)
+
 Corresponding implementations:
 
 - L1: [rsod/crates/rsod-funnel/src/l1.rs](../rsod/crates/rsod-funnel/src/l1.rs)
@@ -62,6 +64,8 @@ flowchart TD
 
 L1 builds a seasonal profile from history and makes an O(1) three-state decision for each current point, without retraining.
 
+![L1 statistical bands separate normal, anomalous, and uncertain points](../assets/alert4ml-illustrations/04-statistical-bands.png)
+
 ```mermaid
 flowchart TD
     A["history data"] --> B["Bucket by period<br/>Daily / Weekly / Monthly"]
@@ -95,6 +99,8 @@ The threshold method (MAD / IQR / ZScore) is chosen automatically from the skewn
 ## 4. L2 Algorithm Flow
 
 L2 is not a single fixed model: it first classifies the series, then routes to a concrete algorithm via the decision engine, and **only covers the points L1 judged `Uncertain`**.
+
+![L2 routes uncertain time series to the appropriate detection method](../assets/alert4ml-illustrations/05-l2-routing.png)
 
 ```mermaid
 flowchart TD
