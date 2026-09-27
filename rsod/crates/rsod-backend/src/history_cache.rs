@@ -13,13 +13,14 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use rsod_core::ModelStorage;
 use rsod_storage::GlobalStorage;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 use crate::client::{GrafanaClient, GrafanaDataResponse, GrafanaQueryDataResponse, ProxyQueryBody};
@@ -27,8 +28,16 @@ use crate::tools::{body_for_time_range, clone_frame, concat_frames, split_frame_
 
 const DEFAULT_CAPACITY: usize = 64;
 const DEFAULT_TTL: Duration = Duration::from_secs(120);
+pub const MAX_UPSTREAM_POINTS_PER_CHUNK: i64 = 10_000;
+pub const MAX_CONCURRENT_UPSTREAM_REQUESTS: usize = 4;
 const PERSIST_PREFIX: &str = "history_cache:";
 const PERSIST_VERSION: u32 = 1;
+
+/// Process-wide bound for datasource proxy calls. Chunking bounds the size of
+/// each request; this gate separately prevents concurrent panels and alert
+/// evaluations from multiplying upstream load without limit.
+static UPSTREAM_REQUEST_LIMIT: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_CONCURRENT_UPSTREAM_REQUESTS)));
 
 struct CacheEntry {
     stored_at: Instant,
@@ -278,7 +287,11 @@ fn persist_load(key: u64) -> Option<(DateTime<Utc>, DateTime<Utc>, GrafanaQueryD
         }
     };
     if blob.version != PERSIST_VERSION {
-        debug!(key, version = blob.version, "history cache persist version mismatch");
+        debug!(
+            key,
+            version = blob.version,
+            "history cache persist version mismatch"
+        );
         return None;
     }
     let now_ms = wall_now_ms();
@@ -330,7 +343,12 @@ fn hydrate_loaded_entry(
         .checked_sub(ttl.saturating_sub(remaining))
         .unwrap_or_else(Instant::now);
 
-    info!(key, ?from, ?to, "upstream history cache persist hit; hydrating memory");
+    info!(
+        key,
+        ?from,
+        ?to,
+        "upstream history cache persist hit; hydrating memory"
+    );
     let response_for_plan = clone_query_response(&response).ok()?;
     if let Ok(mut cache) = global().lock() {
         cache.put(key, from, to, response, stored_at);
@@ -456,17 +474,33 @@ fn merge_responses(
             );
             continue;
         }
-        if left_data.frames.len() != right_frames.len() {
-            return Err(format!(
-                "history cache merge: frame count mismatch for refId {ref_id}: {} vs {}",
-                left_data.frames.len(),
-                right_frames.len()
-            )
-            .into());
+        let mut frames = Vec::with_capacity(left_data.frames.len().max(right_frames.len()));
+        let mut used_right = vec![false; right_frames.len()];
+        for left_frame in &left_data.frames {
+            let identity = crate::tools::frame_series_key(left_frame);
+            let matches: Vec<usize> = right_frames
+                .iter()
+                .enumerate()
+                .filter(|(_, frame)| crate::tools::frame_series_key(frame) == identity)
+                .map(|(index, _)| index)
+                .collect();
+            if matches.len() > 1 {
+                return Err(format!(
+                    "history cache merge: ambiguous series identity {identity:?} for refId {ref_id}"
+                )
+                .into());
+            }
+            if let Some(index) = matches.first().copied() {
+                used_right[index] = true;
+                frames.push(concat_frames(left_frame, &right_frames[index])?);
+            } else {
+                frames.push(clone_frame(left_frame)?);
+            }
         }
-        let mut frames = Vec::with_capacity(left_data.frames.len());
-        for (l, r) in left_data.frames.iter().zip(right_frames.iter()) {
-            frames.push(concat_frames(l, r)?);
+        for (index, frame) in right_frames.iter().enumerate() {
+            if !used_right[index] {
+                frames.push(clone_frame(frame)?);
+            }
         }
         results.insert(ref_id.clone(), GrafanaDataResponse { frames });
     }
@@ -489,6 +523,80 @@ fn merge_responses(
     Ok(GrafanaQueryDataResponse { results })
 }
 
+fn chunk_ranges(body: &ProxyQueryBody) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+    if body.interval_ms <= 0 || body.to <= body.from {
+        return vec![(body.from, body.to)];
+    }
+    // Prometheus-style range endpoints are inclusive. A span of N-1 steps
+    // therefore yields at most N points; adjacent chunks share one boundary
+    // sample, which extraction later de-duplicates by timestamp.
+    let span_ms = body
+        .interval_ms
+        .saturating_mul(MAX_UPSTREAM_POINTS_PER_CHUNK - 1);
+    if span_ms <= 0 || (body.to - body.from).num_milliseconds() <= span_ms {
+        return vec![(body.from, body.to)];
+    }
+    let mut ranges = Vec::new();
+    let mut from = body.from;
+    while from < body.to {
+        let candidate = from + chrono::Duration::milliseconds(span_ms);
+        let to = candidate.min(body.to);
+        ranges.push((from, to));
+        if to >= body.to {
+            break;
+        }
+        from = to;
+    }
+    ranges
+}
+
+async fn query_upstream(
+    client: &GrafanaClient,
+    body: &ProxyQueryBody,
+) -> rsod_core::Result<GrafanaQueryDataResponse> {
+    let _permit = UPSTREAM_REQUEST_LIMIT
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "upstream request limiter is unavailable".to_string())?;
+    client.data_source_query(body).await
+}
+
+/// Fetch a fixed-resolution range in bounded, sequential chunks. Sequential
+/// execution avoids one logical query consuming multiple permits and makes
+/// cancellation immediate when the owning async future is dropped. The
+/// process-wide gate in `query_upstream` bounds concurrency across queries.
+pub async fn fetch_uncached(
+    client: &GrafanaClient,
+    body: &ProxyQueryBody,
+) -> rsod_core::Result<GrafanaQueryDataResponse> {
+    let ranges = chunk_ranges(body);
+    let mut merged: Option<GrafanaQueryDataResponse> = None;
+    for (from, to) in ranges {
+        let chunk = body_for_time_range(body, from, to)?;
+        let response = query_upstream(client, &chunk).await?;
+        merged = Some(match merged {
+            Some(previous) => merge_responses(&previous, &response)?,
+            None => response,
+        });
+    }
+    Ok(merged.unwrap_or(GrafanaQueryDataResponse {
+        results: HashMap::new(),
+    }))
+}
+
+async fn fetch_for_mode(
+    client: &GrafanaClient,
+    body: &ProxyQueryBody,
+    chunked: bool,
+) -> rsod_core::Result<GrafanaQueryDataResponse> {
+    if chunked {
+        fetch_uncached(client, body).await
+    } else {
+        query_upstream(client, body).await
+    }
+}
+
 /// Look up / sliding-merge a cached upstream response, or fetch the full window.
 ///
 /// Lock is not held across network calls. Phase 3: memory miss consults
@@ -496,6 +604,23 @@ fn merge_responses(
 pub async fn get_or_fetch(
     client: &GrafanaClient,
     body: &ProxyQueryBody,
+) -> rsod_core::Result<GrafanaQueryDataResponse> {
+    get_or_fetch_with_mode(client, body, false).await
+}
+
+/// K-means history cache path: identical sliding-cache semantics, with every
+/// upstream gap fetch split at the fixed-resolution point limit.
+pub async fn get_or_fetch_chunked(
+    client: &GrafanaClient,
+    body: &ProxyQueryBody,
+) -> rsod_core::Result<GrafanaQueryDataResponse> {
+    get_or_fetch_with_mode(client, body, true).await
+}
+
+async fn get_or_fetch_with_mode(
+    client: &GrafanaClient,
+    body: &ProxyQueryBody,
+    chunked: bool,
 ) -> rsod_core::Result<GrafanaQueryDataResponse> {
     let scope = client.cache_scope();
     let key = series_key(&scope, body);
@@ -551,7 +676,7 @@ pub async fn get_or_fetch(
                 );
                 let reused = trim_response(&cached_rsp, req_from, cached_to)?;
                 let gap_body = body_for_time_range(body, cached_to, req_to)?;
-                let gap_rsp = client.data_source_query(&gap_body).await?;
+                let gap_rsp = fetch_for_mode(client, &gap_body, chunked).await?;
                 let merged = merge_responses(&reused, &gap_rsp)?;
                 store(key, req_from, req_to, &merged);
                 return Ok(merged);
@@ -565,7 +690,7 @@ pub async fn get_or_fetch(
                 );
                 let reused = trim_response(&cached_rsp, cached_from, req_to)?;
                 let gap_body = body_for_time_range(body, req_from, cached_from)?;
-                let gap_rsp = client.data_source_query(&gap_body).await?;
+                let gap_rsp = fetch_for_mode(client, &gap_body, chunked).await?;
                 let merged = merge_responses(&gap_rsp, &reused)?;
                 store(key, req_from, req_to, &merged);
                 return Ok(merged);
@@ -583,8 +708,8 @@ pub async fn get_or_fetch(
                 let left_body = body_for_time_range(body, req_from, cached_from)?;
                 let right_body = body_for_time_range(body, cached_to, req_to)?;
                 let (left_rsp, right_rsp) = tokio::try_join!(
-                    client.data_source_query(&left_body),
-                    client.data_source_query(&right_body),
+                    fetch_for_mode(client, &left_body, chunked),
+                    fetch_for_mode(client, &right_body, chunked),
                 )?;
                 let merged_left = merge_responses(&left_rsp, &reused)?;
                 let merged = merge_responses(&merged_left, &right_rsp)?;
@@ -599,7 +724,7 @@ pub async fn get_or_fetch(
         info!(key, "upstream history cache cold miss");
     }
 
-    let rsp = client.data_source_query(body).await?;
+    let rsp = fetch_for_mode(client, body, chunked).await?;
     store(key, req_from, req_to, &rsp);
     Ok(rsp)
 }
@@ -739,6 +864,70 @@ mod tests {
         GrafanaQueryDataResponse { results }
     }
 
+    fn named_frame(name: &str, timestamp_ms: i64, value: f64) -> grafana_plugin_sdk::data::Frame {
+        use grafana_plugin_sdk::data::IntoField;
+        grafana_plugin_sdk::data::Frame::new(name)
+            .with_field(vec![timestamp_ms].into_field("Time"))
+            .with_field(vec![value].into_field("Value"))
+    }
+
+    #[test]
+    fn fixed_resolution_ranges_are_split_at_ten_thousand_points() {
+        let body = sample_body(0, 25_000 * 60_000);
+        let ranges = chunk_ranges(&body);
+        assert_eq!(ranges.first().unwrap().0, body.from);
+        assert_eq!(ranges.last().unwrap().1, body.to);
+        assert!(ranges.len() > 1);
+        for (from, to) in &ranges {
+            let inclusive_points = (to.timestamp_millis() - from.timestamp_millis()) / 60_000 + 1;
+            assert!(inclusive_points <= MAX_UPSTREAM_POINTS_PER_CHUNK);
+            assert_eq!(from.timestamp_millis() % 60_000, 0);
+            assert_eq!(to.timestamp_millis() % 60_000, 0);
+        }
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0);
+        }
+    }
+
+    #[test]
+    fn upstream_request_gate_has_the_documented_process_wide_capacity() {
+        assert_eq!(MAX_CONCURRENT_UPSTREAM_REQUESTS, 4);
+        assert_eq!(UPSTREAM_REQUEST_LIMIT.available_permits(), 4);
+    }
+
+    #[test]
+    fn response_merge_matches_series_identity_not_frame_order() {
+        let left = GrafanaQueryDataResponse {
+            results: HashMap::from([(
+                "A".to_string(),
+                GrafanaDataResponse {
+                    frames: vec![named_frame("cpu-a", 0, 1.0), named_frame("cpu-b", 0, 10.0)],
+                },
+            )]),
+        };
+        let right = GrafanaQueryDataResponse {
+            results: HashMap::from([(
+                "A".to_string(),
+                GrafanaDataResponse {
+                    frames: vec![
+                        named_frame("cpu-b", 60_000, 11.0),
+                        named_frame("cpu-a", 60_000, 2.0),
+                    ],
+                },
+            )]),
+        };
+        let merged = merge_responses(&left, &right).unwrap();
+        let frames = &merged.results["A"].frames;
+        assert_eq!(frames[0].name, "cpu-a");
+        assert_eq!(frames[1].name, "cpu-b");
+        assert_eq!(crate::frame_ops::frame_row_count(&frames[0]), 2);
+        assert_eq!(crate::frame_ops::frame_row_count(&frames[1]), 2);
+        let (_, cpu_a) = crate::frame_ops::extract_timeseries(&frames[0]).unwrap();
+        let (_, cpu_b) = crate::frame_ops::extract_timeseries(&frames[1]).unwrap();
+        assert_eq!(cpu_a, vec![1.0, 2.0]);
+        assert_eq!(cpu_b, vec![10.0, 11.0]);
+    }
+
     #[test]
     fn persist_round_trip_and_hydrate() {
         init_persist_storage();
@@ -760,16 +949,17 @@ mod tests {
         // hydrate helper that production uses after a successful load.
         let hydrated = hydrate_loaded_entry(key, loaded, from, to).expect("hydrate");
         assert_eq!(hydrated.0, SlidePlan::Cover);
-        assert!(global().lock().unwrap().get_entry(key, Instant::now()).is_some());
+        assert!(global()
+            .lock()
+            .unwrap()
+            .get_entry(key, Instant::now())
+            .is_some());
     }
 
     #[test]
     fn durable_persist_disabled_in_trial_mode() {
         init_persist_storage();
-        assert!(
-            rsod_storage::is_trial_mode(),
-            "tests use trial SQLite"
-        );
+        assert!(rsod_storage::is_trial_mode(), "tests use trial SQLite");
         assert!(!durable_persist_enabled());
     }
 
@@ -785,7 +975,10 @@ mod tests {
             response: empty_rsp(),
         };
         GlobalStorage::new()
-            .save(&persist_storage_key(key), &serde_json::to_vec(&blob).unwrap())
+            .save(
+                &persist_storage_key(key),
+                &serde_json::to_vec(&blob).unwrap(),
+            )
             .unwrap();
         assert!(persist_load(key).is_none());
     }

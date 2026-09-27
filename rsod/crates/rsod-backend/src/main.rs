@@ -6,6 +6,8 @@
 mod client;
 mod config;
 mod contract;
+mod detection_query_plan;
+mod display_aggregation;
 mod frame_ops;
 mod health;
 mod history_cache;

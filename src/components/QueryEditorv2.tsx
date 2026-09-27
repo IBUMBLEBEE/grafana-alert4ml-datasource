@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Alert, InlineField, Stack, Combobox, Collapse, Input, type ComboboxOption } from '@grafana/ui';
+import { Alert, Button, InlineField, Stack, Combobox, Collapse, Input, type ComboboxOption } from '@grafana/ui';
 import { QueryEditorProps, DataSourceApi, CoreApp } from '@grafana/data';
 import { getTemplateSrv, getDataSourceSrv } from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
@@ -10,17 +10,15 @@ import {
   ALERT4ML_DATA_SOURCE_TYPE,
   SUPPORT_DETECT_OPTIONS,
   Alert4MLDetectType,
-  RsodParams,
-  DEFAULT_RSOD_PARAMS,
   Alert4MLSupportDetect,
   DEFAULT_TIME_RANGE,
   Alert4MLBaselineDetectType,
   UniqueKeys,
   ForecastParams,
   DEFAULT_FORECAST_PARAMS,
-  FunnelParams,
-  DEFAULT_FUNNEL_PARAMS,
-  DEFAULT_FUNNEL_HISTORY,
+  KmeansParams,
+  DEFAULT_KMEANS_PARAMS,
+  DEFAULT_KMEANS_HISTORY,
   DEFAULT_BASELINE_HISTORY,
   DynamicsParams,
   DEFAULT_DYNAMICS_PARAMS,
@@ -29,25 +27,14 @@ import {
   HISTORY_TIME_RANGE_OPTIONS,
   Alert4MLOutputMode,
   OUTPUT_MODE_OPTIONS,
+  LEGACY_FUNNEL_DETECT_TYPE,
 } from '../types';
-import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
 import { Dynamics } from './Dynamics';
 import { Forecast } from './Forecast';
-import { Funnel } from './Funnel';
+import { Kmeans } from './Kmeans';
 
 type Props = QueryEditorProps<DataSource, Alert4MLQuery, Alert4MLDataSourceOptions>;
-
-function defaultFunnelParams(app?: CoreApp): FunnelParams {
-  const params = { ...DEFAULT_FUNNEL_PARAMS };
-  if (app === CoreApp.UnifiedAlerting || app === CoreApp.CloudAlerting) {
-    params.evalWindowSecs = 600;
-    // Grafana owns pending/firing state and notification deduplication. Keep
-    // detector output stateless so repeated evaluations remain 0/1 truth.
-    params.alertOutputMode = 'full';
-  }
-  return params;
-}
 
 // query is of type <Alert4MLQuery | AlertDataQuery>; branch on the query type to handle Alert4MLQuery vs AlertDataQuery
 export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app, datasource }: Props) {
@@ -167,7 +154,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   // Cache hyperParams (+ history) per detectType so switching models restores
   // the user's last edits instead of resetting to defaults.
   type CachedModelState = {
-    hyperParams: RsodParams | DynamicsParams | ForecastParams | FunnelParams;
+    hyperParams: Alert4MLQuery['hyperParams'];
     historyTimeRange: HistoryDuration;
   };
   const modelParamsCacheRef = useRef<Record<string, CachedModelState>>({});
@@ -188,9 +175,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
-    detectType = Alert4MLDetectType.Funnel,
+    detectType = Alert4MLDetectType.Kmeans,
     outputMode = Alert4MLOutputMode.Visualization,
-    hyperParams = defaultFunnelParams(app),
+    hyperParams = { ...DEFAULT_KMEANS_PARAMS },
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
 
@@ -231,8 +218,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       onChange({
         ...query,
         supportDetect: supportDetect || Alert4MLSupportDetect.MachineLearning,
-        detectType: detectType || Alert4MLDetectType.Funnel,
-        hyperParams: hyperParams || defaultFunnelParams(app),
+        detectType: detectType || Alert4MLDetectType.Kmeans,
+        hyperParams: hyperParams || { ...DEFAULT_KMEANS_PARAMS },
+        detectIntervalMs: query.detectIntervalMs || 60_000,
         historyTimeRange: historyTimeRange,
         uniqueKeys: newUniqueKeys,
       });
@@ -251,27 +239,24 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
 
   // Get the default hyperParams for a given detectType
   const getDefaultHyperParamsByDetectType = useCallback(
-    (detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams | FunnelParams => {
+    (detectTypeValue: string): Alert4MLQuery['hyperParams'] => {
       if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
         return DEFAULT_DYNAMICS_PARAMS;
       }
-      if (detectTypeValue === Alert4MLDetectType.Funnel) {
-        return defaultFunnelParams(app);
-      }
-      if (detectTypeValue === Alert4MLDetectType.Outlier) {
-        return DEFAULT_RSOD_PARAMS;
+      if (detectTypeValue === Alert4MLDetectType.Kmeans) {
+        return { ...DEFAULT_KMEANS_PARAMS };
       }
       if (detectTypeValue === Alert4MLDetectType.Forecast) {
         return DEFAULT_FORECAST_PARAMS;
       }
-      return DEFAULT_RSOD_PARAMS;
+      return { ...DEFAULT_KMEANS_PARAMS };
     },
-    [app]
+    []
   );
 
   const getDefaultHistoryByDetectType = useCallback((detectTypeValue: string): HistoryDuration => {
-    if (detectTypeValue === Alert4MLDetectType.Funnel) {
-      return DEFAULT_FUNNEL_HISTORY;
+    if (detectTypeValue === Alert4MLDetectType.Kmeans) {
+      return DEFAULT_KMEANS_HISTORY;
     }
     if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics || detectTypeValue === Alert4MLDetectType.Forecast) {
       return DEFAULT_BASELINE_HISTORY;
@@ -317,7 +302,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     const newDetectType =
       (preferred && types.some((t) => t.value === preferred) ? preferred : undefined) ||
       (types[0]?.value as string | undefined) ||
-      Alert4MLDetectType.Funnel;
+      Alert4MLDetectType.Kmeans;
     const restored = resolveModelState(newDetectType);
 
     lastDetectTypeBySupportRef.current[opt.value] = newDetectType;
@@ -349,10 +334,11 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       detectType: opt.value,
       hyperParams: restored.hyperParams,
       historyTimeRange: restored.historyTimeRange,
+      detectIntervalMs: opt.value === Alert4MLDetectType.Kmeans ? query.detectIntervalMs || 60_000 : query.detectIntervalMs,
     });
   };
 
-  const onHyperParamsChange = (params: RsodParams | DynamicsParams | ForecastParams | FunnelParams) => {
+  const onHyperParamsChange = (params: Alert4MLQuery['hyperParams']) => {
     if (params) {
       modelParamsCacheRef.current[detectType] = {
         hyperParams: params,
@@ -376,20 +362,20 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   };
 
   const onDetectIntervalChange = (opt: ComboboxOption<number>) => {
-    const ms = typeof opt.value === 'number' ? opt.value : 0;
+    const ms = typeof opt.value === 'number' ? opt.value : 60_000;
     runDebouncedQueryWithTempTargets({
-      detectIntervalMs: ms > 0 ? ms : undefined,
+      detectIntervalMs: detectType === Alert4MLDetectType.Kmeans ? Math.max(ms, 1) : ms > 0 ? ms : undefined,
     });
   };
 
   const detectIntervalOptions: Array<ComboboxOption<number>> = useMemo(
     () =>
-      DETECT_INTERVAL_OPTIONS.map((o) => ({
+      DETECT_INTERVAL_OPTIONS.filter((o) => detectType !== Alert4MLDetectType.Kmeans || o.value !== 0).map((o) => ({
         label: o.label ?? String(o.value),
         value: o.value as number,
         description: o.description,
       })),
-    []
+    [detectType]
   );
 
   const outputModeOptions: Array<ComboboxOption<Alert4MLOutputMode>> = useMemo(
@@ -500,6 +486,23 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       >
         <legend style={{ fontSize: 14, fontWeight: 500, padding: '0 6px', width: 'auto' }}>Alert4ML Detection</legend>
         <Stack direction="column" gap={1}>
+          {detectType === LEGACY_FUNNEL_DETECT_TYPE && (
+            <Alert title="Funnel has been removed" severity="warning" bottomSpacing={0}>
+              <Stack direction="column" gap={1}>
+                <span>
+                  Migrate this saved query to K-means. Its targets, labels, and output settings are retained; obsolete
+                  Funnel parameters are replaced and a new model starts at a fixed one-minute detection interval.
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => onDetectTypeChange({ label: 'K-means', value: Alert4MLDetectType.Kmeans })}
+                >
+                  Migrate to K-means
+                </Button>
+              </Stack>
+            </Alert>
+          )}
           {isAlerting && (
             <Alert
               title={
@@ -566,12 +569,16 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
             <InlineField
               label="Detect Interval"
               labelWidth={16}
-              tooltip="Fixed upstream scrape step for detection. Prefer a stable value (e.g. 1m) so zooming the panel does not change history resolution or detection results. Auto keeps Grafana's panel $__interval."
+              tooltip={
+                detectType === Alert4MLDetectType.Kmeans
+                  ? 'K-means training and inference use this fixed step. Panel zoom only changes display aggregation.'
+                  : "Fixed upstream scrape step for detection. Auto keeps Grafana's panel $__interval."
+              }
             >
               <Combobox
                 options={detectIntervalOptions}
                 onChange={onDetectIntervalChange}
-                value={query.detectIntervalMs ?? 0}
+                value={query.detectIntervalMs ?? (detectType === Alert4MLDetectType.Kmeans ? 60_000 : 0)}
                 width={18}
               />
             </InlineField>
@@ -608,15 +615,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
                 onParamsChange={(params) => params && onHyperParamsChange(params)}
               />
             )}
-            {detectType === Alert4MLDetectType.Funnel && (
-              <Funnel
-                params={(hyperParams as FunnelParams) || DEFAULT_FUNNEL_PARAMS}
-                onParamsChange={(params) => params && onHyperParamsChange(params)}
-              />
-            )}
-            {detectType === Alert4MLDetectType.Outlier && (
-              <RsodHyperParams
-                params={(hyperParams as RsodParams) || DEFAULT_RSOD_PARAMS}
+            {detectType === Alert4MLDetectType.Kmeans && (
+              <Kmeans
+                params={(hyperParams as KmeansParams) || DEFAULT_KMEANS_PARAMS}
                 onParamsChange={(params) => params && onHyperParamsChange(params)}
               />
             )}

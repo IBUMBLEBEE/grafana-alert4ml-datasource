@@ -35,8 +35,8 @@ cargo test --manifest-path scripts/mock-metrics/Cargo.toml
 | `scenario` | Use with | Shape |
 |------------|----------|--------|
 | `weekly` | Dynamics → Weekly | Weekday high / weekend low + business hours |
-| `daily` | Outlier | 24h sine |
-| `spike` | Outlier lite/full | Calm + known UTC spike windows |
+| `daily` | K-means | 24h sine |
+| `spike` | K-means | Calm + known UTC spike windows |
 | `trend` | Forecast | Slow drift + mild daily cycle |
 | `flat` | Negative control | Near-constant (expect low FP) |
 | `sparse` | Missing-data paths | ~40% gaps |

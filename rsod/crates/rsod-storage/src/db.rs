@@ -1,6 +1,6 @@
-use std::sync::{Mutex, OnceLock};
-use rusqlite::Connection as SqliteConnection;
 use postgres::{Client as PgClient, NoTls};
+use rusqlite::Connection as SqliteConnection;
+use std::sync::{Mutex, OnceLock};
 
 #[allow(missing_debug_implementations)]
 pub enum DbBackend {
@@ -39,4 +39,3 @@ pub fn init_postgres(dsn: &str) -> rsod_core::Result<&'static DbBackend> {
 
     Ok(DB_BACKEND.get().expect("DB_BACKEND must be initialized"))
 }
-

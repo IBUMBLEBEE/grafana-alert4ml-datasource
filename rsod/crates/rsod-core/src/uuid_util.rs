@@ -184,9 +184,11 @@ mod tests {
     #[test]
     fn derive_uuid_matches_go() {
         // Same inputs as the Go backend's `DeriveUUID` — verified against Go.
-        let derived =
-            derive_uuid("c138e166-a5c0-5c75-9528-da1950d6a57e", "{\"periods\":[24,168]}")
-                .unwrap();
+        let derived = derive_uuid(
+            "c138e166-a5c0-5c75-9528-da1950d6a57e",
+            "{\"periods\":[24,168]}",
+        )
+        .unwrap();
         // Value is a valid UUID; exact byte-compat is asserted in the backend
         // test that exercises the full forecast training-key chain.
         assert!(Uuid::parse_str(&derived).is_ok());

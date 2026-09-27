@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
+use crate::db::{get_backend, DbBackend};
 use rsod_core::{ModelStorage, RsodError};
-use crate::db::{DbBackend, get_backend};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
@@ -33,7 +33,10 @@ impl Model {
         }
     }
 
-    fn write_sqlite(&self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> rsod_core::Result<()> {
+    fn write_sqlite(
+        &self,
+        mutex: &std::sync::Mutex<rusqlite::Connection>,
+    ) -> rsod_core::Result<()> {
         let db = mutex
             .lock()
             .map_err(|_| RsodError::Storage("Failed to lock SQLite database".into()))?;
@@ -43,14 +46,10 @@ impl Model {
                 "INSERT OR REPLACE INTO models (uuid, artifacts, updated_at) \
                  VALUES (?1, ?2, strftime('%s', 'now'))",
             )
-            .map_err(|e| {
-                RsodError::Storage(format!("Prepare insert statement failed: {}", e))
-            })?;
+            .map_err(|e| RsodError::Storage(format!("Prepare insert statement failed: {}", e)))?;
 
         stmt.execute((&self.uuid, &self.artifacts))
-            .map_err(|e| {
-                RsodError::Storage(format!("Execute insert failed: {}", e))
-            })?;
+            .map_err(|e| RsodError::Storage(format!("Execute insert failed: {}", e)))?;
         Ok(())
     }
 
@@ -72,29 +71,27 @@ impl Model {
         Ok(())
     }
 
-    fn read_sqlite(&mut self, mutex: &std::sync::Mutex<rusqlite::Connection>) -> rsod_core::Result<()> {
+    fn read_sqlite(
+        &mut self,
+        mutex: &std::sync::Mutex<rusqlite::Connection>,
+    ) -> rsod_core::Result<()> {
         let db = mutex
             .lock()
             .map_err(|_| RsodError::Storage("Failed to lock SQLite database".into()))?;
 
         let mut stmt = db
             .prepare("SELECT uuid, artifacts FROM models WHERE uuid = ?")
-            .map_err(|e| {
-                RsodError::Storage(format!("Prepare select statement failed: {}", e))
-            })?;
+            .map_err(|e| RsodError::Storage(format!("Prepare select statement failed: {}", e)))?;
 
         let rows = stmt
             .query_map([&self.uuid], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
             })
-            .map_err(|e| {
-                RsodError::Storage(format!("Query map failed: {}", e))
-            })?;
+            .map_err(|e| RsodError::Storage(format!("Query map failed: {}", e)))?;
 
         for row_result in rows {
-            let (uuid, artifacts) = row_result.map_err(|e| {
-                RsodError::Storage(format!("Row processing failed: {}", e))
-            })?;
+            let (uuid, artifacts) = row_result
+                .map_err(|e| RsodError::Storage(format!("Row processing failed: {}", e)))?;
             self.uuid = uuid;
             self.artifacts = artifacts;
         }
@@ -102,7 +99,10 @@ impl Model {
         Ok(())
     }
 
-    fn read_postgres(&mut self, mutex: &std::sync::Mutex<postgres::Client>) -> rsod_core::Result<()> {
+    fn read_postgres(
+        &mut self,
+        mutex: &std::sync::Mutex<postgres::Client>,
+    ) -> rsod_core::Result<()> {
         let mut client = mutex
             .lock()
             .map_err(|_| RsodError::Storage("Failed to lock PostgreSQL client".into()))?;
@@ -112,9 +112,7 @@ impl Model {
                 "SELECT uuid, artifacts FROM models WHERE uuid = $1",
                 &[&self.uuid],
             )
-            .map_err(|e| {
-                RsodError::Storage(format!("PostgreSQL query failed: {}", e))
-            })?;
+            .map_err(|e| RsodError::Storage(format!("PostgreSQL query failed: {}", e)))?;
 
         for row in rows {
             self.uuid = row.get(0);
@@ -160,16 +158,16 @@ impl ModelStorage for GlobalStorage {
         let backend = get_backend();
         match backend {
             DbBackend::Sqlite(mutex) => {
-                let db = mutex.lock().map_err(|_| {
-                    RsodError::Storage("Failed to lock SQLite database".into())
-                })?;
+                let db = mutex
+                    .lock()
+                    .map_err(|_| RsodError::Storage("Failed to lock SQLite database".into()))?;
                 db.execute("DELETE FROM models WHERE uuid = ?1", [uuid])
                     .map_err(|e| RsodError::Storage(format!("SQLite delete failed: {}", e)))?;
             }
             DbBackend::Postgres(mutex) => {
-                let mut client = mutex.lock().map_err(|_| {
-                    RsodError::Storage("Failed to lock PostgreSQL client".into())
-                })?;
+                let mut client = mutex
+                    .lock()
+                    .map_err(|_| RsodError::Storage("Failed to lock PostgreSQL client".into()))?;
                 client
                     .execute("DELETE FROM models WHERE uuid = $1", &[&uuid])
                     .map_err(|e| RsodError::Storage(format!("PostgreSQL delete failed: {}", e)))?;

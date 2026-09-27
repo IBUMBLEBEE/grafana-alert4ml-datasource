@@ -8,9 +8,9 @@
 
 首先要纠正“TypeSafe 开源了 Jev”这一前提：用户给出的 [`yibie/jev-engineering-zh`](https://github.com/yibie/jev-engineering-zh#jev-%E5%B7%A5%E7%A8%8B%E5%AD%A6%E4%B8%BA-coding-agent-%E8%80%8C%E4%BD%9C) 是第三方中文翻译/独立汇编，仓库自己明确声明与 TypeSafe 无隶属关系、未获背书；它是文档，不是可安装的模型、SDK 或运行时。Jev 本身是 TypeSafe 托管的商业 API 服务。官方开源的是 MIT 许可的 Python 与 JavaScript/TypeScript 客户端 SDK，而不是模型权重、训练代码或自托管推理实现。TypeSafe 的客户协议也把产品定义为 TypeSafe-hosted Web/API 服务，并只授予有限的访问和集成许可。[官方 SDK 列表](https://docs.typesafe.ai/sdk) · [官方 GitHub 组织](https://github.com/typesafe-ai) · [客户协议 §§1–2](https://typesafe.ai/legal/mca)
 
-对本项目更关键的是任务形状：Jev 擅长“给定文字或结构化业务状态，从预先声明的选项中判断”，而现有 `rsod-classifier` 在本地对数值序列执行统计量、平稳性、趋势、季节性和周期性分析，再由确定性规则选择 Baseline / Outlier / Forecast。TypeSafe 官方明确警告 Jev 1.13 不擅长数学、计数和数值精度，推荐把算术留在代码里。因此，不应把原始时间戳和采样值交给 Jev，让它取代 ADF/KPSS、STL、FFT 或现有路由规则。[Jev 1.13 已知限制](https://docs.typesafe.ai/model-jaggedness/jev-1.13)
+对本项目更关键的是任务形状：Jev 擅长“给定文字或结构化业务状态，从预先声明的选项中判断”，而现有 `rsod-classifier` 在本地对数值序列执行统计量、平稳性、趋势、季节性和周期性分析。TypeSafe 官方明确警告 Jev 1.13 不擅长数学、计数和数值精度，推荐把算术留在代码里。因此，不应把原始时间戳和采样值交给 Jev，让它取代 ADF/KPSS、STL、FFT 或本地检测算法。[Jev 1.13 已知限制](https://docs.typesafe.ai/model-jaggedness/jev-1.13)
 
-它可能有价值的窄场景是：在本地统计特征之外，还需要根据指标含义、标签、业务意图、风险等级或运行策略，在一个闭集里做语义判断。例如，从 `baseline`、`outlier`、`forecast`、`defer_to_local` 中选择一个候选，并在低 confidence 时交回现有决策器。若输入只有数值特征且映射规则已经明确，直接用 Rust 规则或训练一个以历史模型表现为标签的监督式 selector，会比增加远程 Jev 依赖更简单、可复现。
+它可能有价值的窄场景是：在本地统计特征之外，还需要根据指标含义、标签、业务意图、风险等级或运行策略，在一个闭集里做语义判断。例如，从 `dynamics`、`kmeans`、`forecast`、`defer_to_local` 中选择一个候选，并在低 confidence 时交回本地策略。若输入只有数值特征且映射规则已经明确，直接用 Rust 规则或训练一个以历史模型表现为标签的监督式 selector，会比增加远程 Jev 依赖更简单、可复现。
 
 ## Jev 实际是什么
 
@@ -51,7 +51,7 @@ Content-Type: application/json
       "instructions": "Which available detector best matches this state?",
       "criteria": {
         "baseline": "stable or irregular series where a robust local baseline is preferred",
-        "outlier": "stationary or seasonal residual anomaly detection",
+        "kmeans": "fixed-resolution distance-based anomaly detection",
         "forecast": "trend-aware or seasonal-with-trend prediction",
         "defer_to_local": "evidence is insufficient or ambiguous"
       }
@@ -99,10 +99,7 @@ TypeSafe 公开到的技术细节只到以下层级：新模型架构、并行 s
 
 尽管仓库位于 Go 工作区路径，项目接口说明已记录 Go backend 被 Rust `rsod-backend` 替换。当前调用链是 TypeScript Grafana 前端 → Rust plugin backend → Rust 算法 crates；Jev 不应接在浏览器前端，也没有新的 Go 层。[本项目接口说明](interfaces/README.md)
 
-现有模型选择已经有两个层次：
-
-1. [`rsod-classifier`](../rsod/crates/rsod-classifier/src/pipeline.rs) 在本地从数值序列计算统计量、平稳性、趋势、季节性和周期性，输出 `SeriesCharacteristic` 和规则式 confidence。
-2. [`rsod-core::decision`](../rsod/crates/rsod-core/src/decision.rs) 把 classification 映射为 Baseline / Outlier / Forecast 及预处理方案；当前 [`rsod-funnel`](../rsod/crates/rsod-funnel/src/pipeline.rs) 只在 L1 有 `Uncertain` 且启用 L2 时才走这条分类与路由路径。
+现有 [`rsod-classifier`](../rsod/crates/rsod-classifier/src/pipeline.rs) 在本地从数值序列计算统计量、平稳性、趋势、季节性和周期性，输出 `SeriesCharacteristic` 和规则式 confidence。检测器由产品配置在 Dynamics、K-means 与 Forecast 三者中显式选择，不存在自动算法路由层。
 
 这也是为什么“直接用 Jev 替换分类器”不划算：它会把低延迟、离线、可复现的数值判断改成依赖外网和供应商 API 的文本判断，而且恰好落在 Jev 官方列出的数值弱项上。Jev 更合理的角色是一个**可选的语义 policy router**：消费本地算法已经算好的离散/文字化特征，加上指标语义和业务策略，然后在已注册 engine 闭集里给出第二意见。
 
@@ -111,13 +108,13 @@ TypeSafe 公开到的技术细节只到以下层级：新模型架构、并行 s
 ```text
 raw series
     │
-    ├── 本地 rsod-classifier + rsod-core::decide ──────────┐
+    ├── 本地 rsod-classifier ──────────────────────────────┐
     │                                                     │
     └── 精简、离散化的事实 + metric 语义 ──> Jev Choice ──┤
                                                           ▼
                                          本地 policy / confidence gate
                                                           │
-                                    baseline | outlier | forecast | fallback
+                                    dynamics | kmeans | forecast | fallback
 ```
 
 Jev 只提供证据；Rust policy 决定是否采纳，并拥有超时、回退、审计和最终副作用。这里讨论的是检测算法路由，不包含 Prometheus rule / PromQL 推荐或自动建规则；该能力仍受 [ADR 0001](adr/0001-park-prometheus-static-alert-suggestions.md) 约束并保持不存在。
@@ -133,7 +130,7 @@ Jev 只提供证据；Rust policy 决定是否采纳，并拥有超时、回退�
 5. **强制回退**：超时、401/422、429/529、响应校验失败、低 confidence 或候选为 `defer_to_local` 时，一律使用现有 `decide()`。官方 HTTP contract 要求对 429/529 backoff，但 Grafana 告警查询不应为远程 selector 长时间重试。[API errors](https://docs.typesafe.ai/api#errors)
 6. **先观察、后授权**：shadow 阶段只记录 Jev 与本地选择的差异，不改变 detector。只有在自有历史数据上证明显著降低模型选择 regret，并通过中文输入、服务故障和负载测试后，才考虑让它处理低风险分支。
 
-当前 `rsod-funnel::funnel_detect` 把“是否触发 L2 → 分类 → 路由 → 执行”封装在同步算法调用里，而远程 Jev 是异步 I/O。正式接入时应在异步 `rsod-backend` 编排层调用 Jev，再把一个已经校验的可选 `RoutingOverride` 传入纯算法层；不要在同步 detector 内阻塞 HTTP，也不要让算法 crate 持有凭据。
+已移除的 Funnel 曾把“是否触发 L2 → 分类 → 路由 → 执行”封装在同步算法调用里。若未来接入远程 Jev，应在异步 `rsod-backend` 编排层调用，再把已校验的可选 `RoutingOverride` 传入纯算法层；不要在同步 detector 内阻塞 HTTP，也不要让算法 crate 持有凭据。
 
 ## 成熟度、维护状态和主要限制
 

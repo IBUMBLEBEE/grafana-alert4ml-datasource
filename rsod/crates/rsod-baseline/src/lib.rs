@@ -1,16 +1,17 @@
 pub mod dynamics;
 mod engine;
 
-use polars::prelude::*;
 use polars::datatypes::DataType;
+use polars::prelude::*;
 use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // Re-export shared column constants from rsod-core
-pub use rsod_core::{TIMESTAMP_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
-pub use engine::{parse_dynamics_hyper_params, force_link, DynamicsEngine, DynamicsHyperParams};
+pub use engine::{force_link, parse_dynamics_hyper_params, DynamicsEngine, DynamicsHyperParams};
+pub use rsod_core::{
+    ANOMALY_COL, BASELINE_VALUE_COL, LOWER_BOUND_COL, TIMESTAMP_COL, UPPER_BOUND_COL,
+};
 pub const METRIC_VALUE_COL: &str = rsod_core::VALUE_COL;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BaselineMethod {
@@ -65,7 +66,7 @@ impl BaselineOptions {
     }
 
     pub fn interval_mins(&self) -> u32 {
-        self.interval_mins.unwrap_or(60) 
+        self.interval_mins.unwrap_or(60)
     }
 
     pub fn confidence_level(&self) -> f64 {
@@ -84,7 +85,11 @@ impl BaselineOptions {
     pub fn validate(&self) -> rsod_core::Result<()> {
         if let Some(level) = self.confidence_level {
             if level < 50.0 || level > 99.0 {
-                return Err(format!("Confidence level must be between 50.0 and 99.0, current value: {}", level).into());
+                return Err(format!(
+                    "Confidence level must be between 50.0 and 99.0, current value: {}",
+                    level
+                )
+                .into());
             }
         }
         if let Some(interval) = self.interval_mins {
@@ -94,7 +99,9 @@ impl BaselineOptions {
         }
         if let Some(multiplier) = self.std_dev_multiplier {
             if multiplier <= 0.0 {
-                return Err("Standard deviation multiplier must be greater than 0".to_string().into());
+                return Err("Standard deviation multiplier must be greater than 0"
+                    .to_string()
+                    .into());
             }
         }
         Ok(())
@@ -107,24 +114,32 @@ impl Default for BaselineOptions {
     }
 }
 
-
-pub fn baseline_detect(data: TimeSeriesInput<'_>, history_data: TimeSeriesInput<'_>, options: &BaselineOptions) -> rsod_core::Result<DetectionResult> {
+pub fn baseline_detect(
+    data: TimeSeriesInput<'_>,
+    history_data: TimeSeriesInput<'_>,
+    options: &BaselineOptions,
+) -> rsod_core::Result<DetectionResult> {
     // Convert TimeSeriesInput to internal Polars DataFrames
     let df = input_to_dataframe(&data);
     let history_df = input_to_dataframe(&history_data);
-    
+
     let result_df = calculate_dynamic_baseline(df, history_df, options)?;
     Ok(dataframe_to_result(&result_df)?)
 }
 
 /// Convert TimeSeriesInput to Polars DataFrame (internal bridge).
 fn input_to_dataframe(input: &TimeSeriesInput<'_>) -> DataFrame {
-    let timestamps: Vec<i64> = input.timestamps.iter().map(|&t| (t * 1000.0) as i64).collect();
+    let timestamps: Vec<i64> = input
+        .timestamps
+        .iter()
+        .map(|&t| (t * 1000.0) as i64)
+        .collect();
     let values: Vec<f64> = input.values.to_vec();
     DataFrame::new(vec![
         Series::new(TIMESTAMP_COL.into(), timestamps).into(),
         Series::new(METRIC_VALUE_COL.into(), values).into(),
-    ]).unwrap()
+    ])
+    .unwrap()
 }
 
 /// Convert a baseline result DataFrame to DetectionResult (internal bridge).
@@ -185,6 +200,9 @@ fn dataframe_to_result(df: &DataFrame) -> rsod_core::Result<DetectionResult> {
         // that is sufficient for the visualization adapter's sparse red dots.
         observed_values: anomaly_values,
         anomalies,
+        scores: None,
+        validity: None,
+        diagnostics: None,
         upper_bound: Some(upper_bound),
         lower_bound: Some(lower_bound),
     })
@@ -201,13 +219,17 @@ fn dataframe_to_result(df: &DataFrame) -> rsod_core::Result<DetectionResult> {
 /// - Daily: Group by weekday and hour, aggregate all historical data with the same weekday+hour
 /// - Weekly: Group by weekday and hour, same as Daily
 /// - Monthly: Group by day of month and hour, aggregate all historical data with the same day of month+hour
-pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options: &BaselineOptions) -> rsod_core::Result<DataFrame> {
+pub fn calculate_dynamic_baseline(
+    df: DataFrame,
+    history_df: DataFrame,
+    options: &BaselineOptions,
+) -> rsod_core::Result<DataFrame> {
     // If trend type is None, return original data directly without any baseline calculation
     if matches!(options.trend_type, TrendType::None) {
         return Ok(df
             .lazy()
             .select([
-                col(TIMESTAMP_COL), // Keep timestamp column
+                col(TIMESTAMP_COL),                      // Keep timestamp column
                 lit(f64::NAN).alias(BASELINE_VALUE_COL), // For None type, baseline value is NaN
                 lit(f64::NAN).alias(LOWER_BOUND_COL), // Lower bound of confidence interval is NaN
                 lit(f64::NAN).alias(UPPER_BOUND_COL), // Upper bound of confidence interval is NaN
@@ -224,7 +246,9 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
         .i64()
         .map_err(|_| RsodError::Preprocessing("timestamp column type invalid".into()))?
         .min()
-        .ok_or_else(|| RsodError::Preprocessing("empty df; cannot compute start timestamp".into()))?;
+        .ok_or_else(|| {
+            RsodError::Preprocessing("empty df; cannot compute start timestamp".into())
+        })?;
 
     let lookback_days: i64 = match options.trend_type {
         TrendType::Daily => 30,
@@ -238,8 +262,14 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
     // --- Step 2: Define seasonal grouping keys ---
     let (key_name_opt, key_expr_opt): (Option<&str>, Option<Expr>) = match options.trend_type {
         TrendType::Daily => (None, None), // Aggregate only by hour
-        TrendType::Weekly => (Some("day_of_week"), Some(col("ts_dt").dt().weekday().alias("day_of_week"))),
-        TrendType::Monthly => (Some("day_of_month"), Some(col("ts_dt").dt().day().alias("day_of_month"))),
+        TrendType::Weekly => (
+            Some("day_of_week"),
+            Some(col("ts_dt").dt().weekday().alias("day_of_week")),
+        ),
+        TrendType::Monthly => (
+            Some("day_of_month"),
+            Some(col("ts_dt").dt().day().alias("day_of_month")),
+        ),
         TrendType::None => (None, None), // No seasonal grouping, aggregate only by hour
     };
 
@@ -252,8 +282,10 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
         // Calculate interval upper bound (e.g., interval=15 => 15,30,45,60), interval=60 => always 60
         let minute_col = col("ts_dt").dt().minute().cast(DataType::Int64);
         let interval_lit = lit(interval_mins);
-        let computed_bucket = (((minute_col.clone() + (interval_lit.clone() - lit(1i64))) / interval_lit.clone())
-            .cast(DataType::Int64)) * interval_lit.clone();
+        let computed_bucket = (((minute_col.clone() + (interval_lit.clone() - lit(1i64)))
+            / interval_lit.clone())
+        .cast(DataType::Int64))
+            * interval_lit.clone();
         let bucket_nonzero = when(minute_col.clone().eq(lit(0i64)))
             .then(interval_lit.clone())
             .otherwise(computed_bucket.clone());
@@ -262,72 +294,77 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
             .otherwise(bucket_nonzero)
             .alias("interval_end_minute");
 
-        let mut lf = df.lazy()
-            .with_columns([
-                col(TIMESTAMP_COL).cast(DataType::Datetime(TimeUnit::Milliseconds, None)).alias("ts_dt"),
-            ])
-            .with_columns([
-                col("ts_dt").dt().hour().alias("hour"),
-            ]);
-        if let Some(expr) = key_expr_opt.clone() { lf = lf.with_columns([expr]); }
+        let mut lf = df
+            .lazy()
+            .with_columns([col(TIMESTAMP_COL)
+                .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
+                .alias("ts_dt")])
+            .with_columns([col("ts_dt").dt().hour().alias("hour")]);
+        if let Some(expr) = key_expr_opt.clone() {
+            lf = lf.with_columns([expr]);
+        }
         lf.with_columns([
             // Always generate interval_end_minute; when interval=60, column value is always 60
             interval_end_minute,
         ])
     };
-    let mut history_lazy = history_df.lazy()
-        .with_columns([
-            col(TIMESTAMP_COL).cast(DataType::Datetime(TimeUnit::Milliseconds, None)).alias("ts_dt"),
-        ])
-        .with_columns([
-            col("ts_dt").dt().hour().alias("hour"),
-        ]);
-    if let Some(expr) = key_expr_opt.clone() { history_lazy = history_lazy.with_columns([expr]); }
+    let mut history_lazy = history_df
+        .lazy()
+        .with_columns([col(TIMESTAMP_COL)
+            .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
+            .alias("ts_dt")])
+        .with_columns([col("ts_dt").dt().hour().alias("hour")]);
+    if let Some(expr) = key_expr_opt.clone() {
+        history_lazy = history_lazy.with_columns([expr]);
+    }
     history_lazy = history_lazy
-        .with_columns([
-            (col(METRIC_VALUE_COL) * col(METRIC_VALUE_COL)).alias("value_sq"),
-        ])
+        .with_columns([(col(METRIC_VALUE_COL) * col(METRIC_VALUE_COL)).alias("value_sq")])
         // Filter historical data time window (based on original timestamp column in milliseconds)
-        .filter(col(TIMESTAMP_COL).gt_eq(lit(start_ms)).and(col(TIMESTAMP_COL).lt(lit(end_ms))));
+        .filter(
+            col(TIMESTAMP_COL)
+                .gt_eq(lit(start_ms))
+                .and(col(TIMESTAMP_COL).lt(lit(end_ms))),
+        );
 
     // --- Step 3: Calculate baseline and custom standard deviation using historical data ---
     let history_baseline = {
         let mut group_keys: Vec<Expr> = vec![];
-        if let Some(key_name) = key_name_opt { group_keys.push(col(key_name)); }
+        if let Some(key_name) = key_name_opt {
+            group_keys.push(col(key_name));
+        }
         group_keys.push(col("hour"));
 
         history_lazy
-        .group_by_stable(group_keys)
-        .agg([
-            col(METRIC_VALUE_COL).sum().alias("A_sum"),
-            col("value_sq").sum().alias("B_sum_sq"),
-            col(METRIC_VALUE_COL).count().alias("N_count"),
-        ])
-        .with_columns([
-            (col("A_sum") / col("N_count").cast(DataType::Float64)).alias(BASELINE_VALUE_COL),
-        ])
-        .with_columns([
-            (
-                (col("B_sum_sq") - (col("A_sum").pow(2) / col("N_count").cast(DataType::Float64)))
-                    / col("N_count").cast(DataType::Float64)
-            )
+            .group_by_stable(group_keys)
+            .agg([
+                col(METRIC_VALUE_COL).sum().alias("A_sum"),
+                col("value_sq").sum().alias("B_sum_sq"),
+                col(METRIC_VALUE_COL).count().alias("N_count"),
+            ])
+            .with_columns([
+                (col("A_sum") / col("N_count").cast(DataType::Float64)).alias(BASELINE_VALUE_COL)
+            ])
+            .with_columns([((col("B_sum_sq")
+                - (col("A_sum").pow(2) / col("N_count").cast(DataType::Float64)))
+                / col("N_count").cast(DataType::Float64))
             .sqrt()
-            .alias("Custom_Standard_Deviation"),
-        ])
-        .select({
-            let mut cols: Vec<Expr> = vec![];
-            if let Some(key_name) = key_name_opt { cols.push(col(key_name)); }
-            cols.push(col("hour"));
-            cols.push(col(BASELINE_VALUE_COL));
-            cols.push(col("Custom_Standard_Deviation"));
-            cols
-        })
+            .alias("Custom_Standard_Deviation")])
+            .select({
+                let mut cols: Vec<Expr> = vec![];
+                if let Some(key_name) = key_name_opt {
+                    cols.push(col(key_name));
+                }
+                cols.push(col("hour"));
+                cols.push(col(BASELINE_VALUE_COL));
+                cols.push(col("Custom_Standard_Deviation"));
+                cols
+            })
     };
 
     // --- Step 4: Calculate statistics for current data and left join with historical baseline ---
     let current_stats = {
         let mut current_group_keys: Vec<Expr> = vec![];
-        
+
         // Determine grouping strategy based on trend type
         match options.trend_type {
             TrendType::Daily => {
@@ -335,42 +372,45 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
                 current_group_keys.push(col("ts_dt").dt().date().alias("date"));
                 current_group_keys.push(col("hour"));
                 current_group_keys.push(col("interval_end_minute"));
-            },
+            }
             _ => {
                 // Weekly/Monthly: Group by seasonal key+hour
-                if let Some(key_name) = key_name_opt { 
-                    current_group_keys.push(col(key_name)); 
+                if let Some(key_name) = key_name_opt {
+                    current_group_keys.push(col(key_name));
                 }
-        current_group_keys.push(col("hour"));
-        current_group_keys.push(col("interval_end_minute"));
+                current_group_keys.push(col("hour"));
+                current_group_keys.push(col("interval_end_minute"));
             }
         }
 
         df_lazy
-        .group_by_stable(current_group_keys)
-        .agg([
-            col(METRIC_VALUE_COL).sum().alias("curr_sum"),
-            col(METRIC_VALUE_COL).count().alias("curr_count"),
-            col(TIMESTAMP_COL).first().alias(TIMESTAMP_COL), // Keep first timestamp
-        ])
-        .with_columns([
-            (col("curr_sum") / col("curr_count").cast(DataType::Float64)).alias("Current_Value"),
-        ])
+            .group_by_stable(current_group_keys)
+            .agg([
+                col(METRIC_VALUE_COL).sum().alias("curr_sum"),
+                col(METRIC_VALUE_COL).count().alias("curr_count"),
+                col(TIMESTAMP_COL).first().alias(TIMESTAMP_COL), // Keep first timestamp
+            ])
+            .with_columns([
+                (col("curr_sum") / col("curr_count").cast(DataType::Float64))
+                    .alias("Current_Value"),
+            ])
     };
 
     // Dynamic sort keys
     let _sort_cols: Vec<Expr> = {
         let mut cols: Vec<Expr> = vec![];
-        
+
         // Add sort keys based on trend type
         match options.trend_type {
             TrendType::Daily => {
                 cols.push(col("date"));
                 cols.push(col("hour"));
                 cols.push(col("interval_end_minute"));
-            },
+            }
             _ => {
-                if let Some(key_name) = key_name_opt { cols.push(col(key_name)); }
+                if let Some(key_name) = key_name_opt {
+                    cols.push(col(key_name));
+                }
                 cols.push(col("hour"));
                 cols.push(col("interval_end_minute"));
             }
@@ -381,30 +421,35 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
     // Get standard deviation multiplier (prefer std_dev_multiplier, if not set then use confidence_level conversion)
     let multiplier = options.std_dev_multiplier.unwrap_or(2.0);
     let allow_negative = options.allow_negative_bounds.unwrap_or(false);
-    
+
     let result = current_stats
         .join(
             history_baseline,
             {
                 let mut left_on: Vec<Expr> = vec![];
-                if let Some(key_name) = key_name_opt { left_on.push(col(key_name)); }
+                if let Some(key_name) = key_name_opt {
+                    left_on.push(col(key_name));
+                }
                 left_on.push(col("hour"));
                 left_on
             },
             {
                 let mut right_on: Vec<Expr> = vec![];
-                if let Some(key_name) = key_name_opt { right_on.push(col(key_name)); }
+                if let Some(key_name) = key_name_opt {
+                    right_on.push(col(key_name));
+                }
                 right_on.push(col("hour"));
                 right_on
             },
-            JoinArgs::new(JoinType::Left)
+            JoinArgs::new(JoinType::Left),
         )
         .with_columns([
             // Calculate upper and lower bounds: ŷ ± multiplier * σ̂
             // Where ŷ is Baseline_Value, multiplier is standard deviation multiplier (default 2.0), σ̂ is Custom_Standard_Deviation
             // Upper bound = baseline + multiplier * σ, lower bound = baseline - multiplier * σ
             {
-                let lower_bound_expr = col(BASELINE_VALUE_COL) - lit(multiplier) * col("Custom_Standard_Deviation");
+                let lower_bound_expr =
+                    col(BASELINE_VALUE_COL) - lit(multiplier) * col("Custom_Standard_Deviation");
                 // For non-negative metrics (such as error rate, request count), limit lower bound to not less than 0
                 // If allow_negative is true, do not limit
                 if allow_negative {
@@ -425,13 +470,15 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
             // If any value is null (e.g., no matching historical baseline), mark as normal (NaN)
             // NaN values are compatible with Golang math.NaN
             when(
-                col("Current_Value").is_not_null()
+                col("Current_Value")
+                    .is_not_null()
                     .and(col(LOWER_BOUND_COL).is_not_null())
                     .and(col(UPPER_BOUND_COL).is_not_null())
                     .and(
-                        col("Current_Value").lt(col(LOWER_BOUND_COL))
-                            .or(col("Current_Value").gt(col(UPPER_BOUND_COL)))
-                    )
+                        col("Current_Value")
+                            .lt(col(LOWER_BOUND_COL))
+                            .or(col("Current_Value").gt(col(UPPER_BOUND_COL))),
+                    ),
             )
             .then(col("Current_Value")) // Use original value when anomalous
             .otherwise(lit(f64::NAN)) // Use NaN when normal (compatible with Golang math.NaN)
@@ -439,10 +486,10 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
             .alias(ANOMALY_COL),
         ])
         .select([
-            col(TIMESTAMP_COL), // Keep timestamp column
+            col(TIMESTAMP_COL),      // Keep timestamp column
             col(BASELINE_VALUE_COL), // Keep baseline value column
-            col(LOWER_BOUND_COL), // Lower bound of confidence interval
-            col(UPPER_BOUND_COL), // Upper bound of confidence interval
+            col(LOWER_BOUND_COL),    // Lower bound of confidence interval
+            col(UPPER_BOUND_COL),    // Upper bound of confidence interval
             col(ANOMALY_COL), // Anomaly flag column (anomalous=original value, normal=NaN, compatible with Golang math.NaN)
         ])
         .sort_by_exprs([col(TIMESTAMP_COL)], SortMultipleOptions::default())
@@ -452,12 +499,11 @@ pub fn calculate_dynamic_baseline(df: DataFrame, history_df: DataFrame, options:
     Ok(result)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use rsod_core::{OwnedTimeSeries, TimeSeriesInput};
-    use rsod_utils::eval::{self, OutlierMetrics};
+    use rsod_utils::eval::{self, AnomalyMetrics};
     use std::collections::HashMap;
 
     const CURRENT_FIXTURE: &str = "realKnownCause/p7d_anom_curr_nyc_taxi.csv";
@@ -489,10 +535,8 @@ mod tests {
         let result = baseline_detect(current.as_input(), history.as_input(), &options)
             .expect("baseline_detect should succeed on fixed testdata fixtures");
 
-        let label_by_timestamp: HashMap<i64, u8> = current_timestamps
-            .into_iter()
-            .zip(labels)
-            .collect();
+        let label_by_timestamp: HashMap<i64, u8> =
+            current_timestamps.into_iter().zip(labels).collect();
         let aligned_labels: Vec<u8> = result
             .timestamps
             .iter()
@@ -504,7 +548,7 @@ mod tests {
             .collect();
 
         assert_eq!(result.anomalies.len(), aligned_labels.len());
-        let metrics = OutlierMetrics::compute(&result.anomalies, &aligned_labels);
+        let metrics = AnomalyMetrics::compute(&result.anomalies, &aligned_labels);
         println!(
             "baseline {:?} — F1={:.4} Recall={:.4} Precision={:.4} TP={} FP={} FN={}",
             trend_name,
@@ -525,7 +569,10 @@ mod tests {
 
         let result = baseline_detect(current.as_input(), history.as_input(), &options)
             .expect("baseline_detect should succeed on fixed testdata fixtures");
-        assert!(!result.timestamps.is_empty(), "baseline result should not be empty");
+        assert!(
+            !result.timestamps.is_empty(),
+            "baseline result should not be empty"
+        );
         assert_eq!(result.timestamps.len(), result.anomalies.len());
         assert_eq!(result.timestamps.len(), result.values.len());
     }

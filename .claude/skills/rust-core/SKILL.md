@@ -41,7 +41,7 @@ description: 当涉及 rsod/ 目录修改时使用。涵盖核心算法实现、
 - **`rsod-core/` (核心抽象层)**：
   - 存放跨算法共享的公共数据结构、结果类型、常量、基础 trait 与通用接口。
   - **原则**：只定义领域抽象和共享契约，不掺入具体算法流程。
-- **`rsod-outlier/`、`rsod-forecaster/`、`rsod-baseline/`、`rsod-classifier/`、`rsod-funnel/` (算法实现层)**：
+- **`rsod-kmeans/`、`rsod-forecaster/`、`rsod-baseline/`、`rsod-classifier/` (算法实现层)**：
   - 存放具体算法实现、训练流程、推理流程、评分逻辑与算法相关配置。
   - **原则**：算法行为在对应 crate 内聚，不向 `rsod-backend` 或 FFI 层泄漏实现细节。
 - **`rsod-backend/` (插件后端)**：

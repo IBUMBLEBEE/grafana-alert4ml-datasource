@@ -12,31 +12,34 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 
 ## Technology Stack
 
-* Frontend: [TS](https://www.typescriptlang.org/) / [React](https://react.dev/)
-* Backend: [Rust](https://www.rust-lang.org/) / [grafana-plugin-sdk-rust](https://github.com/grafana/grafana-plugin-sdk-rust)
-* Data Transform: [Arrow](https://arrow.apache.org/docs/index.html)
+- Frontend: [TS](https://www.typescriptlang.org/) / [React](https://react.dev/)
+- Backend: [Rust](https://www.rust-lang.org/) / [grafana-plugin-sdk-rust](https://github.com/grafana/grafana-plugin-sdk-rust)
+- Data Transform: [Arrow](https://arrow.apache.org/docs/index.html)
 
 ## Algorithm
 
-1. [extended-isolation-forest](https://github.com/nmandery/extended-isolation-forest)
-2. [STL](https://github.com/ankane/stl-rust)
-3. [perpetual](https://github.com/perpetual-ml/perpetual)
+1. [Dynamics baseline](docs/google-sre-alerting-baseline.md)
+2. [perpetual](https://github.com/perpetual-ml/perpetual)
+3. [Netdata-style K-means ensemble](docs/kmeans_algorithm.md)
+
+K-means rollout guidance: [migration and rollback](docs/kmeans-migration-guide.md) ·
+[replay and capacity validation](docs/kmeans-validation-and-capacity.md)
 
 ## Getting started
 
 **Searching in the Grafana plugin catalog is not supported due to the following limitations:**
 
-* Grafana plugins in general should not access any file system. [github issues](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/issues/1)
+- Grafana plugins in general should not access any file system. [github issues](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/issues/1)
 
 ~~You can download and install this grafana plugin using various options~~
 
-* ~~From [Grafana plugin catalog](https://grafana.com/grafana/plugins/ibumblebee-alerts4ml-datasource/)~~
-* ~~From [Github release page](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases)~~
-* ~~Using grafana cli~~
+- ~~From [Grafana plugin catalog](https://grafana.com/grafana/plugins/ibumblebee-alerts4ml-datasource/)~~
+- ~~From [Github release page](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/releases)~~
+- ~~Using grafana cli~~
 
-    ```shell
-    grafana-cli plugins install ibumblebee-alert4ml-datasource
-    ```
+  ```shell
+  grafana-cli plugins install ibumblebee-alert4ml-datasource
+  ```
 
 ### Installation
 
@@ -49,8 +52,6 @@ Grafana supports a wide range of data sources, including Prometheus, MySQL, and 
 1. Request a service account token. Home --> Administration --> Users and access --> Service accounts
 2. Enter the address and token to access the Grafana API. Home --> Connections --> Data sources --> ibumblebee-alert4ml-datasource
 
-![Configuration](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/demo.gif)
-
 ### Development building and running
 
 ```shell
@@ -61,10 +62,9 @@ make
 
 ## Demo
 
-![outlier](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/outlier.png)
 ![forcast](https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/blob/main/src/img/forcast.png)
 
 ## Reference
 
-* [https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/](https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/)
-* [https://docs.victoriametrics.com/anomaly-detection/](https://docs.victoriametrics.com/anomaly-detection/)
+- [https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/](https://grafana.com/docs/grafana-cloud/machine-learning/dynamic-alerting/forecasting/)
+- [https://docs.victoriametrics.com/anomaly-detection/](https://docs.victoriametrics.com/anomaly-detection/)

@@ -75,11 +75,9 @@ pub fn parse_duration_ms(s: &str) -> crate::Result<i64> {
             "d" => 24 * 3600 * 1_000_000_000,
             "w" => 168 * 3600 * 1_000_000_000,
             _ => {
-                return Err(format!(
-                    "time: unknown unit \"{}\" in duration \"{}\"",
-                    unit, orig
+                return Err(
+                    format!("time: unknown unit \"{}\" in duration \"{}\"", unit, orig).into(),
                 )
-                .into())
             }
         };
         let v: i64 = digits

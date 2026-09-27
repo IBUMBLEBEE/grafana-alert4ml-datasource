@@ -28,6 +28,9 @@ pub enum RsodError {
     #[error("detection failed: {0}")]
     Detection(String),
 
+    #[error("detection cancelled")]
+    Cancelled,
+
     #[error("preprocessing failed: {0}")]
     Preprocessing(String),
 

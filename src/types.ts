@@ -44,10 +44,12 @@ export const OUTPUT_MODE_OPTIONS: Array<SelectableValue<Alert4MLOutputMode>> = [
 ];
 
 export enum Alert4MLDetectType {
-  Outlier = 'outlier',
   Forecast = 'forecast',
-  Funnel = 'funnel',
+  Kmeans = 'kmeans',
 }
+
+/** Wire value retained only to explain how saved Funnel queries must migrate. */
+export const LEGACY_FUNNEL_DETECT_TYPE = 'funnel';
 
 export enum Alert4MLSupportDetect {
   Baseline = 'baseline',
@@ -79,9 +81,9 @@ export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
     description: 'Unsupervised ML-based anomaly detection',
     detectTypes: [
       {
-        label: 'Funnel (L1)',
-        value: Alert4MLDetectType.Funnel,
-        description: 'Seasonal L1 statistical filter for panels and Grafana Alerting (L2 ML escalation coming later)',
+        label: 'K-means',
+        value: Alert4MLDetectType.Kmeans,
+        description: 'Fixed-resolution K-means ensemble inspired by Netdata anomaly detection',
       },
       {
         label: 'Forecast (Gradient Boosting)',
@@ -113,111 +115,35 @@ export const DETECT_INTERVAL_OPTIONS: Array<SelectableValue<number>> = [
   { label: '15m', value: 900_000 },
 ];
 
-export type AlertOutputMode = 'full' | 'latest_only' | 'dedupe';
+export interface KmeansParams {
+  trainWindowSecs?: number;
+  retrainEverySecs?: number;
+  maxModels?: number;
+  minModelsForAlert?: number;
+  anomalyThreshold?: number;
+  minTrainVectors?: number;
+  maxTrainVectors?: number;
+  maxIterations?: number;
+  seed?: number;
+  persistModel?: boolean;
+}
 
-/** UI preset for funnel alert/normal band multipliers (maps to kOuter / kInner). */
-export type FunnelSensitivityPreset = 'strict' | 'balanced' | 'relaxed' | 'custom';
-
-/** Default ratio kInner/kOuter (1.5 / 2.5) when inner band is auto-derived. */
-export const FUNNEL_INNER_OUTER_RATIO = 0.6;
-
-export const FUNNEL_SENSITIVITY_PRESETS: Record<
-  Exclude<FunnelSensitivityPreset, 'custom'>,
-  { label: string; description: string; kOuter: number; kInner: number }
-> = {
-  strict: {
-    label: 'Strict',
-    description: 'Narrow bands — fewer alerts (2.0σ / 1.2σ)',
-    kOuter: 2.0,
-    kInner: 1.2,
-  },
-  balanced: {
-    label: 'Balanced',
-    description: 'Default for most metrics (2.5σ / 1.5σ)',
-    kOuter: 2.5,
-    kInner: 1.5,
-  },
-  relaxed: {
-    label: 'Relaxed',
-    description: 'Wide bands — tolerate more noise (3.0σ / 2.0σ)',
-    kOuter: 3.0,
-    kInner: 2.0,
-  },
+export const DEFAULT_KMEANS_PARAMS: KmeansParams = {
+  trainWindowSecs: 6 * 60 * 60,
+  retrainEverySecs: 3 * 60 * 60,
+  maxModels: 18,
+  minModelsForAlert: 18,
+  anomalyThreshold: 99,
+  minTrainVectors: 120,
+  maxTrainVectors: 1440,
+  maxIterations: 1000,
+  seed: 0x4b4d45414e53,
+  persistModel: true,
 };
 
-export function funnelInnerFromOuter(kOuter: number): number {
-  return Math.round(kOuter * FUNNEL_INNER_OUTER_RATIO * 10) / 10;
-}
-
-export function inferFunnelSensitivityPreset(
-  kOuter?: number,
-  kInner?: number
-): Exclude<FunnelSensitivityPreset, 'custom'> | 'custom' {
-  const o = kOuter ?? DEFAULT_FUNNEL_PARAMS.kOuter!;
-  const i = kInner ?? DEFAULT_FUNNEL_PARAMS.kInner!;
-  for (const [key, preset] of Object.entries(FUNNEL_SENSITIVITY_PRESETS)) {
-    if (Math.abs(o - preset.kOuter) < 0.05 && Math.abs(i - preset.kInner) < 0.05) {
-      return key as Exclude<FunnelSensitivityPreset, 'custom'>;
-    }
-  }
-  return 'custom';
-}
-
-export function validateFunnelThresholds(kOuter: number, kInner: number): string | null {
-  if (!Number.isFinite(kOuter) || !Number.isFinite(kInner)) {
-    return 'Enter valid numbers for both σ multipliers';
-  }
-  if (kOuter <= 0 || kInner <= 0) {
-    return 'Both σ multipliers must be greater than 0';
-  }
-  if (kInner >= kOuter) {
-    return 'Normal band (σ) must be less than alert threshold (σ)';
-  }
-  return null;
-}
-
-export interface FunnelParams {
-  modelName?: string;
-  periods?: string;
-  trend?: string;
-  bucketSlotSecs?: number;
-  autoTrend?: boolean;
-  /** UI-only; kOuter/kInner are what the backend uses. */
-  sensitivityPreset?: FunnelSensitivityPreset;
-  kOuter?: number;
-  kInner?: number;
-  minSamples?: number;
-  stdDevMultiplier?: number;
-  enableL2?: boolean;
-  persistProfile?: boolean;
-  lookbackDays?: number;
-  evalWindowSecs?: number;
-  alertOutputMode?: AlertOutputMode;
-  maxSparseBucketRatio?: number;
-}
-
-export const DEFAULT_FUNNEL_PARAMS: FunnelParams = {
-  modelName: 'funnel',
-  periods: '',
-  trend: 'daily',
-  bucketSlotSecs: 0,
-  autoTrend: true,
-  sensitivityPreset: 'balanced',
-  kOuter: 2.5,
-  kInner: 1.5,
-  minSamples: 5,
-  stdDevMultiplier: 2.0,
-  enableL2: false,
-  persistProfile: true,
-  lookbackDays: 90,
-  evalWindowSecs: 0,
-  alertOutputMode: 'full',
-  maxSparseBucketRatio: 0.3,
-};
-
-/** Recommended history window for funnel profile building (7 days). */
-export const DEFAULT_FUNNEL_HISTORY: HistoryDuration = {
-  durationMs: 7 * 24 * 60 * 60 * 1000,
+/** 57-hour model coverage plus up to one 3-hour alignment period. */
+export const DEFAULT_KMEANS_HISTORY: HistoryDuration = {
+  durationMs: 60 * 60 * 60 * 1000,
 };
 
 /** Recommended history for Dynamics / Forecast (Weekly baseline needs ≥7d). */
@@ -231,22 +157,6 @@ export interface DynamicsParams {
   stdDevMultiplier?: number;
   /** Soft-blend window (minutes) across hour buckets; 0 disables. Default 15. */
   transitionMinutes?: number;
-}
-
-export interface RsodParams {
-  periods?: string;
-  modelName?: string;
-  /**
-   * Detection intensity.
-   * - `lite` (default): robust MAD/IQR/EVT path — compact product default
-   * - `full`: legacy MSTL + Extended Isolation Forest + changepoints
-   */
-  detectMode?: 'lite' | 'full';
-  // Extended Isolation Forest advanced parameters (full mode only)
-  nTrees?: number;
-  sampleSize?: number | null;
-  maxTreeDepth?: number | null;
-  extensionLevel?: number;
 }
 
 export interface ForecastParams {
@@ -289,21 +199,6 @@ export const DEFAULT_TIME_RANGE: HistoryDuration = {
   durationMs: 5 * 60 * 1000,
 };
 
-export const DEFAULT_RSOD_PARAMS: RsodParams = {
-  periods: '',
-  modelName: 'rsod_model',
-  detectMode: 'lite',
-};
-
-/** EIF knobs — only meaningful when `detectMode` is `full`. */
-export const DEFAULT_RSOD_FULL_ADVANCED: Pick<RsodParams, 'nTrees' | 'sampleSize' | 'maxTreeDepth' | 'extensionLevel'> =
-  {
-    nTrees: 100,
-    sampleSize: 256,
-    maxTreeDepth: null,
-    extensionLevel: 0,
-  };
-
 export const DEFAULT_DYNAMICS_PARAMS: DynamicsParams = {
   trend: 'weekly',
   stdDevMultiplier: 2.0,
@@ -326,11 +221,12 @@ export interface Alert4MLQuery extends DataQuery {
   seriesRefId: string;
   supportDetect: string;
   detectType: string;
-  hyperParams: RsodParams | DynamicsParams | ForecastParams | FunnelParams;
+  hyperParams: DynamicsParams | ForecastParams | KmeansParams;
   targets: DataQuery[];
   historyTimeRange: HistoryDuration;
   /**
-   * Fixed upstream query step for detection (milliseconds). When set (> 0),
+   * Fixed upstream query step for detection (milliseconds). K-means defaults
+   * to 60s and never follows panel zoom; legacy detectors may omit it.
    * overrides Grafana's panel `$__interval` so history resolution stays stable
    * across time-range zoom. Omit / 0 = use the panel interval.
    */
@@ -355,12 +251,13 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
   refId: 'B',
   seriesRefId: 'A',
   supportDetect: Alert4MLSupportDetect.MachineLearning,
-  detectType: Alert4MLDetectType.Funnel,
+  detectType: Alert4MLDetectType.Kmeans,
   outputMode: Alert4MLOutputMode.Visualization,
   showAnomalyPoints: false,
-  hyperParams: DEFAULT_FUNNEL_PARAMS,
+  hyperParams: DEFAULT_KMEANS_PARAMS,
   targets: [],
-  historyTimeRange: DEFAULT_FUNNEL_HISTORY,
+  historyTimeRange: DEFAULT_KMEANS_HISTORY,
+  detectIntervalMs: 60_000,
   uniqueKeys: DEFAULT_UNIQUE_KEYS,
 };
 

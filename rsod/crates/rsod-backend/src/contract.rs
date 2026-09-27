@@ -5,7 +5,9 @@
 //! change: the frontend only sends what it knows, everything else falls back
 //! to these defaults.
 
-use serde::{Deserialize, Deserializer};
+use serde::{de::Error as _, Deserialize, Deserializer};
+
+const DEFAULT_KMEANS_DETECT_INTERVAL_MS: i64 = 60_000;
 
 /// Public output contract selected by the query editor.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -27,9 +29,10 @@ pub enum RenderMode {
 
 /// Detect-type constants (must match `pkg/constant` of the Go backend).
 pub mod constant {
-    pub const DETECT_TYPE_OUTLIER: &str = "outlier";
     pub const DETECT_TYPE_FORECAST: &str = "forecast";
-    pub const DETECT_TYPE_FUNNEL: &str = "funnel";
+    /// Wire value retained only to return migration guidance for saved queries.
+    pub const DETECT_TYPE_FUNNEL_LEGACY: &str = "funnel";
+    pub const DETECT_TYPE_KMEANS: &str = "kmeans";
     pub const BASELINE_DETECT_TYPE_DYNAMICS: &str = "dynamics";
 
     /// Output column names rendered into the result frames.
@@ -42,40 +45,89 @@ pub mod constant {
 }
 
 /// Per-query JSON payload (`query.json` in the panel model).
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Alert4MLQueryJson {
-    #[serde(rename = "detectType", default)]
     pub detect_type: String,
-    #[serde(rename = "supportDetect", default)]
     pub support_detect: String,
     // Top-level `seriesRefId` is part of the frontend contract but never used
     // by the plugin logic (Go's `Alert4MLQueryJson` keeps it the same way).
-    #[serde(rename = "seriesRefId", default)]
     #[allow(dead_code)]
     pub series_ref_id: String,
-    #[serde(rename = "hyperParams", default)]
     pub hyper_params: serde_json::Value,
-    #[serde(rename = "targets", default)]
     pub targets: Vec<serde_json::Value>,
-    #[serde(rename = "showAnomalyPoints", default)]
     pub show_anomaly_points: bool,
-    #[serde(rename = "outputMode", default)]
     pub output_mode: Option<OutputMode>,
     // Optional override for the series label segment of the result field
     // display names (`A-{seriesLabel}-Pred`). Empty = auto (upstream frame
     // name, then the value field's labels).
-    #[serde(rename = "seriesLabel", default)]
     pub series_label: String,
-    #[serde(rename = "historyTimeRange", default)]
     pub history_time_range: HistoryTimeRange,
     /// Fixed upstream scrape step for detection queries (milliseconds).
     /// When `> 0`, overrides Grafana's panel-derived `$__interval` so history
     /// resolution (and therefore detection results) stay stable across zoom.
-    /// `0` / omitted keeps the panel interval (backward compatible).
-    #[serde(rename = "detectIntervalMs", default)]
+    /// K-means defaults an omitted field to 60 seconds and rejects an explicit
+    /// non-positive value. Other detectors retain the legacy `0` default.
     pub detect_interval_ms: i64,
-    #[serde(rename = "uniqueKeys", default)]
     pub unique_keys: UniqueKeys,
+}
+
+impl<'de> Deserialize<'de> for Alert4MLQueryJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireQuery {
+            #[serde(rename = "detectType", default)]
+            detect_type: String,
+            #[serde(rename = "supportDetect", default)]
+            support_detect: String,
+            #[serde(rename = "seriesRefId", default)]
+            series_ref_id: String,
+            #[serde(rename = "hyperParams", default)]
+            hyper_params: serde_json::Value,
+            #[serde(default)]
+            targets: Vec<serde_json::Value>,
+            #[serde(rename = "showAnomalyPoints", default)]
+            show_anomaly_points: bool,
+            #[serde(rename = "outputMode", default)]
+            output_mode: Option<OutputMode>,
+            #[serde(rename = "seriesLabel", default)]
+            series_label: String,
+            #[serde(rename = "historyTimeRange", default)]
+            history_time_range: HistoryTimeRange,
+            #[serde(rename = "detectIntervalMs", default)]
+            detect_interval_ms: Option<i64>,
+            #[serde(rename = "uniqueKeys", default)]
+            unique_keys: UniqueKeys,
+        }
+
+        let wire = WireQuery::deserialize(deserializer)?;
+        let detect_interval_ms = match (wire.detect_type.as_str(), wire.detect_interval_ms) {
+            (constant::DETECT_TYPE_KMEANS, None) => DEFAULT_KMEANS_DETECT_INTERVAL_MS,
+            (constant::DETECT_TYPE_KMEANS, Some(value)) if value <= 0 => {
+                return Err(D::Error::custom(
+                    "K-means detectIntervalMs must be a positive integer",
+                ));
+            }
+            (_, Some(value)) => value,
+            (_, None) => 0,
+        };
+
+        Ok(Self {
+            detect_type: wire.detect_type,
+            support_detect: wire.support_detect,
+            series_ref_id: wire.series_ref_id,
+            hyper_params: wire.hyper_params,
+            targets: wire.targets,
+            show_anomaly_points: wire.show_anomaly_points,
+            output_mode: wire.output_mode,
+            series_label: wire.series_label,
+            history_time_range: wire.history_time_range,
+            detect_interval_ms,
+            unique_keys: wire.unique_keys,
+        })
+    }
 }
 
 impl Alert4MLQueryJson {
@@ -103,24 +155,26 @@ impl<'de> Deserialize<'de> for HistoryTimeRange {
     {
         let value = serde_json::Value::deserialize(deserializer)?;
         let duration_ms = match value {
-            serde_json::Value::Null | serde_json::Value::Bool(_) => 0,
-            // Modern format: { durationMs, intervalMs } (intervalMs ignored here).
-            serde_json::Value::Object(map) => {
-                map.get("durationMs").and_then(|v| v.as_i64()).unwrap_or(0)
-            }
-            // Legacy format: { from, to } — duration is the absolute offset in
-            // seconds, converted to milliseconds.
-            _ => match (value.get("from"), value.get("to")) {
-                (Some(from), Some(to)) => {
-                    let from_s = from
-                        .as_str()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or(0);
-                    let to_s = to.as_str().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-                    (from_s - to_s).abs() * 1000
-                }
-                _ => 0,
+            serde_json::Value::Object(map) => match map.get("durationMs") {
+                // Modern format: { durationMs, intervalMs } (intervalMs ignored here).
+                Some(duration) => duration.as_i64().unwrap_or(0),
+                // Legacy format: { from, to } — offsets are seconds and were
+                // persisted as either JSON numbers or decimal strings.
+                None => match (map.get("from"), map.get("to")) {
+                    (Some(from), Some(to)) => {
+                        let parse_seconds = |value: &serde_json::Value| {
+                            value
+                                .as_i64()
+                                .or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok()))
+                                .unwrap_or(0)
+                        };
+                        (parse_seconds(from) - parse_seconds(to)).abs() * 1000
+                    }
+                    _ => 0,
+                },
             },
+            serde_json::Value::Null | serde_json::Value::Bool(_) => 0,
+            _ => 0,
         };
         Ok(HistoryTimeRange { duration_ms })
     }
@@ -167,11 +221,82 @@ mod tests {
     #[test]
     fn query_json_parses_detect_interval_ms() {
         let value = serde_json::json!({
-            "detectType": "outlier",
+            "detectType": "forecast",
             "detectIntervalMs": 60_000,
         });
         let q: Alert4MLQueryJson = serde_json::from_value(value).expect("must parse");
         assert_eq!(q.detect_interval_ms, 60_000);
+    }
+
+    #[test]
+    fn kmeans_interval_defaults_only_when_the_field_is_absent() {
+        let omitted: Alert4MLQueryJson = serde_json::from_value(serde_json::json!({
+            "detectType": "kmeans"
+        }))
+        .expect("an omitted K-means interval must use the fixed default");
+        assert_eq!(omitted.detect_interval_ms, 60_000);
+
+        for invalid in [0, -1] {
+            let err = serde_json::from_value::<Alert4MLQueryJson>(serde_json::json!({
+                "detectType": "kmeans",
+                "detectIntervalMs": invalid
+            }))
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("K-means detectIntervalMs must be a positive integer"));
+        }
+
+        let legacy_non_kmeans: Alert4MLQueryJson =
+            serde_json::from_value(serde_json::json!({ "detectType": "forecast" }))
+                .expect("legacy non-K-means query must retain its unset interval");
+        assert_eq!(legacy_non_kmeans.detect_interval_ms, 0);
+    }
+
+    #[test]
+    fn history_time_range_accepts_modern_and_legacy_saved_shapes() {
+        let modern: HistoryTimeRange = serde_json::from_value(serde_json::json!({
+            "durationMs": 216_000_000,
+            "intervalMs": 60_000
+        }))
+        .unwrap();
+        assert_eq!(modern.duration_ms, 216_000_000);
+
+        let legacy_numbers: HistoryTimeRange = serde_json::from_value(serde_json::json!({
+            "from": -216_000,
+            "to": 0
+        }))
+        .unwrap();
+        assert_eq!(legacy_numbers.duration_ms, 216_000_000);
+
+        let legacy_strings: HistoryTimeRange = serde_json::from_value(serde_json::json!({
+            "from": "-216000",
+            "to": "0"
+        }))
+        .unwrap();
+        assert_eq!(legacy_strings.duration_ms, 216_000_000);
+
+        for unset in [serde_json::Value::Null, serde_json::Value::Bool(false)] {
+            let range: HistoryTimeRange = serde_json::from_value(unset).unwrap();
+            assert_eq!(range.duration_ms, 0);
+        }
+    }
+
+    #[test]
+    fn old_saved_query_deserializes_with_legacy_defaults() {
+        let query: Alert4MLQueryJson = serde_json::from_value(serde_json::json!({
+            "detectType": "funnel",
+            "showAnomalyPoints": true,
+            "historyTimeRange": { "from": -604800, "to": 0 },
+            "hyperParams": { "trend": "weekly", "kOuter": 5 }
+        }))
+        .expect("saved Funnel query must remain readable for explicit migration");
+
+        assert_eq!(query.detect_type, constant::DETECT_TYPE_FUNNEL_LEGACY);
+        assert_eq!(query.render_mode(), RenderMode::AnomalyPoints);
+        assert_eq!(query.history_time_range.duration_ms, 604_800_000);
+        assert_eq!(query.detect_interval_ms, 0);
+        assert!(query.targets.is_empty());
+        assert_eq!(query.series_label, "");
     }
 
     #[test]

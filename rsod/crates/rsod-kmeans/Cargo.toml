@@ -1,0 +1,17 @@
+[package]
+name = "rsod-kmeans"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Fixed-resolution K-means ensemble anomaly detection"
+
+[dependencies]
+rsod-core.workspace = true
+rsod-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+inventory.workspace = true
+rand.workspace = true
+
+[lints]
+workspace = true

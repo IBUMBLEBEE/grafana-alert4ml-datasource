@@ -2,15 +2,15 @@
 //!
 //! All assertion functions use the default thresholds defined in
 //! `.claude/skills/rust-ml-boundary/SKILL.md`:
-//! - Outlier detection: F1 ≥ 0.80, Recall ≥ 0.85
+//! - Anomaly detection: F1 ≥ 0.80, Recall ≥ 0.85
 //! - Forecast: MASE < 1.0, MAE/RMSE ≤ 0.95 × baseline
 
-// ─── Outlier metrics ────────────────────────────────────────────────────────
+// ─── Anomaly metrics ────────────────────────────────────────────────────────
 
-/// Evaluation metrics for outlier (anomaly detection) tasks.
+/// Evaluation metrics for binary anomaly-detection tasks.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct OutlierMetrics {
+pub struct AnomalyMetrics {
     pub true_positives: usize,
     pub false_positives: usize,
     pub false_negatives: usize,
@@ -19,7 +19,7 @@ pub struct OutlierMetrics {
     pub f1: f64,
 }
 
-impl OutlierMetrics {
+impl AnomalyMetrics {
     /// Compute precision, recall and F1 from binary predictions and ground truth labels.
     ///
     /// - `predictions` – anomaly scores from the model (≥ 0.5 → anomaly, < 0.5 → normal).
@@ -86,7 +86,7 @@ impl OutlierMetrics {
     pub fn assert_thresholds(&self, min_f1: f64, min_recall: f64) {
         assert!(
             self.f1 >= min_f1,
-            "Outlier F1 {:.4} < minimum {:.4} \
+            "Anomaly F1 {:.4} < minimum {:.4} \
              (TP={}, FP={}, FN={}, Precision={:.4}, Recall={:.4})",
             self.f1,
             min_f1,
@@ -98,7 +98,7 @@ impl OutlierMetrics {
         );
         assert!(
             self.recall >= min_recall,
-            "Outlier Recall {:.4} < minimum {:.4} (TP={}, FN={})",
+            "Anomaly Recall {:.4} < minimum {:.4} (TP={}, FN={})",
             self.recall,
             min_recall,
             self.true_positives,
@@ -205,16 +205,6 @@ impl ForecastMetrics {
             0.95 * baseline_rmse,
         );
     }
-}
-
-// ─── Funnel helpers ──────────────────────────────────────────────────────────
-
-/// Convert Grafana display-format anomaly column (raw value or NaN) to binary 0/1.
-pub fn funnel_display_to_binary(anomalies: &[f64]) -> Vec<f64> {
-    anomalies
-        .iter()
-        .map(|a| if a.is_finite() { 1.0 } else { 0.0 })
-        .collect()
 }
 
 // ─── Testdata helpers (test-only) ────────────────────────────────────────────
@@ -351,22 +341,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_outlier_metrics_perfect() {
+    fn test_anomaly_metrics_perfect() {
         // All anomalies correctly detected, no false alarms.
         let predictions = vec![1.0, 0.0, 1.0, 0.0];
         let labels = vec![1u8, 0, 1, 0];
-        let m = OutlierMetrics::compute(&predictions, &labels);
+        let m = AnomalyMetrics::compute(&predictions, &labels);
         assert!((m.f1 - 1.0).abs() < 1e-9, "expected perfect F1");
         assert!((m.recall - 1.0).abs() < 1e-9, "expected perfect Recall");
-        assert!((m.precision - 1.0).abs() < 1e-9, "expected perfect Precision");
+        assert!(
+            (m.precision - 1.0).abs() < 1e-9,
+            "expected perfect Precision"
+        );
     }
 
     #[test]
-    fn test_outlier_metrics_no_positives() {
+    fn test_anomaly_metrics_no_positives() {
         // No anomalies in ground truth — F1 and Recall should be 0.
         let predictions = vec![0.0, 0.0, 0.0];
         let labels = vec![0u8, 0, 0];
-        let m = OutlierMetrics::compute(&predictions, &labels);
+        let m = AnomalyMetrics::compute(&predictions, &labels);
         assert_eq!(m.true_positives, 0);
         assert_eq!(m.false_positives, 0);
         assert_eq!(m.false_negatives, 0);
@@ -379,7 +372,10 @@ mod tests {
         let predicted = vec![0.0, 1.0, 2.0, 3.0, 4.0]; // naïve shift-by-one
         let training = actuals.clone();
         let m = ForecastMetrics::compute(&actuals, &predicted, &training);
-        assert!((m.mase - 1.0).abs() < 1e-9, "naïve prediction should give MASE=1.0");
+        assert!(
+            (m.mase - 1.0).abs() < 1e-9,
+            "naïve prediction should give MASE=1.0"
+        );
     }
 
     #[test]

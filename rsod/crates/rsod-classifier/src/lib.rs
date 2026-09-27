@@ -1,3 +1,9 @@
+pub mod pipeline;
+pub mod preprocessing;
+pub mod seasonality;
+pub mod stationarity;
+pub mod traits;
+pub mod trend;
 /// rsod-classifier: Time Series Data Type Classification
 ///
 /// This crate provides a pipeline for automatically detecting and classifying
@@ -36,30 +42,20 @@
 /// println!("Classification: {:?}", result.classification);
 /// println!("Confidence: {}", result.confidence);
 /// ```
-
 pub mod types;
-pub mod traits;
-pub mod preprocessing;
-pub mod stationarity;
-pub mod trend;
-pub mod seasonality;
-pub mod pipeline;
 
 // Re-export commonly used types
+pub use pipeline::TimeSeriesClassifierPipeline;
+pub use traits::ClassifierInput;
 pub use types::{
     ClassificationResult, ClassifierConfig, DataStatistics, PeriodicityAnalysis,
     SeasonalityAnalysis, StationarityTest, TrendAnalysis,
 };
-pub use traits::ClassifierInput;
-pub use pipeline::TimeSeriesClassifierPipeline;
 
 pub use rsod_core::{Result, RsodError, SeriesCharacteristic, TrendDirection};
 
 /// Convenience function for quick classification
-pub fn classify(
-    timestamps: &[f64],
-    values: &[f64],
-) -> Result<ClassificationResult> {
+pub fn classify(timestamps: &[f64], values: &[f64]) -> Result<ClassificationResult> {
     let classifier = TimeSeriesClassifierPipeline::new();
     let input = ClassifierInput::new(timestamps, values);
     classifier.classify(&input)
@@ -91,7 +87,7 @@ mod tests {
     #[test]
     fn test_stationary_series() {
         let timestamps: Vec<f64> = (0..100).map(|i| i as f64).collect();
-        let values: Vec<f64> = vec![10.0; 100];  // Constant series
+        let values: Vec<f64> = vec![10.0; 100]; // Constant series
         let result = classify(&timestamps, &values).unwrap();
         println!("Result: {:#?}", result);
         // Just check that classification completed

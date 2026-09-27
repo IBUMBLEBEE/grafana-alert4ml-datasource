@@ -20,7 +20,7 @@ Plugin ID: `ibumblebee-alert4ml-datasource`
 
 ```text
 rsod/crates/rsod-backend/  Rust 插件后端（plugin entry、query handler、data conversion）
-rsod/crates/              Rust ML engine（outlier、forecaster、baseline、classifier、storage、ffi）
+rsod/crates/              Rust ML engine（kmeans、forecaster、baseline、classifier、storage）
 src/                      TypeScript frontend（components、datasource、types）
 src/plugin.json           Plugin metadata and capabilities
 tests/                    Playwright e2e tests
@@ -95,9 +95,9 @@ Plugin logs: `GF_LOG_FILTERS=plugin.ibumblebee-alert4ml-datasource:debug`
 
 ## 架构说明
 
-- Rust 后端（rsod-backend）直接调用 rsod 算法 crate（outlier、forecaster、baseline、funnel），不再经过任何跨语言边界。
+- Rust 后端（rsod-backend）直接调用 K-means、Forecast 和 Dynamics 算法 crate，不再经过任何跨语言边界。
 - 插件后端与 Grafana 通过 grafana-plugin-sdk-rust 的 gRPC 协议通信；上游数据通过 `/api/ds/query` 代理。
-- 前端组件与能力映射：Baseline、Forecast、Dynamics、Outlier detection。
+- 前端提供 Dynamics、K-means 和 Forecast 三种检测算法。
 - 所有二进制默认静态链接（musl）以确保跨平台兼容。
 - Cross-compilation 使用 zig 作为 C compiler。
 

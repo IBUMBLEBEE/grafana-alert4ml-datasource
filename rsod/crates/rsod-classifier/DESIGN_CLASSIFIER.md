@@ -250,30 +250,6 @@ fn create_trending_series(slope: f64) -> Vec<f64> {
 
 ## 8. Integration Recommendations
 
-### Integration with rsod-outlier
-
-```rust
-use rsod_classifier::classify;
-use rsod_outlier::outlier;
-
-pub fn intelligent_outlier_detection(
-    data: TimeSeriesInput<'_>,
-) -> Result<DetectionResult> {
-    // 1. classify
-    let classification = classify(data.timestamps, data.values)?;
-    
-    // 2. choose periods based on the classification
-    let periods = match classification.classification {
-        SeriesCharacteristic::Seasonal { periods } => periods,
-        SeriesCharacteristic::SeasonalWithTrend { periods, .. } => periods,
-        _ => vec![],
-    };
-    
-    // 3. run detection using the periods
-    outlier(data, &periods, "uuid")
-}
-```
-
 ### Integration with rsod-forecaster
 
 ```rust
@@ -302,19 +278,7 @@ pub fn intelligent_forecasting(
 
 ## 9. FAQ and Solutions
 
-### Q1: How to handle multi-period data?
-
-**A**: Run repeated STL decompositions on the residuals:
-
-```rust
-// implemented in auto_mstl
-for iteration in 0..max_iterations {
-    let mstl_result = decompose(data, &periods);
-    data = mstl_result.residual;  // keep looking for periods in the residuals
-}
-```
-
-### Q2: What if the time series has fewer than 30 points?
+### Q1: What if the time series has fewer than 30 points?
 
 **A**: There are several options:
 
@@ -327,7 +291,7 @@ let config = ClassifierConfig {
 
 Or return a special "insufficient data" classification.
 
-### Q3: How to adapt to different business scenarios?
+### Q2: How to adapt to different business scenarios?
 
 **A**: Use the threshold parameters of `ClassifierConfig`:
 
@@ -345,11 +309,10 @@ let config = ClassifierConfig {
 ### Technical Debt
 - [ ] Simplified ADF/KPSS implementation (should migrate to anofox-forecast)
 - [ ] Missing ARIMA order suggestions
-- [ ] Missing outlier handling
+- [ ] Missing anomaly handling
 
 ### Short-term improvements (3 months)
 - [ ] Integrate anofox-forecast's complete tests
-- [ ] Add MSTL decomposition
 - [ ] Performance benchmarks
 
 ### Mid-term improvements (6 months)

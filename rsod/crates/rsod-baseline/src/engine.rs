@@ -1,9 +1,7 @@
 //! Dynamics (dynamic-baseline) engine: adapts [`crate::dynamics::dynamics_detect`]
 //! to the pluggable [`Detector`] interface and owns the frontend `hyperParams`.
 
-use rsod_core::{
-    DetectionMethod, DetectOutput, DetectRequest, Detector, InputKind, RsodError,
-};
+use rsod_core::{DetectOutput, DetectRequest, DetectionMethod, Detector, InputKind, RsodError};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -45,8 +43,9 @@ pub fn parse_dynamics_hyper_params(value: &Value) -> rsod_core::Result<DynamicsH
         #[serde(rename = "transitionMinutes", default)]
         transition_minutes: Option<u32>,
     }
-    let raw: Raw = serde_json::from_value(value.clone())
-        .map_err(|e| RsodError::InvalidConfig(format!("failed to parse dynamics hyper params: {}", e)))?;
+    let raw: Raw = serde_json::from_value(value.clone()).map_err(|e| {
+        RsodError::InvalidConfig(format!("failed to parse dynamics hyper params: {}", e))
+    })?;
     let mut p = DynamicsHyperParams::default();
     if let Some(v) = raw.trend {
         p.trend = v;
@@ -69,7 +68,10 @@ fn trend_from_str(s: &str) -> rsod_core::Result<Trend> {
         "weekly" => Ok(Trend::Weekly),
         "monthly" => Ok(Trend::Monthly),
         "none" => Ok(Trend::None),
-        other => Err(RsodError::InvalidConfig(format!("unknown trend: {}", other))),
+        other => Err(RsodError::InvalidConfig(format!(
+            "unknown trend: {}",
+            other
+        ))),
     }
 }
 

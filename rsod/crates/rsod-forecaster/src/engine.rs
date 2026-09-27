@@ -3,8 +3,8 @@
 //! derivation.
 
 use rsod_core::{
-    derive_uuid, go_f32, go_opt_f32, go_opt_i64, parse_periods, DetectionMethod, DetectOutput,
-    DetectRequest, Detector, InputKind, RsodError,
+    derive_uuid, go_f32, go_opt_f32, go_opt_i64, parse_periods, DetectOutput, DetectRequest,
+    DetectionMethod, Detector, InputKind, RsodError,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -90,8 +90,9 @@ pub fn parse_forecast_hyper_params(value: &Value) -> rsod_core::Result<ForecastH
         #[serde(rename = "logIterations", default)]
         log_iterations: Option<i64>,
     }
-    let raw: Raw = serde_json::from_value(value.clone())
-        .map_err(|e| RsodError::InvalidConfig(format!("failed to parse forecast hyper params: {}", e)))?;
+    let raw: Raw = serde_json::from_value(value.clone()).map_err(|e| {
+        RsodError::InvalidConfig(format!("failed to parse forecast hyper params: {}", e))
+    })?;
     let mut p = ForecastHyperParams::default();
     if let Some(v) = raw.model_name {
         p.model_name = v;

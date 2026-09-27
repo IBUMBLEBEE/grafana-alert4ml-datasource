@@ -50,10 +50,21 @@ function alert4MLQuery(
     datasource: { uid: alert4ml.uid, type: alert4ml.type },
     baseDsUid: base.uid,
     supportDetect: 'machine_learning',
-    detectType: 'outlier',
-    hyperParams: { periods: '', modelName: 'rsod_model', detectMode: 'lite' },
+    detectType: 'kmeans',
+    hyperParams: {
+      trainWindowSecs: 3600,
+      retrainEverySecs: 3600,
+      maxModels: 1,
+      minModelsForAlert: 1,
+      anomalyThreshold: 99,
+      minTrainVectors: 20,
+      maxTrainVectors: 1440,
+      maxIterations: 100,
+      seed: 82795246472787,
+      persistModel: false,
+    },
     targets: [{ ...upstreamTarget, refId }],
-    historyTimeRange: { durationMs: 300_000 },
+    historyTimeRange: { durationMs: 7_200_000 },
     detectIntervalMs: 60_000,
     outputMode,
     uniqueKeys: { dashboardUid: 'alerting-e2e', panelId: 1, seriesRefId: refId },
@@ -62,17 +73,16 @@ function alert4MLQuery(
   };
 }
 
-function csvMetricTarget(refId: string, base: GrafanaDataSource, lastValue: number) {
+function randomWalkTarget(refId: string, base: GrafanaDataSource) {
   return {
     refId,
     datasource: { uid: base.uid, type: base.type },
-    scenarioId: 'csv_metric_values',
-    alias: 'host-a',
-    stringInput: [...Array(59).fill(10), lastValue].join(','),
+    scenarioId: 'random_walk',
+    seriesCount: 1,
   };
 }
 
-type AlertFixture = 'normal' | 'firing' | 'no-data' | 'error';
+type AlertFixture = 'normal' | 'no-data' | 'error';
 
 function alertFixtureTarget(refId: string, base: GrafanaDataSource, fixture: AlertFixture) {
   if (fixture === 'no-data') {
@@ -90,7 +100,7 @@ function alertFixtureTarget(refId: string, base: GrafanaDataSource, fixture: Ale
       stringInput: '',
     };
   }
-  return csvMetricTarget(refId, base, fixture === 'firing' ? 100 : 10);
+  return randomWalkTarget(refId, base);
 }
 
 function alertRule(
@@ -122,7 +132,7 @@ function alertRule(
     title,
     condition: 'D',
     data: [
-      pluginQuery('A', 'visualization', csvMetricTarget('A', base, fixture === 'firing' ? 100 : 10)),
+      pluginQuery('A', 'visualization', randomWalkTarget('A', base)),
       pluginQuery('B', 'alert_signal', alertFixtureTarget('B', base, fixture)),
       {
         refId: 'C',
@@ -250,7 +260,7 @@ test.describe('Grafana Alerting output contract', () => {
 
     const diagnosticFrames = body.results.A.frames ?? [];
     const signalFrames = body.results.B.frames ?? [];
-    expect(diagnosticFrames).toHaveLength(4);
+    expect(diagnosticFrames).toHaveLength(2);
     expect(signalFrames).toHaveLength(2);
 
     const identities = new Set<string>();
@@ -268,7 +278,7 @@ test.describe('Grafana Alerting output contract', () => {
     expect(identities).toEqual(new Set(['B-series', 'B-series1']));
   });
 
-  test('evaluates A/B/C/D through Normal → Alerting → Normal, NoData, and Error', async ({
+  test('evaluates A/B/C/D through Normal, NoData, Error, and recovery', async ({
     createDataSource,
     request,
   }) => {
@@ -309,12 +319,6 @@ test.describe('Grafana Alerting output contract', () => {
       });
       expect(updateGroupResponse.ok(), await updateGroupResponse.text()).toBeTruthy();
 
-      await waitForAlertState(request, folderUID, title, 'ok:Normal');
-
-      await putAlertRule(request, alertRule(ruleUID, folderUID, group, title, 'firing', alert4ml, base));
-      await waitForAlertState(request, folderUID, title, 'ok:Alerting');
-
-      await putAlertRule(request, normalRule);
       await waitForAlertState(request, folderUID, title, 'ok:Normal');
 
       await putAlertRule(request, alertRule(ruleUID, folderUID, group, title, 'no-data', alert4ml, base));

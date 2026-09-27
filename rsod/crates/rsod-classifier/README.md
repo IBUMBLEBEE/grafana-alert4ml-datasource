@@ -21,7 +21,7 @@ Input time-series data
     ↓
 [1] Data preprocessing and validation
     - check missing-value ratio
-    - handle outliers
+    - handle anomalies
     ↓
 [2] Basic statistical feature extraction
     - mean, variance, skewness, kurtosis
@@ -209,48 +209,6 @@ ELSE:  # stationary
         classify as Stationary (confidence: 0.90)
 ```
 
-## Integration and Applications
-
-### Combining with Anomaly Detection
-
-```rust
-use rsod_classifier::classify;
-use rsod_outlier::outlier;
-
-fn anomaly_detection_with_classification(
-    timestamps: &[f64],
-    values: &[f64],
-    periods: &[usize],
-) -> Result<()> {
-    // Step 1: classify the time series
-    let classification = classify(timestamps, values)?;
-    println!("Series type: {:?}", classification.classification);
-
-    // Step 2: choose the anomaly detection method based on the classification
-    match classification.classification {
-        SeriesCharacteristic::Seasonal { ref periods } => {
-            // For seasonal data, use period-aware anomaly detection
-            let result = outlier(
-                TimeSeriesInput::new(timestamps, values),
-                periods,
-                "model-uuid",
-            )?;
-            println!("Anomaly scores: {:?}", result.anomalies);
-        }
-        SeriesCharacteristic::Trending(_) => {
-            // For trend data, use detrended anomaly detection
-            println!("Using detrended method for anomaly detection");
-        }
-        _ => {
-            // Other cases use the default method
-            println!("Using default anomaly detection method");
-        }
-    }
-
-    Ok(())
-}
-```
-
 ## Performance Considerations
 
 - **Data length**: 100-10000 points recommended
@@ -268,7 +226,6 @@ fn anomaly_detection_with_classification(
 ### Future Improvements
 
 - [ ] Integrate anofox-forecast's complete ADF/KPSS implementation
-- [ ] Support multi-period detection and MSTL decomposition
 - [ ] Add a custom feature-extraction plugin system
 - [ ] Web UI for interactive classification and visualization
 - [ ] Model serialization and cross-session caching

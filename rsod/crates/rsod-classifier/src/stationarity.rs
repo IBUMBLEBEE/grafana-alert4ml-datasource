@@ -6,8 +6,8 @@
 /// KPSS: Full Newey-West HAC long-run variance (Bartlett kernel, Andrews 1991 bandwidth),
 /// with p-values from the Kwiatkowski et al. (1992) asymptotic critical value table.
 use crate::types::StationarityTest;
-use rsod_core::Result;
 use anofox_forecast::features::trend::augmented_dickey_fuller;
+use rsod_core::Result;
 
 // ---------------------------------------------------------------------------
 // MacKinnon (1994) lookup table: ADF test with constant, asymptotic distribution.
@@ -32,10 +32,10 @@ const ADF_LOOKUP: &[(f64, f64)] = &[
     (-1.10, 0.5950),
     (-0.80, 0.7000),
     (-0.50, 0.7900),
-    ( 0.00, 0.9000),
-    ( 0.50, 0.9600),
-    ( 1.00, 0.9850),
-    ( 2.00, 0.9990),
+    (0.00, 0.9000),
+    (0.50, 0.9600),
+    (1.00, 0.9850),
+    (2.00, 0.9990),
 ];
 
 // ---------------------------------------------------------------------------
@@ -159,15 +159,19 @@ pub fn kpss_test(values: &[f64]) -> Result<(f64, f64)> {
     }
 
     // η_μ = (1/T²) * Σ S_t² / σ̂²
-    let eta: f64 = cum_sums.iter().map(|s| s * s).sum::<f64>()
-        / (n as f64 * n as f64 * long_run_var);
+    let eta: f64 =
+        cum_sums.iter().map(|s| s * s).sum::<f64>() / (n as f64 * n as f64 * long_run_var);
 
     let pvalue = lookup_interpolate(KPSS_LOOKUP, eta);
     Ok((eta, pvalue))
 }
 
 /// Perform stationarity test combining ADF and KPSS.
-pub fn test_stationarity(values: &[f64], method: &str, significance: f64) -> Result<StationarityTest> {
+pub fn test_stationarity(
+    values: &[f64],
+    method: &str,
+    significance: f64,
+) -> Result<StationarityTest> {
     let (adf_stat, adf_pval) = adf_test(values)?;
     let (kpss_stat, kpss_pval) = kpss_test(values)?;
 
@@ -202,7 +206,10 @@ mod tests {
     fn test_stationary_constant() {
         let constant_series: Vec<f64> = vec![5.0; 100];
         let result = test_stationarity(&constant_series, "adf", 0.05).unwrap();
-        println!("Constant series → ADF stat={:.4}, p={:.4}", result.adf_statistic, result.adf_pvalue);
+        println!(
+            "Constant series → ADF stat={:.4}, p={:.4}",
+            result.adf_statistic, result.adf_pvalue
+        );
         // Constant series: ADF returns 0.0 / NaN → we return p=1.0 (degenerate)
         assert!(result.adf_pvalue >= 0.0, "p-value must be non-negative");
     }
@@ -211,19 +218,29 @@ mod tests {
     fn test_non_stationary_trend() {
         let trend: Vec<f64> = (0..100).map(|i| i as f64 * 0.5).collect();
         let result = test_stationarity(&trend, "both", 0.05).unwrap();
-        println!("Trend series → ADF stat={:.4}, p={:.4} | KPSS stat={:.4}, p={:.4}",
-                 result.adf_statistic, result.adf_pvalue,
-                 result.kpss_statistic, result.kpss_pvalue);
-        assert!(!result.is_stationary, "A linear trend should not be identified as stationary");
+        println!(
+            "Trend series → ADF stat={:.4}, p={:.4} | KPSS stat={:.4}, p={:.4}",
+            result.adf_statistic, result.adf_pvalue, result.kpss_statistic, result.kpss_pvalue
+        );
+        assert!(
+            !result.is_stationary,
+            "A linear trend should not be identified as stationary"
+        );
     }
 
     #[test]
     fn test_stationary_sinusoidal() {
         let series: Vec<f64> = (0..200).map(|i| (i as f64 * 0.5).sin()).collect();
         let result = test_stationarity(&series, "adf", 0.05).unwrap();
-        println!("Sinusoidal → ADF stat={:.4}, p={:.4}", result.adf_statistic, result.adf_pvalue);
+        println!(
+            "Sinusoidal → ADF stat={:.4}, p={:.4}",
+            result.adf_statistic, result.adf_pvalue
+        );
         // Sinusoidal series is stationary; ADF should reject unit root (small p)
-        assert!(result.adf_pvalue < 0.5, "Stationary sinusoidal series should have low ADF p-value");
+        assert!(
+            result.adf_pvalue < 0.5,
+            "Stationary sinusoidal series should have low ADF p-value"
+        );
     }
 
     #[test]
@@ -242,4 +259,3 @@ mod tests {
         assert!((lookup_interpolate(KPSS_LOOKUP, 0.739) - 0.01).abs() < 1e-9);
     }
 }
-

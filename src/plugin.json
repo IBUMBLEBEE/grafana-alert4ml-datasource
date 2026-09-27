@@ -29,10 +29,6 @@
     "links": [],
     "screenshots": [
       {
-        "name": "Outlier Detection",
-        "path": "img/outlier.png"
-      },
-      {
         "name": "Forecasting",
         "path": "img/forcast.png"
       }

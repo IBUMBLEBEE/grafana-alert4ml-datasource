@@ -49,8 +49,8 @@ Google SRE 基线 ──► 通用模板 ──► 企业私有策略实例
 | 告警问题 | 策略优先级 | 可用算法/机制 | 重要护栏 |
 |---|---|---|---|
 | 高流量服务的可用性、正确性或延迟 SLO 风险 | 首选 | SLI 比率、错误预算、多窗口 burn rate | 最小请求数、最小坏事件数、page 必须有行动方案 |
-| 正常值随工作日/周周期变化的用户症状 | 次选 | `Dynamics`、`Funnel`、动态基线 | 足够的完整历史周期、稳定采样、变更期处理 |
-| 平稳连续信号的突发偏离 | 次选 | `outlier`、MAD/IQR/EVT | 防抖、持续时间、不能将单点越界直接 page |
+| 正常值随工作日/周周期变化的用户症状 | 次选 | `Dynamics`、动态基线 | 足够的完整历史周期、稳定采样、变更期处理 |
+| 平稳连续信号的突发偏离 | 次选 | `K-means` 距离异常 | 防抖、持续时间、不能将单点越界直接 page |
 | 有上限的资源即将耗尽 | 首选于容量场景 | `forecast` / Perpetual 的耗尽时间预测 | 上限与可行动窗口必须明确；模型失败时保守降级 |
 | 心跳、批任务、业务事件未按预期出现 | 首选 | 缺失/新鲜度规则 | 用业务期望表达，不套用连续数值的季节性模型 |
 | CPU、单 Pod、队列等原因信号 | 诊断优先 | 上述算法可作为证据 | 默认不独立 page；关联到服务症状或容量风险 |
@@ -74,7 +74,7 @@ Google SRE 基线 ──► 通用模板 ──► 企业私有策略实例
 | SLO 与错误预算是分页的共同尺度 | Google 用错误预算将可靠性目标转成可量化的风险，并以 burn rate 说明耗尽速度。[Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) | 对可定义 SLI 的服务，优先产生 `burn_rate`、预算消耗比例和预计耗尽时间；固定阈值或 ML 结果可作为 SLI 的输入/补充，不能隐去此业务尺度。 |
 | 多窗口、多 burn-rate 覆盖快慢故障 | Google 建议使用多个 burn rate 与窗口，兼顾高召回和快速恢复；文中给出“1 小时消耗 2%、6 小时消耗 5%”作为两个 paging 起点、“3 天消耗 10%”作为 ticket 起点，并明确这些数字需按服务和 page 负荷调整。[Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) | 提供参数化模板，而非硬编码数值：每个 burn-rate 规则可配一对短/长窗口，二者同时满足才 page（降低瞬态误报）；较慢且重要的预算消耗建 ticket。将 Google 数值标记为 `starter`，允许企业基于误报成本与值班能力覆盖。 |
 | 比率要加体量/低流量保护 | Google 展示了低流量服务中单次失败可能产生极高 burn rate 的问题。[Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) | 所有 error ratio/burn-rate 策略须声明最小请求数或最小坏事件数；不满足时输出 `insufficient_traffic`，不自动 page。低频业务使用更长窗口、绝对坏事件门槛、合成探针或人工定义的业务规则。 |
-| 防抖与恢复行为是规则的一部分 | Google 的通用时序告警规则可要求条件持续一段最短时间，通常至少两个评估周期，以避免漏采集导致误报；规则实例也同时要求 error ratio 与错误绝对速率。Google 对 SLO 分页则比较 burn-rate 的检测和恢复时间，不建议只用一个 `for` 来表达不同严重度。[Practical Alerting from Time-Series Data](https://sre.google/sre-book/practical-alerting/)；[Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) | 策略模型须包含评估间隔、最小样本量、恢复条件和缺失数据语义。普通异常策略可使用 `for`；SLO page 优先用多窗口 burn-rate 条件。不要将单点的 outlier/forecast 越界直接转成 page。 |
+| 防抖与恢复行为是规则的一部分 | Google 的通用时序告警规则可要求条件持续一段最短时间，通常至少两个评估周期，以避免漏采集导致误报；规则实例也同时要求 error ratio 与错误绝对速率。Google 对 SLO 分页则比较 burn-rate 的检测和恢复时间，不建议只用一个 `for` 来表达不同严重度。[Practical Alerting from Time-Series Data](https://sre.google/sre-book/practical-alerting/)；[Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) | 策略模型须包含评估间隔、最小样本量、恢复条件和缺失数据语义。普通异常策略可使用 `for`；SLO page 优先用多窗口 burn-rate 条件。不要将单点的 K-means/forecast 越界直接转成 page。 |
 | 聚合、去重、抑制告警风暴 | Google 的 Alertmanager 能按标签抑制、去重、聚合；并指出单一异常可产生多个告警，应调节 fan-out。[Practical Alerting from Time-Series Data](https://sre.google/sre-book/practical-alerting/)；[Being On-Call](https://sre.google/sre-book/being-on-call/) | 每个策略必须定义 group key、父子抑制关系、去重窗口和通知上限。症状 alert 优先；相同事故中的原因 alert 附着在事件上下文中。 |
 | 健康告警应聚合到服务层 | Google 指出单机失败在大规模系统中通常过于嘈杂，应该对高层服务目标告警，同时保留组件粒度供排障。[Practical Alerting from Time-Series Data](https://sre.google/sre-book/practical-alerting/) | 算法的默认输入应支持按 `service/region/criticality` 聚合的 SLI；高基数实例指标用作 root-cause evidence，而非逐实例 page。 |
 | 告警信息必须可诊断 | Google 的规则在触发通知中填入 job、告警名和触发值等上下文；on-call 指南要求 page 链向相关监控控制台。[Practical Alerting from Time-Series Data](https://sre.google/sre-book/practical-alerting/)；[On-Call](https://sre.google/workbook/on-call/) | 每个推荐必须生成解释包：输入 SLI/SLO、算法版本、特征与数据质量、当前值/阈值或预测区间、触发窗口、相关仪表盘、runbook 与推荐动作。 |
@@ -124,7 +124,7 @@ runbook: "..."
 模板只保存没有企业机密的决策结构，例如：
 
 - `slo_burn_multiwindow`：适用于有足量流量的可用性/正确性 SLI；算法为比率与 burn-rate 计算，不用无监督异常检测替代。
-- `seasonal_symptom_baseline`：适用于正常值受日/周规律影响的用户症状；使用 Baseline/Dynamics/Funnel 等候选算法，但必须先满足足够历史、稳定采样和缺失率约束。
+- `seasonal_symptom_baseline`：适用于正常值受日/周规律影响的用户症状；使用 Baseline/Dynamics 等候选算法，但必须先满足足够历史、稳定采样和缺失率约束。
 - `forecasted_capacity_exhaustion`：适用于有明确上限、可操作的容量指标；用 Forecast/Perpetual 估计耗尽时间，page 的前提是耗尽发生在可行动窗口内。
 - `low_traffic_failure_guarded`：低流量错误率的最小样本、绝对错误数和长窗口保护；通常优先 ticket。
 - `missing_expected_event`：心跳、批任务或关键业务事件“应出现却未出现”；这是业务期望规则，不应硬套连续数值的季节性算法。

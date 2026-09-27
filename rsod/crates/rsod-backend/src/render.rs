@@ -15,8 +15,7 @@ use grafana_plugin_sdk::prelude::*;
 use serde_json::{json, Value};
 
 use crate::contract::{constant, RenderMode};
-use crate::frame_ops::field_time_ns;
-use rsod_core::{DetectionMethod, DetectionResult, BASELINE_VALUE_COL, PRED_COL};
+use rsod_core::{DetectionMethod, DetectionResult, BASELINE_VALUE_COL, PRED_COL, VALUE_COL};
 
 /// Go's `FrameMeta{Type: FrameTypeTimeSeriesWide}` — wide-format time series.
 fn timeseries_wide_meta() -> Metadata {
@@ -334,70 +333,6 @@ pub fn render_frame_with_forecast(frame: &mut Frame, ref_id: &str, series_name: 
     }
 }
 
-/// `newDataFrameFromeResult` (outlier): a two-column "Anomaly" frame. Time
-/// keeps the original field-0 precision (ns for timestamp arrays, seconds for
-/// numeric arrays); values are `Some(v)` where the result flags an anomaly,
-/// otherwise null (Go wrote `math.NaN()` — both render as gaps).
-pub fn new_data_frame_from_result(
-    source: &Frame,
-    ref_id: &str,
-    series_name: &str,
-    result: &[f64],
-) -> rsod_core::Result<Frame> {
-    if source.fields().len() < 2 {
-        return Err("frame has insufficient fields".to_string().into());
-    }
-    let field_len = source.fields()[0].values().len();
-    let raw_times = field_time_ns(&source.fields()[0]);
-
-    let time_field: Field = (0..field_len)
-        .map(|idx| match raw_times.get(idx).copied().flatten() {
-            // ns → exact DateTime (mirrors Go's time.Time passthrough).
-            Some(ns) => Some(DateTime::from_timestamp_nanos(ns)),
-            // No time value: Go leaves the zero time; use Unix epoch.
-            None => Some(DateTime::UNIX_EPOCH),
-        })
-        .collect::<Vec<Option<DateTime<Utc>>>>()
-        .into_opt_field(source.fields()[0].name.clone());
-    let mut time_field = time_field;
-    time_field.labels = source.fields()[0].labels.clone();
-    let mut config = FieldConfig::default();
-    config.display_name = Some(source.fields()[0].name.clone());
-    time_field.config = Some(config);
-
-    let values = crate::frame_ops::field_f64s(&source.fields()[1])?;
-    let value_field: Field = (0..field_len)
-        .map(|idx| {
-            if idx < result.len() && result[idx] == 1.0 {
-                values.get(idx).copied().flatten()
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<Option<f64>>>()
-        .into_opt_field(source.fields()[1].name.clone());
-    let mut value_field = value_field;
-    value_field.labels = source.fields()[1].labels.clone();
-    // Same `{refID}-{seriesName}-{column}` display-name convention as the
-    // other detect types; fixed red.
-    let mut config = field_config_with_custom(
-        result_display_name(ref_id, series_name, constant::GF_FRAME_RESULT_NAME_ANOMALY),
-        custom_config(&[
-            ("lineStyle", json!({ "fill": "solid" })),
-            ("drawStyle", json!("points")),
-            ("pointSize", json!(10)),
-        ]),
-    );
-    config.color = Some(color_config("red"));
-    value_field.config = Some(config);
-
-    let mut frame = Frame::new(constant::GF_FRAME_RESULT_NAME_ANOMALY)
-        .with_field(time_field)
-        .with_field(value_field);
-    frame.meta = source.meta.clone();
-    Ok(frame)
-}
-
 /// `removeNonAnomalyFields`: keep only the Time field, any time-typed column
 /// and the anomaly columns (Go's `field.Type() == FieldTypeTime` check).
 pub fn remove_non_anomaly_fields(frame: &mut Frame) -> rsod_core::Result<()> {
@@ -427,9 +362,8 @@ pub fn remove_non_anomaly_fields(frame: &mut Frame) -> rsod_core::Result<()> {
     Ok(())
 }
 
-/// Grafana Alerting adapter: emit exactly one finite 0/1 numeric series for
-/// each upstream series. Field labels, rather than display names, identify
-/// multidimensional alert instances.
+/// Grafana Alerting adapter: emit one nullable 0/1 numeric series per input.
+/// Invalid detector points remain null so warming up is not reported normal.
 pub fn render_alert_signal(
     source: &Frame,
     det: &DetectionResult,
@@ -444,25 +378,40 @@ pub fn render_alert_signal(
         )
         .into());
     }
+    if det
+        .validity
+        .as_ref()
+        .is_some_and(|validity| validity.len() != det.timestamps.len())
+    {
+        return Err("alert signal validity length mismatch".to_string().into());
+    }
 
     let times: Vec<DateTime<Utc>> = det
         .timestamps
         .iter()
         .map(|ms| DateTime::from_timestamp_millis(*ms).unwrap_or_default())
         .collect();
-    let flags: Vec<f64> = det
+    let flags: Vec<Option<f64>> = det
         .anomalies
         .iter()
-        .map(|flag| {
+        .enumerate()
+        .map(|(index, flag)| {
+            if det
+                .validity
+                .as_ref()
+                .is_some_and(|validity| !validity[index])
+            {
+                return None;
+            }
             if flag.is_finite() && *flag > 0.0 {
-                1.0
+                Some(1.0)
             } else {
-                0.0
+                Some(0.0)
             }
         })
         .collect();
 
-    let mut signal_field = flags.into_field(constant::GF_FRAME_RESULT_NAME_ANOMALY);
+    let mut signal_field = flags.into_opt_field(constant::GF_FRAME_RESULT_NAME_ANOMALY);
     signal_field.labels = series_labels(source).cloned().unwrap_or_default();
     if signal_field.labels.is_empty() {
         let fallback = if series_name.trim().is_empty() {
@@ -485,6 +434,67 @@ pub fn render_alert_signal(
     Ok(frame)
 }
 
+fn render_clustering(
+    source: &Frame,
+    det: &DetectionResult,
+    ref_id: &str,
+    series_name: &str,
+    points_only: bool,
+) -> rsod_core::Result<Frame> {
+    let n = det.timestamps.len();
+    if det.values.len() != n
+        || det.observed_values.len() != n
+        || det.anomalies.len() != n
+        || det.scores.as_ref().is_some_and(|v| v.len() != n)
+        || det.validity.as_ref().is_some_and(|v| v.len() != n)
+    {
+        return Err("clustering result vectors are not aligned"
+            .to_string()
+            .into());
+    }
+    let times: Vec<DateTime<Utc>> = det
+        .timestamps
+        .iter()
+        .map(|ms| DateTime::from_timestamp_millis(*ms).unwrap_or_default())
+        .collect();
+    let valid = |index: usize| det.validity.as_ref().map(|v| v[index]).unwrap_or(true);
+    let points: Vec<Option<f64>> = (0..n)
+        .map(|index| {
+            (valid(index) && det.anomalies[index] > 0.0)
+                .then_some(det.observed_values[index])
+                .filter(|value| value.is_finite())
+        })
+        .collect();
+    let has_anomaly_point = points.iter().any(Option::is_some);
+
+    let mut frame =
+        Frame::new(series_name).with_field(times.into_field(constant::GF_FRAME_RESULT_NAME_TIME));
+    if !points_only {
+        let display_values: Vec<Option<f64>> = (0..n)
+            .map(|index| det.values[index].is_finite().then_some(det.values[index]))
+            .collect();
+        let mut value_field = display_values.into_opt_field(VALUE_COL);
+        value_field.labels = series_labels(source).cloned().unwrap_or_default();
+        let mut value_config = FieldConfig::default();
+        value_config.display_name = Some(result_display_name(ref_id, series_name, "Value"));
+        value_field.config = Some(value_config);
+        frame = frame.with_field(value_field);
+    }
+    // An all-null Anomaly column still becomes a legend series in Grafana.
+    // Omit it until at least one finite anomaly point exists.
+    if has_anomaly_point {
+        let mut point_field = points.into_opt_field(constant::GF_FRAME_RESULT_NAME_ANOMALY);
+        point_field.labels = series_labels(source).cloned().unwrap_or_default();
+        let mut point_config = FieldConfig::default();
+        point_config.display_name = Some(result_display_name(ref_id, series_name, "Anomaly"));
+        point_config.color = Some(color_config("red"));
+        point_field.config = Some(point_config);
+        frame = frame.with_field(point_field);
+    }
+    frame.meta = Some(timeseries_wide_meta());
+    Ok(frame)
+}
+
 /// Unified render entry point: pick the frame layout/styling from the engine's
 /// [`DetectionMethod`] — the backend never branches on the detect type.
 pub fn render_detection(
@@ -500,9 +510,13 @@ pub fn render_detection(
     }
 
     match method {
-        DetectionMethod::Outlier => {
-            new_data_frame_from_result(source, ref_id, series_name, &det.anomalies)
-        }
+        DetectionMethod::Clustering => render_clustering(
+            source,
+            det,
+            ref_id,
+            series_name,
+            mode == RenderMode::AnomalyPoints,
+        ),
         DetectionMethod::Baseline => {
             let mut out = detection_frame(det, BASELINE_VALUE_COL);
             render_frame_with_baseline(&mut out, ref_id, series_name);
@@ -538,9 +552,103 @@ mod tests {
             values: vec![10.0, 12.0, 11.0, 13.0],
             observed_values: vec![10.0, 15.0, 11.0, 13.0],
             anomalies: vec![0.0, 1.0, 0.0, 0.0],
+            scores: None,
+            validity: None,
+            diagnostics: None,
             upper_bound: Some(vec![12.5, 13.5, 12.5, 14.5]),
             lower_bound: Some(vec![8.5, 9.5, 8.5, 10.5]),
         }
+    }
+
+    #[test]
+    fn clustering_visualization_returns_values_and_anomaly_points_without_scores() {
+        let times: Vec<DateTime<Utc>> = (0..4)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let source = Frame::new("cpu")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![10.0, 15.0, 11.0, 13.0].into_field("value"));
+        let mut det = sample_forecast_result();
+        det.scores = Some(vec![1.0, 100.0, 2.0, 3.0]);
+        det.validity = Some(vec![true; 4]);
+        det.upper_bound = None;
+        det.lower_bound = None;
+
+        let frame = render_clustering(&source, &det, "A", "cpu", false).unwrap();
+        let value = serde_json::to_value(&frame).unwrap();
+        let fields = value["schema"]["fields"].as_array().unwrap();
+        let names: Vec<&str> = fields
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(names, vec!["Time", "value", "Anomaly"]);
+        assert!(!names.contains(&"AnomalyScore"));
+        let anomalies = value["data"]["values"][2].as_array().unwrap();
+        assert!(anomalies[0].is_null());
+        assert_eq!(anomalies[1].as_f64(), Some(15.0));
+    }
+
+    #[test]
+    fn clustering_points_only_returns_only_time_and_anomaly_points() {
+        let times: Vec<DateTime<Utc>> = (0..4)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let source = Frame::new("cpu")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![10.0, 15.0, 11.0, 13.0].into_field("value"));
+        let mut det = sample_forecast_result();
+        det.scores = Some(vec![1.0, 100.0, 2.0, 3.0]);
+        det.validity = Some(vec![true; 4]);
+        det.upper_bound = None;
+        det.lower_bound = None;
+
+        let frame = render_clustering(&source, &det, "A", "cpu", true).unwrap();
+        let value = serde_json::to_value(&frame).unwrap();
+        let names: Vec<&str> = value["schema"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(names, vec!["Time", "Anomaly"]);
+    }
+
+    #[test]
+    fn clustering_omits_anomaly_series_when_no_point_is_anomalous() {
+        let times: Vec<DateTime<Utc>> = (0..4)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let source = Frame::new("node_load1")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![0.4, 1.2, 15.0, 0.8].into_field("value"));
+        let mut det = sample_forecast_result();
+        det.anomalies = vec![0.0; 4];
+        det.scores = Some(vec![1.0, 4.0, 20.0, 2.0]);
+        det.validity = Some(vec![true; 4]);
+        det.upper_bound = None;
+        det.lower_bound = None;
+
+        let frame = render_clustering(&source, &det, "A", "node_load1", false).unwrap();
+        let value = serde_json::to_value(&frame).unwrap();
+        let names: Vec<&str> = value["schema"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["Time", "value"]);
+
+        let points_only = render_clustering(&source, &det, "A", "node_load1", true).unwrap();
+        let points_only = serde_json::to_value(&points_only).unwrap();
+        let points_only_names: Vec<&str> = points_only["schema"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(points_only_names, vec!["Time"]);
     }
 
     /// End-to-end render check for the "no bounds chart in the panel"
@@ -668,41 +776,6 @@ mod tests {
         assert_eq!(anomaly["color"]["fixedColor"], "red");
     }
 
-    /// Outlier's two-column frame carries the same
-    /// `{refID}-{seriesName}-Anomaly` display name as the other detect types.
-    #[test]
-    fn outlier_frame_uses_series_qualified_display_name() {
-        let times: Vec<DateTime<Utc>> = vec![DateTime::from_timestamp(1_700_000_000, 0).unwrap()];
-        let mut value_field: Field = vec![1.0].into_field("value");
-        value_field.labels = [
-            ("__name__".to_string(), "up".to_string()),
-            ("instance".to_string(), "localhost:9090".to_string()),
-        ]
-        .into_iter()
-        .collect();
-        let source = Frame::new("")
-            .with_field(times.into_field("Time"))
-            .with_field(value_field);
-        let series_name = series_label_name(&source);
-        assert_eq!(
-            series_name,
-            "{__name__=\"up\", instance=\"localhost:9090\"}"
-        );
-
-        let frame = new_data_frame_from_result(&source, "A", &series_name, &[1.0])
-            .expect("outlier frame must be built");
-        let value = serde_json::to_value(&frame).expect("frame must serialize");
-        let fields = value["schema"]["fields"].as_array().expect("schema.fields");
-        assert_eq!(fields.len(), 2);
-        let anomaly = &fields[1]["config"];
-        assert_eq!(
-            anomaly["displayName"],
-            "A-{__name__=\"up\", instance=\"localhost:9090\"}-Anomaly"
-        );
-        assert_eq!(anomaly["custom"]["pointSize"], 10);
-        assert_eq!(anomaly["color"]["fixedColor"], "red");
-    }
-
     #[test]
     fn alert_signal_is_single_finite_series_with_upstream_labels() {
         let times: Vec<DateTime<Utc>> = (0..4)
@@ -730,16 +803,102 @@ mod tests {
         assert_eq!(fields[1]["labels"]["__name__"], "node_load1");
         assert_eq!(fields[1]["labels"]["instance"], "node-a:9100");
         assert_eq!(fields[1]["labels"]["job"], "node");
-        assert_eq!(fields[1]["config"]["displayName"], "A-node_load1-AlertSignal");
+        assert_eq!(
+            fields[1]["config"]["displayName"],
+            "A-node_load1-AlertSignal"
+        );
         let flags = value["data"]["values"][1]
             .as_array()
             .expect("signal values");
-        assert_eq!(flags.iter().map(Value::as_f64).collect::<Vec<_>>(), vec![
-            Some(0.0),
-            Some(1.0),
-            Some(0.0),
-            Some(0.0),
-        ]);
+        assert_eq!(
+            flags.iter().map(Value::as_f64).collect::<Vec<_>>(),
+            vec![Some(0.0), Some(1.0), Some(0.0), Some(0.0),]
+        );
+    }
+
+    #[test]
+    fn alert_signal_renders_invalid_detector_points_as_null() {
+        let times: Vec<DateTime<Utc>> = (0..4)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let source = Frame::new("cpu")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![1.0; 4].into_field("value"));
+        let mut det = sample_forecast_result();
+        det.validity = Some(vec![true, false, true, false]);
+
+        let frame = render_alert_signal(&source, &det, "A", "cpu").unwrap();
+        let value = serde_json::to_value(&frame).unwrap();
+        let flags = value["data"]["values"][1].as_array().unwrap();
+        assert_eq!(flags[0].as_f64(), Some(0.0));
+        assert!(flags[1].is_null());
+        assert_eq!(flags[2].as_f64(), Some(0.0));
+        assert!(flags[3].is_null());
+    }
+
+    #[test]
+    fn alert_signal_preserves_normal_firing_sustained_and_recovery_sequence() {
+        let times: Vec<DateTime<Utc>> = (0..6)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let source = Frame::new("cpu")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![1.0; 6].into_field("value"));
+        let det = DetectionResult {
+            timestamps: (0..6).map(|i| 1_700_000_000_000 + i * 60_000).collect(),
+            values: vec![1.0; 6],
+            observed_values: vec![1.0; 6],
+            anomalies: vec![0.0, 1.0, 1.0, 1.0, 0.0, 0.0],
+            scores: Some(vec![0.0, 100.0, 100.0, 100.0, 0.0, 0.0]),
+            validity: Some(vec![true; 6]),
+            diagnostics: None,
+            upper_bound: None,
+            lower_bound: None,
+        };
+
+        let frame = render_alert_signal(&source, &det, "A", "cpu").unwrap();
+        let value = serde_json::to_value(&frame).unwrap();
+        let flags = value["data"]["values"][1].as_array().unwrap();
+
+        assert_eq!(
+            flags.iter().map(Value::as_f64).collect::<Vec<_>>(),
+            vec![
+                Some(0.0),
+                Some(1.0),
+                Some(1.0),
+                Some(1.0),
+                Some(0.0),
+                Some(0.0),
+            ]
+        );
+        assert_eq!(flags.last().and_then(Value::as_f64), Some(0.0));
+    }
+
+    #[test]
+    fn warming_up_alert_signal_is_all_null_for_grafana_nodata() {
+        let times: Vec<DateTime<Utc>> = (0..3)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let source = Frame::new("cpu")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![1.0; 3].into_field("value"));
+        let det = DetectionResult {
+            timestamps: (0..3).map(|i| 1_700_000_000_000 + i * 60_000).collect(),
+            values: vec![1.0; 3],
+            observed_values: vec![1.0; 3],
+            anomalies: vec![0.0; 3],
+            scores: Some(vec![f64::NAN; 3]),
+            validity: Some(vec![false; 3]),
+            diagnostics: None,
+            upper_bound: None,
+            lower_bound: None,
+        };
+
+        let frame = render_alert_signal(&source, &det, "A", "cpu").unwrap();
+        let value = serde_json::to_value(&frame).unwrap();
+        let flags = value["data"]["values"][1].as_array().unwrap();
+
+        assert!(flags.iter().all(Value::is_null));
     }
 
     /// `{{label}}` placeholders in a seriesLabel override resolve against the
@@ -798,8 +957,8 @@ mod tests {
         det.lower_bound.as_mut().unwrap().truncate(1);
         det.upper_bound.as_mut().unwrap().truncate(1);
 
-        let frame = render_alert_signal(&source, &det, "A", "cpu")
-            .expect("alert signal must render");
+        let frame =
+            render_alert_signal(&source, &det, "A", "cpu").expect("alert signal must render");
         let value = serde_json::to_value(&frame).expect("frame must serialize");
         assert_eq!(
             value["schema"]["fields"][1]["labels"]["alert4ml_series"],

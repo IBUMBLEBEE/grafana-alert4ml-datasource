@@ -21,12 +21,12 @@ pub const SCENARIO_META: &[ScenarioMeta] = &[
     },
     ScenarioMeta {
         id: "daily",
-        for_panel: "Outlier / Daily seasonality",
+        for_panel: "K-means / Daily seasonality",
         notes: "24h sine",
     },
     ScenarioMeta {
         id: "spike",
-        for_panel: "Outlier lite/full",
+        for_panel: "K-means",
         notes: "Calm + known spike windows (UTC)",
     },
     ScenarioMeta {

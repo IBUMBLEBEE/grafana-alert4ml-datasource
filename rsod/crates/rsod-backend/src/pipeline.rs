@@ -1,7 +1,7 @@
 //! Query pipeline — per-query orchestration, decoupled from the algorithms.
 //!
-//! Port of the former Go backend (`pkg/plugin/datasource.go`,
-//! `funnel_query.go`). Detection is dispatched through the `rsod-core`
+//! Port of the former Go backend (`pkg/plugin/datasource.go`). Detection is
+//! dispatched through the `rsod-core`
 //! registry (`detector_by_name`), so the backend never references a concrete
 //! algorithm's options type — swapping a model means adding/registering a new
 //! engine crate without touching this file.
@@ -12,17 +12,25 @@
 
 use grafana_plugin_sdk::{backend, data::Frame};
 use serde_json::Value;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, LazyLock,
+};
+use tokio::sync::Semaphore;
 use tracing::debug;
 
 use crate::client::{GrafanaClient, ProxyQueryBody};
 use crate::config::{PluginSettings, SecretPluginSettings};
 use crate::contract::{Alert4MLQueryJson, HistoryTimeRange, RenderMode};
-use crate::frame_ops::extract_timeseries;
+use crate::detection_query_plan::DetectionQueryPlan;
+use crate::detection_query_plan::MAX_RAW_POINTS_PER_QUERY;
+use crate::display_aggregation::aggregate_detection_for_display;
+use crate::frame_ops::{extract_timeseries, extract_timeseries_preserve_missing, frame_row_count};
 use crate::history_cache;
 use crate::render::render_detection;
 use crate::tools::{
-    build_targets_with_interval, effective_detect_interval, effective_funnel_history_interval,
-    effective_history_time_range, ensure_funnel_frames, get_recalculate_time_range,
+    build_targets_with_interval, effective_detect_interval_with_default,
+    effective_history_time_range, frame_series_key, get_recalculate_time_range,
     match_history_frame, max_data_points_for_range, split_frames,
 };
 use crate::uuid_util::UniqueKeysUuid;
@@ -31,6 +39,50 @@ use rsod_core::{
     derive_uuid, detector_by_name, iter_detectors, DetectOutput, DetectRequest, InputKind,
     QueryKind, RsodError, TimeSeriesInput,
 };
+
+const KMEANS_BLOCKING_WORKERS: usize = 2;
+static KMEANS_WORKER_LIMIT: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(KMEANS_BLOCKING_WORKERS)));
+
+struct CancellationGuard {
+    flag: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl CancellationGuard {
+    fn new() -> Self {
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+            armed: true,
+        }
+    }
+
+    fn flag(&self) -> Arc<AtomicBool> {
+        self.flag.clone()
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+fn ensure_raw_point_budget(actual_raw_points: usize) -> rsod_core::Result<()> {
+    if actual_raw_points > MAX_RAW_POINTS_PER_QUERY as usize {
+        return Err(format!(
+            "BudgetExceeded: upstream returned {actual_raw_points} raw points across all series; limit is {MAX_RAW_POINTS_PER_QUERY}. Shorten the range or explicitly increase detectIntervalMs"
+        )
+        .into());
+    }
+    Ok(())
+}
 
 /// Run a fallible algorithm call with panic isolation.
 ///
@@ -59,10 +111,9 @@ fn ml_call<T>(f: impl FnOnce() -> T) -> rsod_core::Result<T> {
 ///
 /// Called once from `main` before serving queries.
 pub fn assert_engines_registered() {
-    rsod_outlier::force_link();
     rsod_baseline::force_link();
     rsod_forecaster::force_link();
-    rsod_funnel::force_link();
+    rsod_kmeans::force_link();
 
     let registered: Vec<&'static str> = iter_detectors().map(|d| d.name()).collect();
     if registered.is_empty() {
@@ -103,12 +154,18 @@ pub async fn process_query(
     let query_json: Alert4MLQueryJson = serde_json::from_value(query.query.clone())
         .map_err(|e| format!("failed to parse query JSON: {}", e))?;
 
+    if query_json.detect_type == crate::contract::constant::DETECT_TYPE_FUNNEL_LEGACY {
+        return Err("Funnel L1 has been removed; migrate this query to K-means"
+            .to_string()
+            .into());
+    }
+
     let engine = detector_by_name(&query_json.detect_type)
         .ok_or_else(|| format!("unknown detect type: {}", query_json.detect_type))?;
 
-    if engine.query_kind() == QueryKind::FunnelDual {
-        // Storage is one-shot: initialize best-effort so funnel persistence
-        // uses the configured backend (SQLite in-memory in trial mode).
+    if engine.query_kind() == QueryKind::HistoryCurrentDual {
+        // Storage is one-shot: initialize best-effort so persisted models use
+        // the configured backend (SQLite in-memory in trial mode).
         // Panic-isolated (the Go-era FFI boundary caught panics here too).
         match ml_call(|| {
             rsod_storage::init_db_with_config(settings.trial_mode, &settings.pg_dsn(secrets))
@@ -118,8 +175,10 @@ pub async fn process_query(
             Err(e) => debug!(error = %e, "storage initialization panicked"),
         }
         let (new_frames, current_frames) =
-            process_funnel_dual_query(client, &query, &query_json).await?;
-        let frames = if query_json.render_mode() == RenderMode::Visualization {
+            process_history_current_dual_query(client, &query, &query_json).await?;
+        let frames = if query_json.render_mode() == RenderMode::Visualization
+            && query_json.detect_type != "kmeans"
+        {
             let mut all = current_frames;
             all.extend(new_frames);
             all
@@ -144,7 +203,7 @@ fn checked_response(
     Ok(backend::DataResponse::new(ref_id, checked))
 }
 
-/// Non-funnel path: proxy the targets to the upstream datasource with the
+/// Single-query path: proxy the targets to the upstream datasource with the
 /// recalculated (extended) time range, then run the per-detect-type ML.
 /// (Settings/secrets are not needed here — the client is built by the plugin
 /// service and all ML options come from the query's hyper-params JSON.)
@@ -162,7 +221,11 @@ async fn process_regular_query(
     );
     let (from, to) = get_recalculate_time_range(query.time_range.from, query.time_range.to, htr);
     let panel_interval_ms = query.interval.as_millis() as i64;
-    let interval_ms = effective_detect_interval(panel_interval_ms, query_json.detect_interval_ms);
+    let interval_ms = effective_detect_interval_with_default(
+        panel_interval_ms,
+        query_json.detect_interval_ms,
+        engine.default_detect_interval_ms(),
+    );
     let max_dp = max_data_points_for_range(from, to, interval_ms, query.max_data_points);
     let targets =
         build_targets_with_interval(&query_json.targets, &ref_id, interval_ms, max_dp, from, to)?;
@@ -217,18 +280,19 @@ fn process_detect(
     let engine = detector_by_name(&query_json.detect_type)
         .ok_or_else(|| format!("unknown detect type: {}", query_json.detect_type))?;
 
+    let series_key = frame_series_key(frame);
     let uk_uuid = UniqueKeysUuid {
         detect_type: &query_json.detect_type,
         support_detect: &query_json.support_detect,
         dashboard_uid: &query_json.unique_keys.dashboard_uid,
         panel_id: query_json.unique_keys.panel_id,
         series_ref_id: &query_json.unique_keys.series_ref_id,
-        series_name: &frame.name,
+        series_name: &series_key,
     }
     .to_uuid();
     // When a fixed detect interval is configured, fold it into the model key
     // so caches trained at another resolution are not reused.
-    let uk_uuid = model_uuid_for_interval(&uk_uuid, query_json.detect_interval_ms)?;
+    let uk_uuid = model_uuid_for_interval(&uk_uuid, body.interval_ms)?;
 
     // Prepare (current, history) per the engine's declared input contract.
     let cts: Vec<f64>;
@@ -268,6 +332,7 @@ fn process_detect(
         hyper_params: query_json.hyper_params.clone(),
         uuid: uk_uuid,
         interval_ms: body.interval_ms,
+        cancelled: None,
     };
 
     let DetectOutput { result, method } = ml_call(|| engine.detect(&req))??;
@@ -283,9 +348,9 @@ fn process_detect(
     )
 }
 
-/// Funnel: two upstream queries (profile history + panel current), then one
+/// Fixed-resolution dual query: profile history + panel current, then one
 /// detection per current frame with the index/key-matched history frame.
-async fn process_funnel_dual_query(
+async fn process_history_current_dual_query(
     client: &GrafanaClient,
     query: &backend::DataQuery<Value>,
     query_json: &Alert4MLQueryJson,
@@ -297,72 +362,119 @@ async fn process_funnel_dual_query(
         engine.default_history_duration_ms(),
     );
 
-    let (history_body, current_body) = build_funnel_dual_query_bodies(query, query_json, htr)?;
+    let (history_body, current_body, query_plan) = build_history_current_dual_query_bodies(
+        query,
+        query_json,
+        htr,
+        engine.default_detect_interval_ms(),
+    )?;
 
-    let hist_rsp = history_cache::get_or_fetch(client, &history_body)
+    let hist_rsp = history_cache::get_or_fetch_chunked(client, &history_body)
         .await
-        .map_err(|e| format!("funnel history query: {}", e))?;
+        .map_err(|e| format!("detection history query: {}", e))?;
     // Current window stays uncached — it must track the live panel range.
-    let cur_rsp = client
-        .data_source_query(&current_body)
+    let cur_rsp = history_cache::fetch_uncached(client, &current_body)
         .await
-        .map_err(|e| format!("funnel current query: {}", e))?;
+        .map_err(|e| format!("detection current query: {}", e))?;
 
-    let missing_frames_err = |which: &str| {
-        format!(
-            "funnel {} query returned no frames for refId {:?}",
-            which, query.ref_id
-        )
-    };
     let hist_frames = hist_rsp
         .results
         .get(&query.ref_id)
         .map(|r| &r.frames)
-        .filter(|frames| !frames.is_empty())
-        .ok_or_else(|| missing_frames_err("history"))?;
-    let cur_frames = cur_rsp
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let Some(cur_frames) = cur_rsp
         .results
         .get(&query.ref_id)
         .map(|r| &r.frames)
         .filter(|frames| !frames.is_empty())
-        .ok_or_else(|| missing_frames_err("current"))?;
+    else {
+        // An empty current range is Grafana NoData, not a datasource error.
+        // Returning no frames lets the alert rule's configured NoData policy
+        // decide the state without manufacturing a normal 0.
+        return Ok((Vec::new(), Vec::new()));
+    };
+
+    // The planner can only estimate per-series cost before the upstream call.
+    // Enforce the instance query budget again using every row actually
+    // returned across history, current and all series before starting ML.
+    let actual_raw_points = hist_frames
+        .iter()
+        .chain(cur_frames.iter())
+        .try_fold(0usize, |total, frame| {
+            let value_columns = frame.fields().len().saturating_sub(1).max(1);
+            frame_row_count(frame)
+                .checked_mul(value_columns)
+                .and_then(|points| total.checked_add(points))
+        })
+        .ok_or_else(|| "BudgetExceeded: returned point count overflow".to_string())?;
+    ensure_raw_point_budget(actual_raw_points)?;
 
     let mut new_frames = Vec::new();
     for (frame_idx, f) in cur_frames.iter().enumerate() {
         if f.fields().is_empty() {
             continue;
         }
-        // History frame: same index first, then series-key fallback; missing
-        // entirely → empty frame (Go's cold-start handling).
-        let history = match match_history_frame(hist_frames, f, frame_idx) {
-            Some(h) => crate::tools::clone_frame(h)?,
-            None => Frame::new(f.name.clone()),
-        };
+        // Match history/current by full series identity; never silently pair
+        // series by response order.
         let current = crate::tools::clone_frame(f)?;
-        let (history, current) = ensure_funnel_frames(f, &history, &current)?;
-        let (hts, hvals) = extract_timeseries(&history)?;
-        let (cts, cvals) = extract_timeseries(&current)?;
+        // Missing history for one series is an unavailable/warming detector,
+        // not a normal result and not a whole-query failure. Empty training
+        // input produces validity=false, rendered as null in AlertSignal.
+        let (hts, hvals) = match match_history_frame(hist_frames, f, frame_idx) {
+            Some(history) => extract_timeseries_preserve_missing(history)?,
+            None => (Vec::new(), Vec::new()),
+        };
+        let (cts, cvals) = extract_timeseries_preserve_missing(&current)?;
 
+        let series_key = frame_series_key(f);
         let uk_uuid = UniqueKeysUuid {
             detect_type: &query_json.detect_type,
             support_detect: &query_json.support_detect,
             dashboard_uid: &query_json.unique_keys.dashboard_uid,
             panel_id: query_json.unique_keys.panel_id,
             series_ref_id: &query_json.unique_keys.series_ref_id,
-            series_name: &f.name,
+            series_name: &series_key,
         }
         .to_uuid();
-        let uk_uuid = model_uuid_for_interval(&uk_uuid, query_json.detect_interval_ms)?;
+        let uk_uuid = model_uuid_for_query(
+            &uk_uuid,
+            current_body.interval_ms,
+            &query_json.hyper_params,
+            &query_json.targets,
+        )?;
 
-        let req = DetectRequest {
-            current: TimeSeriesInput::new(&cts, &cvals),
-            history: TimeSeriesInput::new(&hts, &hvals),
-            hyper_params: query_json.hyper_params.clone(),
-            uuid: uk_uuid,
-            interval_ms: current_body.interval_ms,
-        };
-
-        let DetectOutput { result, method } = ml_call(|| engine.detect(&req))??;
+        let hyper_params = query_json.hyper_params.clone();
+        let interval_ms = current_body.interval_ms;
+        let permit = KMEANS_WORKER_LIMIT
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| "K-means worker pool is unavailable".to_string())?;
+        let mut cancellation_guard = CancellationGuard::new();
+        let cancelled = cancellation_guard.flag();
+        let detected = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let req = DetectRequest {
+                current: TimeSeriesInput::new(&cts, &cvals),
+                history: TimeSeriesInput::new(&hts, &hvals),
+                hyper_params,
+                uuid: uk_uuid,
+                interval_ms,
+                cancelled: Some(cancelled),
+            };
+            ml_call(|| engine.detect(&req))
+        })
+        .await;
+        cancellation_guard.disarm();
+        let detected = detected.map_err(|e| format!("K-means worker failed: {e}"))?;
+        let DetectOutput { mut result, method } = detected??;
+        if method == rsod_core::DetectionMethod::Clustering
+            && query_json.render_mode() != RenderMode::AlertSignal
+            && query_plan.display_interval_ms > query_plan.detect_interval_ms
+        {
+            result = aggregate_detection_for_display(&result, query_plan.display_interval_ms)?;
+        }
 
         let series_name = series_display_name(f, &query_json.series_label);
         new_frames.push(render_detection(
@@ -383,33 +495,38 @@ async fn process_funnel_dual_query(
     Ok((new_frames, cur_frames_owned))
 }
 
-/// `BuildFunnelDualQueryBodies`:
+/// Build fixed-resolution history/current upstream query bodies.
 ///
 /// ```text
-/// current: [panelFrom, panelTo]               @ panelIntervalMs ($__interval)
-/// history: [panelFrom - duration, panelFrom) @ auto-coarsened panel interval
+/// current: [panelFrom, panelTo]              @ detectIntervalMs
+/// history: [panelFrom - duration, panelFrom) @ detectIntervalMs
 /// ```
-fn build_funnel_dual_query_bodies(
+fn build_history_current_dual_query_bodies(
     query: &backend::DataQuery<Value>,
     query_json: &Alert4MLQueryJson,
     htr: HistoryTimeRange,
-) -> rsod_core::Result<(ProxyQueryBody, ProxyQueryBody)> {
-    let panel_from = query.time_range.from;
-    let panel_to = query.time_range.to;
-    if panel_to < panel_from {
-        return Err("funnel: panel time range is empty".to_string().into());
+    default_detect_interval_ms: i64,
+) -> rsod_core::Result<(ProxyQueryBody, ProxyQueryBody, DetectionQueryPlan)> {
+    let requested_from = query.time_range.from;
+    let requested_to = query.time_range.to;
+    if requested_to < requested_from {
+        return Err("detection panel time range is empty".to_string().into());
     }
-    let panel_interval = effective_detect_interval(
+    let plan = DetectionQueryPlan::new(
+        requested_from,
+        requested_to,
         query.interval.as_millis() as i64,
         query_json.detect_interval_ms,
-    );
-    if panel_interval <= 0 {
-        return Err("funnel: panel interval must be > 0".to_string().into());
-    }
-    let history_interval =
-        effective_funnel_history_interval(panel_interval, htr.duration_ms, query.max_data_points);
+        default_detect_interval_ms,
+        htr.duration_ms,
+        query.max_data_points,
+    )?;
+    let panel_interval = plan.detect_interval_ms;
+    let history_interval = plan.detect_interval_ms;
 
-    let history_from = panel_from - chrono::Duration::milliseconds(htr.duration_ms);
+    let panel_from = plan.eval_range.from;
+    let panel_to = plan.eval_range.to;
+    let history_from = plan.context_range.from;
     let hist_max_dp = max_data_points_for_range(
         history_from,
         panel_from,
@@ -449,6 +566,7 @@ fn build_funnel_dual_query_bodies(
             to: panel_to,
             interval_ms: panel_interval,
         },
+        plan,
     ))
 }
 
@@ -463,9 +581,47 @@ fn model_uuid_for_interval(base_uuid: &str, detect_interval_ms: i64) -> rsod_cor
     derive_uuid(base_uuid, &extra)
 }
 
+/// Return only the K-means hyperparameters that affect trained model artifacts.
+///
+/// `anomalyThreshold` is applied to the ensemble score at inference time. It
+/// must not invalidate otherwise identical persisted models when an operator
+/// tunes alert sensitivity.
+fn kmeans_training_hyper_params(hyper_params: &serde_json::Value) -> serde_json::Value {
+    let mut training_params = hyper_params.clone();
+    if let serde_json::Value::Object(params) = &mut training_params {
+        params.remove("anomalyThreshold");
+    }
+    training_params
+}
+
+/// Derive a K-means model key from every training-affecting input. This keeps
+/// persisted ensembles isolated when the fixed step, training configuration,
+/// or upstream query changes while allowing inference-only threshold tuning to
+/// reuse the existing ensemble.
+fn model_uuid_for_query(
+    base_uuid: &str,
+    detect_interval_ms: i64,
+    hyper_params: &serde_json::Value,
+    targets: &[serde_json::Value],
+) -> rsod_core::Result<String> {
+    let training_hyper_params = kmeans_training_hyper_params(hyper_params);
+    let hyper_params = serde_json::to_string(&training_hyper_params)
+        .map_err(|e| format!("failed to serialize model hyperparameters: {e}"))?;
+    let targets = serde_json::to_string(targets)
+        .map_err(|e| format!("failed to serialize model targets: {e}"))?;
+    let extra = format!(
+        "{{\"intervalMs\":{},\"preprocessingVersion\":1,\"hyperParams\":{},\"targets\":{}}}",
+        detect_interval_ms, hyper_params, targets
+    );
+    derive_uuid(base_uuid, &extra)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ml_call, series_display_name};
+    use super::{
+        ensure_raw_point_budget, ml_call, model_uuid_for_query, series_display_name,
+        CancellationGuard,
+    };
     use crate::client::ProxyQueryBody;
     use crate::contract::{constant, Alert4MLQueryJson, HistoryTimeRange};
     use chrono::{DateTime, TimeZone, Utc};
@@ -496,6 +652,95 @@ mod tests {
         assert_eq!(err.unwrap_err(), "boom");
     }
 
+    #[test]
+    fn actual_budget_is_enforced_across_all_returned_series() {
+        assert!(ensure_raw_point_budget(
+            crate::detection_query_plan::MAX_RAW_POINTS_PER_QUERY as usize
+        )
+        .is_ok());
+        let err = ensure_raw_point_budget(
+            crate::detection_query_plan::MAX_RAW_POINTS_PER_QUERY as usize + 1,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("BudgetExceeded"));
+        assert!(err.contains("across all series"));
+    }
+
+    #[test]
+    fn dropping_an_active_query_guard_cancels_blocking_work() {
+        let flag = {
+            let guard = CancellationGuard::new();
+            guard.flag()
+        };
+        assert!(flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn kmeans_model_identity_changes_with_step_config_and_query() {
+        let base = "c138e166-a5c0-5c75-9528-da1950d6a57e";
+        let original = model_uuid_for_query(
+            base,
+            60_000,
+            &serde_json::json!({"maxModels": 18}),
+            &[serde_json::json!({"expr": "rate(a[5m])"})],
+        )
+        .unwrap();
+        let different_step = model_uuid_for_query(
+            base,
+            300_000,
+            &serde_json::json!({"maxModels": 18}),
+            &[serde_json::json!({"expr": "rate(a[5m])"})],
+        )
+        .unwrap();
+        let different_config = model_uuid_for_query(
+            base,
+            60_000,
+            &serde_json::json!({"maxModels": 2}),
+            &[serde_json::json!({"expr": "rate(a[5m])"})],
+        )
+        .unwrap();
+        let different_query = model_uuid_for_query(
+            base,
+            60_000,
+            &serde_json::json!({"maxModels": 18}),
+            &[serde_json::json!({"expr": "rate(b[5m])"})],
+        )
+        .unwrap();
+        assert_ne!(original, different_step);
+        assert_ne!(original, different_config);
+        assert_ne!(original, different_query);
+    }
+
+    #[test]
+    fn kmeans_model_identity_ignores_inference_only_anomaly_threshold() {
+        let base = "c138e166-a5c0-5c75-9528-da1950d6a57e";
+        let strict = model_uuid_for_query(
+            base,
+            60_000,
+            &serde_json::json!({"maxModels": 18, "anomalyThreshold": 99}),
+            &[serde_json::json!({"expr": "rate(a[5m])"})],
+        )
+        .unwrap();
+        let sensitive = model_uuid_for_query(
+            base,
+            60_000,
+            &serde_json::json!({"maxModels": 18, "anomalyThreshold": 90}),
+            &[serde_json::json!({"expr": "rate(a[5m])"})],
+        )
+        .unwrap();
+        let omitted = model_uuid_for_query(
+            base,
+            60_000,
+            &serde_json::json!({"maxModels": 18}),
+            &[serde_json::json!({"expr": "rate(a[5m])"})],
+        )
+        .unwrap();
+
+        assert_eq!(strict, sensitive);
+        assert_eq!(strict, omitted);
+    }
+
     /// Every expected engine must be self-registered once the engine crates
     /// are linked into the binary (`force_link` / `assert_engines_registered`
     /// guarantee this).
@@ -503,10 +748,9 @@ mod tests {
     fn all_engines_are_registered() {
         super::assert_engines_registered();
         for name in [
-            constant::DETECT_TYPE_OUTLIER,
             constant::BASELINE_DETECT_TYPE_DYNAMICS,
             constant::DETECT_TYPE_FORECAST,
-            constant::DETECT_TYPE_FUNNEL,
+            constant::DETECT_TYPE_KMEANS,
         ] {
             assert!(
                 rsod_core::detector_by_name(name).is_some(),
@@ -517,7 +761,7 @@ mod tests {
 
     /// Regression for "bounds chart not shown in the panel": the forecaster
     /// used to emit epoch *seconds* in `DetectionResult.timestamps` while the
-    /// contract (Go FFI chain, rsod-core, funnel `alert_output`) is epoch
+    /// contract (Go FFI chain and rsod-core) is epoch
     /// *millis*. `detection_frame` divides by 1000 to build `DateTime`, so a
     /// seconds value collapsed the whole axis into January 1970 and Grafana
     /// drew nothing.

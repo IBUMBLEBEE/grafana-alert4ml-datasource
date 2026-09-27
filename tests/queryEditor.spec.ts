@@ -2,7 +2,7 @@ import { test, expect } from '@grafana/plugin-e2e';
 import {
   createAlert4MLDataSource,
   expandHyperparameterSettings,
-  FUNNEL_DETECT_LABEL,
+  KMEANS_DETECT_LABEL,
   reopenNewPanelEditor,
   selectComboboxByLabel,
   setPanelDataSource,
@@ -27,17 +27,17 @@ test('smoke: query editor renders Alert4ML sections', async ({ panelEditPage, cr
   await expect(outputField.getByRole('combobox')).toHaveValue('Visualization');
 });
 
-test('smoke: funnel hyperparameters are visible', async ({ panelEditPage, createDataSource, page }) => {
+test('smoke: K-means hyperparameters are visible', async ({ panelEditPage, createDataSource, page }) => {
   await createAlert4MLDataSource(createDataSource);
   await reopenNewPanelEditor(page);
   await setPanelDataSource(page, 'alert4ml-e2e');
 
-  await selectComboboxByLabel(page, 'Detect Types', FUNNEL_DETECT_LABEL);
+  await selectComboboxByLabel(page, 'Detect Types', KMEANS_DETECT_LABEL);
   await expandHyperparameterSettings(page);
-  await expect(page.getByText('Eval Window (sec)')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Anomaly threshold')).toBeVisible({ timeout: 15_000 });
 
   const row = panelEditPage.getQueryEditorRow('A');
-  await expect(row.getByText('Eval Window (sec)')).toBeVisible();
-  await expect(row.getByText('Alert Output')).toBeVisible();
-  await expect(row.getByText('Lookback (days)')).toBeVisible();
+  await expect(row.getByText('Models', { exact: true })).toBeVisible();
+  await expect(row.getByText('Models for alert')).toBeVisible();
+  await expect(row.getByText('Persist models')).toBeVisible();
 });

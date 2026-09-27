@@ -1,0 +1,43 @@
+{
+  "reference": {
+    "repository": "https://github.com/netdata/netdata",
+    "commit": "4464a9ed71c8a7351b540ce4ca207e1418faffea",
+    "featureSource": "src/ml/ml_features.cc",
+    "scoreSource": "src/ml/ml_kmeans.cc",
+    "featureContract": "diff(1) -> smooth(3) -> lag(5)",
+    "scoreContract": "min(100, 100 * abs((mean_center_distance - min_distance) / (max_distance - min_distance)))",
+    "initializationCompatibility": "contract-only: Rust uses seeded k-means++; Netdata uses dlib pick_initial_centers"
+  },
+  "feature": {
+    "intervalMs": 60000,
+    "timestamps": [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660],
+    "values": [0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66],
+    "expected": [
+      { "sourceIndex": 8, "timestamp": 480, "vector": [2, 3, 4, 5, 6, 7] },
+      { "sourceIndex": 9, "timestamp": 540, "vector": [3, 4, 5, 6, 7, 8] },
+      { "sourceIndex": 10, "timestamp": 600, "vector": [4, 5, 6, 7, 8, 9] },
+      { "sourceIndex": 11, "timestamp": 660, "vector": [5, 6, 7, 8, 9, 10] }
+    ]
+  },
+  "score": {
+    "model": {
+      "window_start": 0,
+      "window_end": 1,
+      "centers": [
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0]
+      ],
+      "min_distance": 1,
+      "max_distance": 3
+    },
+    "threshold": 99,
+    "cases": [
+      { "vector": [1, 0, 0, 0, 0, 0], "expectedScore": 0, "expectedAnomaly": false },
+      { "vector": [2, 0, 0, 0, 0, 0], "expectedScore": 50, "expectedAnomaly": false },
+      { "vector": [2.98, 0, 0, 0, 0, 0], "expectedScore": 99, "expectedAnomaly": true },
+      { "vector": [2.978, 0, 0, 0, 0, 0], "expectedScore": 98.9, "expectedAnomaly": false },
+      { "vector": [3, 0, 0, 0, 0, 0], "expectedScore": 100, "expectedAnomaly": true },
+      { "vector": [0, 0, 0, 0, 0, 0], "expectedScore": 50, "expectedAnomaly": false }
+    ]
+  }
+}

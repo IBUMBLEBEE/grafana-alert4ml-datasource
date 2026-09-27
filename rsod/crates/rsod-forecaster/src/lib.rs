@@ -1,19 +1,21 @@
 mod engine;
 
-use serde::{Deserialize, Serialize};
-use perpetual::{objective::Objective, Matrix, PerpetualBooster};
-use perpetual::booster::config::BoosterIO;
-use std::io::Write;
-use std::fs;
-use rsod_storage::model::Model;
-use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
 use chrono::{DateTime, Datelike, Timelike};
+use perpetual::booster::config::BoosterIO;
+use perpetual::{objective::Objective, Matrix, PerpetualBooster};
+use rsod_core::{DetectionResult, RsodError, TimeSeriesInput};
+use rsod_storage::model::Model;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::Write;
 
 // Re-export shared column constants from rsod-core
-pub use rsod_core::{TIMESTAMP_COL, VALUE_COL, PRED_COL, LOWER_BOUND_COL, UPPER_BOUND_COL, ANOMALY_COL};
 pub use engine::{
     force_link, parse_forecast_hyper_params, ForecastEngine, ForecastHyperParams,
     ForecastTrainingKey,
+};
+pub use rsod_core::{
+    ANOMALY_COL, LOWER_BOUND_COL, PRED_COL, TIMESTAMP_COL, UPPER_BOUND_COL, VALUE_COL,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,14 +24,14 @@ pub struct ForecasterOptions {
     pub periods: Vec<usize>,
     pub uuid: String,
     /// Budget parameter, controls model step size and complexity
-    /// 
+    ///
     /// Based on how PerpetualBooster works (https://perpetual-ml.com/blog/how-perpetual-works):
     /// - Step size calculation formula: alpha = 10^(-budget)
     /// - Larger budget means smaller step size, model training is more conservative, may underfit
     /// - Smaller budget means larger step size, model training is more aggressive, may overfit
     /// - Default value: 1.0 (corresponding to step size 0.1)
     /// - Recommended range: 0.3 - 3.0
-    /// 
+    ///
     /// PerpetualBooster uses two control mechanisms:
     /// 1. Step size control: Controls step size at each step through budget parameter
     /// 2. Generalization control: Automatically validates at node splitting to prevent overfitting
@@ -82,7 +84,9 @@ impl Default for ForecasterOptions {
 /// Load forecasting model from SQLite database
 fn load_model_from_db(uuid: &str) -> rsod_core::Result<PerpetualBooster> {
     let mut model = Model::new(uuid.to_string(), vec![]);
-    model.read().map_err(|e| format!("Failed to read database: {}", e))?;
+    model
+        .read()
+        .map_err(|e| format!("Failed to read database: {}", e))?;
 
     if model.artifacts.is_empty() {
         return Err("Model does not exist".into());
@@ -107,34 +111,34 @@ fn load_model_from_db(uuid: &str) -> rsod_core::Result<PerpetualBooster> {
 }
 
 /// Save forecasting model to SQLite database
-fn save_model_to_db(
-    uuid: &str,
-    model: &PerpetualBooster,
-) -> rsod_core::Result<()> {
+fn save_model_to_db(uuid: &str, model: &PerpetualBooster) -> rsod_core::Result<()> {
     // Save to temporary file
     let temp_path = std::env::temp_dir().join(format!("perpetual_model_{}.json", uuid));
-    model.save_booster(temp_path.to_str().unwrap())
+    model
+        .save_booster(temp_path.to_str().unwrap())
         .map_err(|e| format!("Failed to save model to temporary file: {}", e))?;
 
     // Read file content
-    let artifacts = fs::read(&temp_path)
-        .map_err(|e| format!("Failed to read temporary file: {}", e))?;
+    let artifacts =
+        fs::read(&temp_path).map_err(|e| format!("Failed to read temporary file: {}", e))?;
 
     // Clean up temporary file
     let _ = fs::remove_file(&temp_path);
 
     // Save to SQLite database
     let storage_model = Model::new(uuid.to_string(), artifacts);
-    storage_model.write().map_err(|e| format!("Failed to write to database: {}", e))?;
+    storage_model
+        .write()
+        .map_err(|e| format!("Failed to write to database: {}", e))?;
 
     Ok(())
 }
 
 /// Extract time features from timestamp
-/// 
+///
 /// # Arguments
 /// * `timestamp` - Timestamp (seconds or milliseconds, auto-detected)
-/// 
+///
 /// # Returns
 /// Time feature vector, containing:
 /// - Normalized hour (0-1)
@@ -150,9 +154,9 @@ fn extract_time_features(timestamp: f64) -> Vec<f64> {
     } else {
         timestamp as i64
     };
-    
+
     let mut features = Vec::with_capacity(14);
-    
+
     if let Some(dt) = DateTime::from_timestamp_millis(timestamp_millis) {
         let hour = dt.hour() as f64;
         let day_of_week = dt.weekday().num_days_from_monday() as f64;
@@ -161,7 +165,11 @@ fn extract_time_features(timestamp: f64) -> Vec<f64> {
         // Quarter: 1-4 derived from month
         let quarter = ((dt.month() - 1) / 3 + 1) as f64;
         // Weekend indicator: Saturday(5) or Sunday(6) -> 1.0, otherwise 0.0
-        let is_weekend = if dt.weekday().num_days_from_monday() >= 5 { 1.0 } else { 0.0 };
+        let is_weekend = if dt.weekday().num_days_from_monday() >= 5 {
+            1.0
+        } else {
+            0.0
+        };
 
         // Linear normalized features [0, 1]
         let hour_norm = (hour / 23.0).clamp(0.0, 1.0);
@@ -174,8 +182,8 @@ fn extract_time_features(timestamp: f64) -> Vec<f64> {
         features.push(day_of_week_norm);
         features.push(day_of_month_norm);
         features.push(month_norm);
-        features.push(quarter_norm);        // Quarter (0-1)
-        features.push(is_weekend);          // Weekend indicator (0 or 1)
+        features.push(quarter_norm); // Quarter (0-1)
+        features.push(is_weekend); // Weekend indicator (0 or 1)
 
         // Periodic features (sine/cosine encoding for cyclic calendar variables)
         let hour_rad = hour * 2.0 * std::f64::consts::PI / 24.0;
@@ -206,11 +214,11 @@ fn extract_time_features(timestamp: f64) -> Vec<f64> {
 }
 
 /// Calculate moving average
-/// 
+///
 /// # Arguments
 /// * `data` - Data sequence
 /// * `window_size` - Window size
-/// 
+///
 /// # Returns
 /// Moving average sequence, same length as input data
 /// - For the first window_size-1 points, use cumulative average (all data from start to current point)
@@ -220,7 +228,7 @@ fn moving_average(data: &[f64], window_size: usize) -> Vec<f64> {
         return vec![];
     }
     let mut result = Vec::with_capacity(data.len());
-    
+
     for i in 0..data.len() {
         if window_size == 1 {
             // When window size is 1, directly use current value
@@ -237,16 +245,16 @@ fn moving_average(data: &[f64], window_size: usize) -> Vec<f64> {
             result.push(avg);
         }
     }
-    
+
     result
 }
 
 /// Calculate moving standard deviation
-/// 
+///
 /// # Arguments
 /// * `data` - Data sequence
 /// * `window_size` - Window size
-/// 
+///
 /// # Returns
 /// Moving standard deviation sequence, same length as input data
 /// - For the first window_size-1 points, use cumulative standard deviation (all data from start to current point)
@@ -256,7 +264,7 @@ fn moving_std(data: &[f64], window_size: usize) -> Vec<f64> {
         return vec![];
     }
     let mut result = Vec::with_capacity(data.len());
-    
+
     for i in 0..data.len() {
         if window_size == 1 {
             // When window size is 1, standard deviation is 0
@@ -278,12 +286,13 @@ fn moving_std(data: &[f64], window_size: usize) -> Vec<f64> {
             let start_idx = i + 1 - window_size; // Equivalent to i - window_size + 1, but safer
             let slice = &data[start_idx..=i];
             let mean = slice.iter().sum::<f64>() / window_size as f64;
-            let variance = slice.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / window_size as f64;
+            let variance =
+                slice.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / window_size as f64;
             let std = variance.sqrt();
             result.push(std);
         }
     }
-    
+
     result
 }
 
@@ -294,8 +303,15 @@ fn moving_min(data: &[f64], window_size: usize) -> Vec<f64> {
     }
     let mut result = Vec::with_capacity(data.len());
     for i in 0..data.len() {
-        let start = if window_size == 1 || i < window_size - 1 { 0 } else { i + 1 - window_size };
-        let min = data[start..=i].iter().cloned().fold(f64::INFINITY, f64::min);
+        let start = if window_size == 1 || i < window_size - 1 {
+            0
+        } else {
+            i + 1 - window_size
+        };
+        let min = data[start..=i]
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
         result.push(min);
     }
     result
@@ -308,8 +324,15 @@ fn moving_max(data: &[f64], window_size: usize) -> Vec<f64> {
     }
     let mut result = Vec::with_capacity(data.len());
     for i in 0..data.len() {
-        let start = if window_size == 1 || i < window_size - 1 { 0 } else { i + 1 - window_size };
-        let max = data[start..=i].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let start = if window_size == 1 || i < window_size - 1 {
+            0
+        } else {
+            i + 1 - window_size
+        };
+        let max = data[start..=i]
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
         result.push(max);
     }
     result
@@ -331,11 +354,15 @@ fn ewm(data: &[f64], alpha: f64) -> Vec<f64> {
     result
 }
 
-fn extract_features(timestamps: &[f64], values: &[f64], periods: &[usize]) -> (Vec<f64>, Vec<f64>, usize) {
+fn extract_features(
+    timestamps: &[f64],
+    values: &[f64],
+    periods: &[usize],
+) -> (Vec<f64>, Vec<f64>, usize) {
     // Extract time features and statistical features from time series historical data
     // Changed to directly predict absolute values instead of differences, so the model can better learn the relationship between time features and values
     // Ensure data and history_data use the same time feature extraction method (both use extract_time_features function)
-    
+
     let n_samples = timestamps.len();
     let n_time_features = 14; // 6 linear-normalized + 8 periodic (hour, weekday, dom, month, quarter, is_weekend + sin/cos for hour/week/month/dom)
     let n_stat_features = 5; // moving avg, moving std, rolling min, rolling max, EWM
@@ -374,7 +401,11 @@ fn extract_features(timestamps: &[f64], values: &[f64], periods: &[usize]) -> (V
 
         // Lag features
         for (lag_idx, &period) in periods.iter().enumerate() {
-            let lag_val = if i >= period { values[i - period] } else { values[0] };
+            let lag_val = if i >= period {
+                values[i - period]
+            } else {
+                values[0]
+            };
             columns[19 + lag_idx].push(lag_val);
         }
 
@@ -394,27 +425,29 @@ fn calculate_residual_std(targets: &[f64], predictions: &[f64]) -> f64 {
         return 0.0;
     }
 
-    let residuals: Vec<f64> = targets.iter()
+    let residuals: Vec<f64> = targets
+        .iter()
         .zip(predictions.iter())
         .map(|(y_true, y_pred)| y_true - y_pred)
         .collect();
 
     let residual_mean = residuals.iter().sum::<f64>() / residuals.len() as f64;
-    let residual_variance = residuals.iter()
+    let residual_variance = residuals
+        .iter()
         .map(|r| (r - residual_mean).powi(2))
-        .sum::<f64>() / (residuals.len() - 1) as f64; // Sample standard deviation
+        .sum::<f64>()
+        / (residuals.len() - 1) as f64; // Sample standard deviation
 
     residual_variance.sqrt().max(0.0)
 }
 
-
 /// Convenience function for training and prediction
-/// 
+///
 /// # Arguments
 /// * `data` - Current data, used to determine prediction length (predict data.len() future values)
 /// * `history_data` - Historical data, used to train the model
 /// * `options` - Forecaster configuration options
-/// 
+///
 /// # Returns
 /// DetectionResult containing timestamps, predicted values, anomaly flags, and bounds.
 pub fn forecast(
@@ -426,8 +459,13 @@ pub fn forecast(
     let std_dev_multiplier = options.std_dev_multiplier.unwrap_or(2.0);
     let allow_negative_bounds = options.allow_negative_bounds.unwrap_or(false);
 
-    let (data_features, _data_targets, data_n_features) = extract_features(data.timestamps, data.values, &options.periods);
-    let (history_features, history_targets, history_n_features) = extract_features(history_data.timestamps, history_data.values, &options.periods);
+    let (data_features, _data_targets, data_n_features) =
+        extract_features(data.timestamps, data.values, &options.periods);
+    let (history_features, history_targets, history_n_features) = extract_features(
+        history_data.timestamps,
+        history_data.values,
+        &options.periods,
+    );
 
     // Create matrix (created at caller to maintain lifetime)
     let matrix = Matrix::new(&data_features, data.len(), data_n_features);
@@ -441,11 +479,18 @@ pub fn forecast(
             let history_pred = model.predict(&matrix_history, true);
             let residual_std = calculate_residual_std(&history_targets, &history_pred);
             let pred = model.predict(&matrix, true);
-            return Ok(compute_anomaly(data.timestamps, data.values, &pred, residual_std, std_dev_multiplier, allow_negative_bounds));
+            return Ok(compute_anomaly(
+                data.timestamps,
+                data.values,
+                &pred,
+                residual_std,
+                std_dev_multiplier,
+                allow_negative_bounds,
+            ));
         }
         // Model doesn't exist, continue training new model
     }
-    
+
     let budget = options.budget.unwrap_or(1.0);
     let mut model = PerpetualBooster::default()
         .set_objective(Objective::SquaredLoss)
@@ -486,10 +531,24 @@ pub fn forecast(
         ).into());
     }
 
-    Ok(compute_anomaly(data.timestamps, data.values, &pred, residual_std, std_dev_multiplier, allow_negative_bounds))
+    Ok(compute_anomaly(
+        data.timestamps,
+        data.values,
+        &pred,
+        residual_std,
+        std_dev_multiplier,
+        allow_negative_bounds,
+    ))
 }
 
-fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_std: f64, std_dev_multiplier: f64, allow_negative_bounds: bool) -> DetectionResult {
+fn compute_anomaly(
+    timestamps: &[f64],
+    values: &[f64],
+    pred: &[f64],
+    residual_std: f64,
+    std_dev_multiplier: f64,
+    allow_negative_bounds: bool,
+) -> DetectionResult {
     let n = timestamps.len();
     let margin = std_dev_multiplier * residual_std;
 
@@ -516,11 +575,13 @@ fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_st
         upper.push(ub);
         lower.push(lb);
 
-        anomalies.push(if values[i].is_finite() && (values[i] < lb || values[i] > ub) {
-            1.0
-        } else {
-            0.0
-        });
+        anomalies.push(
+            if values[i].is_finite() && (values[i] < lb || values[i] > ub) {
+                1.0
+            } else {
+                0.0
+            },
+        );
     }
 
     DetectionResult {
@@ -528,11 +589,13 @@ fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_st
         values: result_values,
         observed_values: values.to_vec(),
         anomalies,
+        scores: None,
+        validity: None,
+        diagnostics: None,
         upper_bound: Some(upper),
         lower_bound: Some(lower),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -582,17 +645,16 @@ mod tests {
         assert_eq!(result.anomalies.len(), current_values.len());
         assert!(result.upper_bound.is_some());
         assert!(result.lower_bound.is_some());
-        assert_eq!(result.upper_bound.as_ref().unwrap().len(), current_values.len());
+        assert_eq!(
+            result.upper_bound.as_ref().unwrap().len(),
+            current_values.len()
+        );
 
         let (baseline_mae, baseline_rmse) = eval::naive_forecast_baseline_metrics(&current_values);
         let metrics = ForecastMetrics::compute(&current_values, &result.values, &history_values);
         println!(
             "forecast — MAE={:.4} RMSE={:.4} MASE={:.4} baseline_mae={:.4} baseline_rmse={:.4}",
-            metrics.mae,
-            metrics.rmse,
-            metrics.mase,
-            baseline_mae,
-            baseline_rmse,
+            metrics.mae, metrics.rmse, metrics.mase, baseline_mae, baseline_rmse,
         );
         metrics.assert_default(baseline_mae, baseline_rmse);
     }

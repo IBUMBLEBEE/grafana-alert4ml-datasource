@@ -1,10 +1,10 @@
 /// Seasonality detection stage.
 ///
 /// ACF and PACF computations delegate to `anofox_forecast::features::autocorrelation`.
-use crate::types::{SeasonalityAnalysis, PeriodicityAnalysis};
+use crate::types::{PeriodicityAnalysis, SeasonalityAnalysis};
+use anofox_forecast::features::autocorrelation::{autocorrelation, partial_autocorrelation};
 use rsod_core::Result;
 use std::collections::HashMap;
-use anofox_forecast::features::autocorrelation::{autocorrelation, partial_autocorrelation};
 
 /// Detect seasonality by checking ACF strength at candidate seasonal periods.
 #[allow(dead_code)]
@@ -22,8 +22,8 @@ pub fn detect_seasonality_stl(values: &[f64], max_period: usize) -> Result<Seaso
     let mut strengths = HashMap::new();
 
     let periods_to_check = [
-        7, 24, 48, 168,  // Daily, hourly patterns
-        30, 52, 365,      // Monthly, weekly, yearly patterns
+        7, 24, 48, 168, // Daily, hourly patterns
+        30, 52, 365, // Monthly, weekly, yearly patterns
     ];
 
     for &period in periods_to_check.iter() {
@@ -113,7 +113,11 @@ pub fn compute_acf(values: &[f64], max_lag: usize) -> Vec<f64> {
     (0..=max_lag.min(values.len() - 1))
         .map(|lag| {
             let v = autocorrelation(values, lag);
-            if v.is_nan() { 0.0 } else { v.max(-1.0).min(1.0) }
+            if v.is_nan() {
+                0.0
+            } else {
+                v.max(-1.0).min(1.0)
+            }
         })
         .collect()
 }
@@ -127,7 +131,11 @@ pub fn compute_pacf(values: &[f64], max_lag: usize) -> Vec<f64> {
     (0..=max_lag.min(values.len() - 1))
         .map(|lag| {
             let v = partial_autocorrelation(values, lag);
-            if v.is_nan() { 0.0 } else { v }
+            if v.is_nan() {
+                0.0
+            } else {
+                v
+            }
         })
         .collect()
 }
@@ -174,4 +182,3 @@ mod tests {
         assert!((pacf[0] - 1.0).abs() < 1e-9);
     }
 }
-

@@ -58,8 +58,7 @@ mod tests {
 
     #[test]
     fn test_check_missing_rate_ok() {
-        let data: TimeSeriesData =
-            vec![[1.0, 1.0], [2.0, 2.0], [3.0, f64::NAN], [4.0, 4.0]];
+        let data: TimeSeriesData = vec![[1.0, 1.0], [2.0, 2.0], [3.0, f64::NAN], [4.0, 4.0]];
         let rate = check_missing_rate(&data, 0.3).unwrap();
         assert!((rate - 0.25).abs() < 1e-9);
     }

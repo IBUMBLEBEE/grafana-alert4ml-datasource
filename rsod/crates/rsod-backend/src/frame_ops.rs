@@ -197,6 +197,21 @@ pub fn value_field_name(frame: &Frame) -> Option<&str> {
 /// Time / value columns are resolved by name when possible (`time`/`value`),
 /// so Infinity JSON frames with extra string columns still work.
 pub fn extract_timeseries(frame: &Frame) -> rsod_core::Result<(Vec<f64>, Vec<f64>)> {
+    extract_timeseries_impl(frame, false)
+}
+
+/// K-means input extraction preserves missing numeric slots as NaN. Feature
+/// construction treats them as gaps; a genuine numeric zero remains zero.
+pub fn extract_timeseries_preserve_missing(
+    frame: &Frame,
+) -> rsod_core::Result<(Vec<f64>, Vec<f64>)> {
+    extract_timeseries_impl(frame, true)
+}
+
+fn extract_timeseries_impl(
+    frame: &Frame,
+    preserve_missing: bool,
+) -> rsod_core::Result<(Vec<f64>, Vec<f64>)> {
     let n = frame_row_count(frame);
     if n == 0 {
         return Ok((Vec::new(), Vec::new()));
@@ -225,28 +240,37 @@ pub fn extract_timeseries(frame: &Frame) -> rsod_core::Result<(Vec<f64>, Vec<f64
             .and_then(|t| *t)
             .ok_or_else(|| format!("unsupported time field type at row {}", i))?;
         ts.push(t as f64 / 1e9); // ns → seconds
-        vs.push(values.get(i).copied().flatten().unwrap_or(0.0));
+        vs.push(
+            values
+                .get(i)
+                .copied()
+                .flatten()
+                .unwrap_or(if preserve_missing { f64::NAN } else { 0.0 }),
+        );
+    }
+    if preserve_missing {
+        let mut points: Vec<(f64, f64)> = ts.into_iter().zip(vs).collect();
+        points.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut clean_ts: Vec<f64> = Vec::with_capacity(points.len());
+        let mut clean_values: Vec<f64> = Vec::with_capacity(points.len());
+        for (timestamp, value) in points {
+            if clean_ts.last().is_some_and(|last| *last == timestamp) {
+                let previous = *clean_values.last().expect("timestamp/value stay aligned");
+                let same_value = (previous.is_nan() && value.is_nan()) || previous == value;
+                if !same_value {
+                    return Err(format!(
+                        "duplicate timestamp {timestamp} has conflicting values {previous} and {value}"
+                    )
+                    .into());
+                }
+                continue;
+            }
+            clean_ts.push(timestamp);
+            clean_values.push(value);
+        }
+        return Ok((clean_ts, clean_values));
     }
     Ok((ts, vs))
-}
-
-/// Outlier missing-data gate: more than 30% of the value slots are null or
-/// zero (strictly greater, matching the Go backend).
-///
-/// Moved into the outlier engine (`rsod-outlier::engine::missing_gate`), which
-/// operates on the extracted `&[f64]` where nulls are already `0.0`.
-#[allow(dead_code)]
-pub fn calculate_missing_rate(values: &[Option<f64>]) -> bool {
-    if values.is_empty() {
-        return false;
-    }
-    let mut zero_count = 0usize;
-    for v in values {
-        if v.is_none() || *v == Some(0.0) {
-            zero_count += 1;
-        }
-    }
-    (zero_count as f64 / values.len() as f64 * 100.0) > 30.0
 }
 
 /// Rebuild a field keeping only the given row indices (type-preserving,

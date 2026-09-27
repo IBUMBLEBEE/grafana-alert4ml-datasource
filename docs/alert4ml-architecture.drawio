@@ -25,7 +25,7 @@
         <mxCell id="fe-query" value="QueryEditor v2&#xa;ConfigEditor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="tier-frontend">
           <mxGeometry x="100" y="45" width="200" height="55" as="geometry" />
         </mxCell>
-        <mxCell id="fe-algos" value="Baseline | Dynamics&#xa;Forecast | Funnel | Outlier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="tier-frontend">
+        <mxCell id="fe-algos" value="Dynamics | Forecast&#xa;K-means" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="tier-frontend">
           <mxGeometry x="520" y="45" width="200" height="55" as="geometry" />
         </mxCell>
 
@@ -53,7 +53,7 @@
         <mxCell id="ml-core" value="rsod-core&#xa;TimeSeriesInput&#xa;shared types" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
           <mxGeometry x="20" y="45" width="120" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="ml-outlier" value="rsod-outlier&#xa;EIF / STL / IQR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
+        <mxCell id="ml-utils" value="rsod-utils&#xa;metrics / fixtures" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
           <mxGeometry x="155" y="45" width="120" height="90" as="geometry" />
         </mxCell>
         <mxCell id="ml-baseline" value="rsod-baseline&#xa;Dynamics" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
@@ -62,7 +62,7 @@
         <mxCell id="ml-fc" value="rsod-forecaster&#xa;Perpetual GBM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
           <mxGeometry x="425" y="45" width="120" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="ml-funnel" value="rsod-funnel&#xa;L1 Stats + L2 ML" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
+        <mxCell id="ml-kmeans" value="rsod-kmeans&#xa;K-means ensemble" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">
           <mxGeometry x="560" y="45" width="120" height="90" as="geometry" />
         </mxCell>
         <mxCell id="ml-clf" value="rsod-classifier&#xa;series type" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="tier-ml">

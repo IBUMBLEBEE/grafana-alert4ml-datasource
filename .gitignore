@@ -60,3 +60,4 @@ __pycache__
 .cache/
 dataset/NAB/*
 scripts/mock-metrics/vendor/
+.codegraph

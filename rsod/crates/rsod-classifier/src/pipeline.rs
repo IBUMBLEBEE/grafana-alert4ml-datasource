@@ -1,8 +1,8 @@
+use crate::traits::ClassifierInput;
 /// Main classification pipeline
 use crate::types::*;
-use crate::traits::ClassifierInput;
-use crate::{preprocessing, stationarity, trend, seasonality};
-use rsod_core::{Result, SeriesCharacteristic, TrendDirection, RsodError};
+use crate::{preprocessing, seasonality, stationarity, trend};
+use rsod_core::{Result, RsodError, SeriesCharacteristic, TrendDirection};
 use std::cell::RefCell;
 
 /// Complete time series classifier pipeline
@@ -65,16 +65,15 @@ impl TimeSeriesClassifierPipeline {
             values,
             &self.config.stationarity_method,
             self.config.adf_significance,
-        ).ok();
+        )
+        .ok();
 
         // Stage 3: Detect trend
         let trend_result = trend::detect_trend_linear(values).ok();
 
         // Stage 4: Detect seasonality
-        let seasonality_result = seasonality::detect_seasonality_stl(
-            values,
-            self.config.max_seasonal_period,
-        ).ok();
+        let seasonality_result =
+            seasonality::detect_seasonality_stl(values, self.config.max_seasonal_period).ok();
 
         // Stage 5: Detect periodicity (if enabled)
         let periodicity_result = if self.config.use_fft {
@@ -143,7 +142,9 @@ impl TimeSeriesClassifierPipeline {
 
         let has_seasonality = seasonality
             .as_ref()
-            .map(|s| s.strength > self.config.seasonality_strength_threshold && !s.periods.is_empty())
+            .map(|s| {
+                s.strength > self.config.seasonality_strength_threshold && !s.periods.is_empty()
+            })
             .unwrap_or(false);
 
         let has_periodicity = periodicity
@@ -172,7 +173,10 @@ impl TimeSeriesClassifierPipeline {
                     reasoning,
                 )
             } else if has_periodicity {
-                let periods = periodicity.as_ref().map(|p| p.periods.clone()).unwrap_or_default();
+                let periods = periodicity
+                    .as_ref()
+                    .map(|p| p.periods.clone())
+                    .unwrap_or_default();
                 reasoning.push_str(&format!(" with periodicity (periods: {:?})", periods));
                 confidence = 0.70;
                 (SeriesCharacteristic::Stationary, confidence, reasoning)
@@ -215,7 +219,11 @@ impl TimeSeriesClassifierPipeline {
                     )
                 } else {
                     confidence = 0.80;
-                    (SeriesCharacteristic::Trending(direction), confidence, reasoning)
+                    (
+                        SeriesCharacteristic::Trending(direction),
+                        confidence,
+                        reasoning,
+                    )
                 }
             } else if has_seasonality {
                 reasoning.push_str(&format!(

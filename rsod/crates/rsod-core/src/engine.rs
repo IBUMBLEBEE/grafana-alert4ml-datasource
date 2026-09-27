@@ -1,12 +1,16 @@
 //! Pluggable anomaly-detection engine interface.
 //!
-//! Each detect type (`outlier`, `dynamics`, `forecast`, `funnel`) is an
+//! Each detect type (`dynamics`, `forecast`, `kmeans`) is an
 //! engine implementing [`Detector`]. Engines self-register via `inventory`,
 //! so the backend orchestrates purely by `detector_by_name(detect_type)`
 //! and never references a concrete algorithm's options type — replacing a
 //! model means adding a new engine crate + registering it, nothing more.
 
 use serde_json::Value;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use crate::config::DetectionMethod;
 use crate::types::{DetectionResult, TimeSeriesInput};
@@ -25,8 +29,8 @@ pub enum InputKind {
 pub enum QueryKind {
     /// Single extended-range query; `split_frames` produces current/history.
     Single,
-    /// Funnel dual query (profile history + panel current).
-    FunnelDual,
+    /// Separate fixed-resolution history and current queries.
+    HistoryCurrentDual,
 }
 
 /// Data + parameters handed to an engine for one series evaluation.
@@ -42,6 +46,17 @@ pub struct DetectRequest<'a> {
     pub uuid: String,
     /// Query interval in milliseconds (for `periods` string → point count).
     pub interval_ms: i64,
+    /// Cooperative cancellation set when the owning Grafana query is dropped.
+    /// CPU-bound engines should check it at bounded iteration boundaries.
+    pub cancelled: Option<Arc<AtomicBool>>,
+}
+
+impl DetectRequest<'_> {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    }
 }
 
 /// A completed detection plus the method that produced it (drives rendering).
@@ -53,7 +68,7 @@ pub struct DetectOutput {
 
 /// A pluggable, stateless anomaly-detection engine.
 pub trait Detector: Send + Sync {
-    /// Stable registry key (`"outlier"`, `"dynamics"`, `"forecast"`, `"funnel"`).
+    /// Stable registry key (`"dynamics"`, `"forecast"`, `"kmeans"`).
     fn name(&self) -> &'static str;
 
     /// How the engine consumes upstream data.
@@ -69,6 +84,12 @@ pub trait Detector: Send + Sync {
     /// unset range unchanged — the backend must not hard-code detect-type
     /// names for this.
     fn default_history_duration_ms(&self) -> i64 {
+        0
+    }
+
+    /// Fixed detector input interval used when the query omits one.
+    /// Zero keeps the Grafana panel-derived interval for legacy detectors.
+    fn default_detect_interval_ms(&self) -> i64 {
         0
     }
 

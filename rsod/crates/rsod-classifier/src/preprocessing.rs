@@ -1,7 +1,7 @@
+use anofox_forecast::features::basic::{mean, standard_deviation, variance_sample};
+use anofox_forecast::features::distribution::{kurtosis, skewness};
 /// Data preprocessing and validation stage
 use rsod_core::{Result, RsodError};
-use anofox_forecast::features::basic::{mean, variance_sample, standard_deviation};
-use anofox_forecast::features::distribution::{skewness, kurtosis};
 
 /// Compute basic statistics for the data
 pub fn compute_statistics(values: &[f64]) -> Result<(f64, f64, f64, f64, f64, f64)> {
@@ -13,9 +13,21 @@ pub fn compute_statistics(values: &[f64]) -> Result<(f64, f64, f64, f64, f64, f6
     let variance = variance_sample(values);
     let std_dev = standard_deviation(values);
 
-    let skew = if values.len() >= 3 { skewness(values) } else { 0.0 };
-    let kurt = if values.len() >= 4 { kurtosis(values) } else { 0.0 };
-    let cv = if mean_val.abs() > 1e-10 { std_dev / mean_val.abs() } else { 0.0 };
+    let skew = if values.len() >= 3 {
+        skewness(values)
+    } else {
+        0.0
+    };
+    let kurt = if values.len() >= 4 {
+        kurtosis(values)
+    } else {
+        0.0
+    };
+    let cv = if mean_val.abs() > 1e-10 {
+        std_dev / mean_val.abs()
+    } else {
+        0.0
+    };
 
     Ok((mean_val, std_dev, variance, skew, kurt, cv))
 }
@@ -26,7 +38,10 @@ pub fn check_data_quality(values: &[f64], max_missing_rate: f64) -> Result<()> {
         return Err(RsodError::EmptyData);
     }
 
-    let missing_count = values.iter().filter(|&&v| v.is_nan() || v.is_infinite()).count();
+    let missing_count = values
+        .iter()
+        .filter(|&&v| v.is_nan() || v.is_infinite())
+        .count();
     let missing_rate = missing_count as f64 / values.len() as f64;
 
     if missing_rate > max_missing_rate {
@@ -63,9 +78,7 @@ pub fn handle_missing_values(values: Vec<f64>, method: &str) -> Vec<f64> {
             }
             result
         }
-        "drop" => {
-            values.into_iter().filter(|v| !v.is_nan()).collect()
-        }
+        "drop" => values.into_iter().filter(|v| !v.is_nan()).collect(),
         "linear_interpolate" => {
             let mut result = values.clone();
             let mut last_valid_idx = None;

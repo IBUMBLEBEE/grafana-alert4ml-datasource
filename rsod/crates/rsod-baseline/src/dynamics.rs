@@ -303,6 +303,9 @@ pub fn dynamics_detect(
             values: vec![],
             observed_values: vec![],
             anomalies: vec![],
+            scores: None,
+            validity: None,
+            diagnostics: None,
             upper_bound: Some(vec![]),
             lower_bound: Some(vec![]),
         });
@@ -327,12 +330,8 @@ pub fn dynamics_detect(
     }
 
     // ── history DataFrame ──
-    let current_start_secs = cur_ts
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min) as i64;
-    let cutoff_secs = current_start_secs
-        - config.effective_period_days() as i64 * 86_400;
+    let current_start_secs = cur_ts.iter().copied().fold(f64::INFINITY, f64::min) as i64;
+    let cutoff_secs = current_start_secs - config.effective_period_days() as i64 * 86_400;
 
     let hist_ts_secs: Vec<i64> = history.timestamps.iter().map(|&t| t as i64).collect();
     let hist_vals: Vec<f64> = history.values.to_vec();
@@ -364,23 +363,18 @@ pub fn dynamics_detect(
             col("value_sq").sum().alias("B_sum_sq"),
             col("value").count().alias("N_count"),
         ])
-        .with_columns([
-            (col("A_sum") / col("N_count").cast(DataType::Float64))
-                .alias("baseline"),
-        ])
-        .with_columns([
-            {
-                let variance = (col("B_sum_sq")
-                    - col("A_sum").pow(2) / col("N_count").cast(DataType::Float64))
-                    / col("N_count").cast(DataType::Float64);
-                // max(0, variance).sqrt()
-                when(variance.clone().lt(lit(0.0)))
-                    .then(lit(0.0))
-                    .otherwise(variance)
-                    .sqrt()
-                    .alias("custom_std")
-            },
-        ])
+        .with_columns([(col("A_sum") / col("N_count").cast(DataType::Float64)).alias("baseline")])
+        .with_columns([{
+            let variance = (col("B_sum_sq")
+                - col("A_sum").pow(2) / col("N_count").cast(DataType::Float64))
+                / col("N_count").cast(DataType::Float64);
+            // max(0, variance).sqrt()
+            when(variance.clone().lt(lit(0.0)))
+                .then(lit(0.0))
+                .otherwise(variance)
+                .sqrt()
+                .alias("custom_std")
+        }])
         .select([col("season_key"), col("baseline"), col("custom_std")])
         .collect()
         .map_err(RsodError::other)?;
@@ -495,6 +489,9 @@ pub fn dynamics_detect(
         values,
         observed_values,
         anomalies,
+        scores: None,
+        validity: None,
+        diagnostics: None,
         upper_bound: Some(upper_bound),
         lower_bound: Some(lower_bound),
     })
@@ -508,6 +505,9 @@ fn cold_start_result(ts_ms: &[i64], observed_values: &[f64]) -> DetectionResult 
         values: vec![f64::NAN; n],
         observed_values: observed_values.to_vec(),
         anomalies: vec![0.0; n],
+        scores: None,
+        validity: None,
+        diagnostics: None,
         upper_bound: Some(vec![f64::NAN; n]),
         lower_bound: Some(vec![f64::NAN; n]),
     }
@@ -536,7 +536,10 @@ mod tests {
                 vals.push(value_fn(hour) + noise);
             }
         }
-        OwnedTimeSeries { timestamps: ts, values: vals }
+        OwnedTimeSeries {
+            timestamps: ts,
+            values: vals,
+        }
     }
 
     fn ts_at(day: u32, hour: u32) -> f64 {
@@ -614,7 +617,10 @@ mod tests {
 
     #[test]
     fn season_key_monthly() {
-        assert_eq!(season_key_scalar(MONDAY_MIDNIGHT as i64, Trend::Monthly), 288);
+        assert_eq!(
+            season_key_scalar(MONDAY_MIDNIGHT as i64, Trend::Monthly),
+            288
+        );
     }
 
     #[test]
@@ -632,16 +638,35 @@ mod tests {
 
     #[test]
     fn detect_empty_current() {
-        let empty = OwnedTimeSeries { timestamps: vec![], values: vec![] };
-        let r = dynamics_detect(empty.as_input(), empty.as_input(), &BaselineConfig::default()).unwrap();
+        let empty = OwnedTimeSeries {
+            timestamps: vec![],
+            values: vec![],
+        };
+        let r = dynamics_detect(
+            empty.as_input(),
+            empty.as_input(),
+            &BaselineConfig::default(),
+        )
+        .unwrap();
         assert!(r.timestamps.is_empty());
     }
 
     #[test]
     fn detect_no_history_cold_start() {
-        let current = OwnedTimeSeries { timestamps: vec![MONDAY_MIDNIGHT], values: vec![42.0] };
-        let empty = OwnedTimeSeries { timestamps: vec![], values: vec![] };
-        let r = dynamics_detect(current.as_input(), empty.as_input(), &BaselineConfig::default()).unwrap();
+        let current = OwnedTimeSeries {
+            timestamps: vec![MONDAY_MIDNIGHT],
+            values: vec![42.0],
+        };
+        let empty = OwnedTimeSeries {
+            timestamps: vec![],
+            values: vec![],
+        };
+        let r = dynamics_detect(
+            current.as_input(),
+            empty.as_input(),
+            &BaselineConfig::default(),
+        )
+        .unwrap();
         assert_eq!(r.timestamps.len(), 1);
         assert!(r.values[0].is_nan());
         assert!(r.upper_bound.as_ref().unwrap()[0].is_nan());
@@ -657,7 +682,10 @@ mod tests {
             transition_minutes: 0,
         };
         let query_ts = ts_at(31, 12);
-        let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![100.0] };
+        let current = OwnedTimeSeries {
+            timestamps: vec![query_ts],
+            values: vec![100.0],
+        };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
         assert_eq!(r.anomalies[0], 0.0);
         assert!(r.upper_bound.as_ref().unwrap()[0].is_finite());
@@ -674,7 +702,10 @@ mod tests {
             transition_minutes: 0,
         };
         let query_ts = ts_at(31, 5);
-        let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![999.0] };
+        let current = OwnedTimeSeries {
+            timestamps: vec![query_ts],
+            values: vec![999.0],
+        };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
         assert_eq!(r.anomalies[0], 1.0);
         assert_eq!(r.observed_values[0], 999.0);
@@ -691,7 +722,10 @@ mod tests {
             ts.push(mon + 86_400.0);
             vals.push(100.0);
         }
-        let history = OwnedTimeSeries { timestamps: ts, values: vals };
+        let history = OwnedTimeSeries {
+            timestamps: ts,
+            values: vals,
+        };
         let cfg = BaselineConfig {
             trend: Trend::Weekly,
             period_days: Some(91),
@@ -701,17 +735,29 @@ mod tests {
 
         let next_mon = MONDAY_MIDNIGHT + 13.0 * 7.0 * 86_400.0 + 8.0 * 3600.0;
         let r = dynamics_detect(
-            OwnedTimeSeries { timestamps: vec![next_mon], values: vec![10.0] }.as_input(),
-            history.as_input(), &cfg,
-        ).unwrap();
+            OwnedTimeSeries {
+                timestamps: vec![next_mon],
+                values: vec![10.0],
+            }
+            .as_input(),
+            history.as_input(),
+            &cfg,
+        )
+        .unwrap();
         assert_eq!(r.anomalies[0], 0.0);
         assert!((r.values[0] - 10.0).abs() < 1e-9);
 
         let next_tue = next_mon + 86_400.0;
         let r2 = dynamics_detect(
-            OwnedTimeSeries { timestamps: vec![next_tue], values: vec![100.0] }.as_input(),
-            history.as_input(), &cfg,
-        ).unwrap();
+            OwnedTimeSeries {
+                timestamps: vec![next_tue],
+                values: vec![100.0],
+            }
+            .as_input(),
+            history.as_input(),
+            &cfg,
+        )
+        .unwrap();
         assert!((r2.values[0] - 100.0).abs() < 1e-9);
     }
 
@@ -719,7 +765,10 @@ mod tests {
     fn detect_multiplier_affects_bounds() {
         let history = make_history(14, |h| 50.0 + h as f64);
         let query_ts = ts_at(15, 10);
-        let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![60.0] };
+        let current = OwnedTimeSeries {
+            timestamps: vec![query_ts],
+            values: vec![60.0],
+        };
 
         let r1 = dynamics_detect(
             current.as_input(),
@@ -746,7 +795,10 @@ mod tests {
 
         let u1 = r1.upper_bound.as_ref().unwrap()[0];
         let u2 = r2.upper_bound.as_ref().unwrap()[0];
-        assert!(u2 > u1, "wider multiplier should produce wider bounds: {u1} vs {u2}");
+        assert!(
+            u2 > u1,
+            "wider multiplier should produce wider bounds: {u1} vs {u2}"
+        );
     }
 
     #[test]
@@ -783,11 +835,14 @@ mod tests {
         };
         let r_vol = dynamics_detect(current.as_input(), volatile.as_input(), &cfg).unwrap();
 
-        let band_s = r_stable.upper_bound.as_ref().unwrap()[0]
-            - r_stable.lower_bound.as_ref().unwrap()[0];
+        let band_s =
+            r_stable.upper_bound.as_ref().unwrap()[0] - r_stable.lower_bound.as_ref().unwrap()[0];
         let band_v =
             r_vol.upper_bound.as_ref().unwrap()[0] - r_vol.lower_bound.as_ref().unwrap()[0];
-        assert!(band_v > band_s * 2.0, "volatile={band_v:.4} >> stable={band_s:.4}");
+        assert!(
+            band_v > band_s * 2.0,
+            "volatile={band_v:.4} >> stable={band_s:.4}"
+        );
     }
 
     #[test]
@@ -800,7 +855,10 @@ mod tests {
             transition_minutes: 0,
         };
         let query_ts = ts_at(61, 12);
-        let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![100.0] };
+        let current = OwnedTimeSeries {
+            timestamps: vec![query_ts],
+            values: vec![100.0],
+        };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
         assert!(r.values[0].is_finite());
     }
@@ -815,7 +873,10 @@ mod tests {
             transition_minutes: 0,
         };
         let query_ts = ts_at(15, 0);
-        let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![50.0] };
+        let current = OwnedTimeSeries {
+            timestamps: vec![query_ts],
+            values: vec![50.0],
+        };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
         assert_eq!(r.timestamps[0], (query_ts * 1000.0) as i64);
     }
@@ -830,7 +891,10 @@ mod tests {
                 vals.push(42.0 + (h as f64) * 0.01);
             }
         }
-        let history = OwnedTimeSeries { timestamps: ts, values: vals };
+        let history = OwnedTimeSeries {
+            timestamps: ts,
+            values: vals,
+        };
         let cfg = BaselineConfig {
             trend: Trend::None,
             period_days: Some(30),
@@ -838,7 +902,10 @@ mod tests {
             transition_minutes: 15,
         };
         let query_ts = ts_at(31, 15);
-        let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![42.1] };
+        let current = OwnedTimeSeries {
+            timestamps: vec![query_ts],
+            values: vec![42.1],
+        };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
         assert!(r.values[0].is_finite());
         assert_eq!(r.anomalies[0], 0.0);
@@ -866,7 +933,15 @@ mod tests {
     #[test]
     fn detect_soft_transition_blends_adjacent_hours() {
         // Hour 10 ≈ 100, hour 11 ≈ 200; mid-hour stays pure, boundary is ~150.
-        let history = make_history(30, |h| if h == 11 { 200.0 } else if h == 10 { 100.0 } else { 50.0 });
+        let history = make_history(30, |h| {
+            if h == 11 {
+                200.0
+            } else if h == 10 {
+                100.0
+            } else {
+                50.0
+            }
+        });
         let cfg = BaselineConfig {
             trend: Trend::Daily,
             period_days: Some(30),
@@ -925,7 +1000,15 @@ mod tests {
 
     #[test]
     fn detect_transition_disabled_keeps_stairs() {
-        let history = make_history(30, |h| if h == 11 { 200.0 } else if h == 10 { 100.0 } else { 50.0 });
+        let history = make_history(30, |h| {
+            if h == 11 {
+                200.0
+            } else if h == 10 {
+                100.0
+            } else {
+                50.0
+            }
+        });
         let cfg = BaselineConfig {
             trend: Trend::Daily,
             period_days: Some(30),

@@ -25,7 +25,6 @@ pub fn read_csv_to_vec<P: AsRef<Path>>(path: P) -> Vec<[f64; 2]> {
     result
 }
 
-
 /// Convert Unix timestamp to RFC3339 format time string
 #[allow(dead_code)]
 fn format_timestamp(timestamp: f64) -> String {
@@ -47,12 +46,12 @@ pub fn flatten_data(input: Vec<[f64; 2]>) -> Vec<f64> {
     col0
 }
 /// Get prediction interval multiplier c based on confidence level (percentage)
-/// 
+///
 /// Based on normal distribution assumption, returns z-score multiplier corresponding to the confidence level
-/// 
+///
 /// Arguments:
 /// - confidence_level: Confidence level (percentage), range 50.0 to 99.0
-/// 
+///
 /// Returns:
 /// - Corresponding multiplier c, used to calculate prediction interval: ŷ ± c * σ̂
 #[allow(dead_code)]
@@ -75,6 +74,6 @@ pub fn get_confidence_multiplier(confidence_level: f64) -> f64 {
         x if x >= 97.0 && x < 98.0 => 2.17 + (x - 97.0) / 1.0 * (2.33 - 2.17),
         x if x >= 98.0 && x < 99.0 => 2.33 + (x - 98.0) / 1.0 * (2.58 - 2.33),
         x if x >= 99.0 => 2.58, // Maximum value
-        _ => 1.96, // Default 95%
+        _ => 1.96,              // Default 95%
     }
 }

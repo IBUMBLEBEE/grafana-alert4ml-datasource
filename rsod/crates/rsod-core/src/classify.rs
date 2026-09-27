@@ -7,7 +7,7 @@ const MIN_TREND_LEN: usize = 10;
 ///
 /// This is a lightweight heuristic classifier:
 /// - **Trend**: detected via linear regression slope significance
-/// - **Seasonality**: detected via the supplied period list (from upstream MSTL/FFT)
+/// - **Seasonality**: detected via the supplied period list
 ///
 /// For a full classification pipeline, upstream callers should run
 /// period detection first and pass the results in `known_periods`.
@@ -85,9 +85,7 @@ mod tests {
 
     #[test]
     fn test_classify_stationary() {
-        let data: TimeSeriesData = (0..20)
-            .map(|i| [i as f64, 5.0])
-            .collect();
+        let data: TimeSeriesData = (0..20).map(|i| [i as f64, 5.0]).collect();
         let c = classify(&data, &[]);
         assert_eq!(c, SeriesCharacteristic::Stationary);
     }

@@ -65,6 +65,25 @@ impl OwnedTimeSeries {
     }
 }
 
+/// Per-query detector readiness. Point validity remains a separate vector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionReadiness {
+    WarmingUp,
+    Ready,
+    Unavailable,
+}
+
+/// Model-level diagnostics for detectors with a training lifecycle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionDiagnostics {
+    pub readiness: DetectionReadiness,
+    pub active_models: usize,
+    pub required_models: usize,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 /// Result of anomaly detection, containing scores and optional bounds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionResult {
@@ -78,6 +97,17 @@ pub struct DetectionResult {
     /// Finite anomaly flags: 0.0 = normal, 1.0 = anomaly.
     /// Display adapters, not detection engines, turn these into sparse points.
     pub anomalies: Vec<f64>,
+    /// Optional internal detector score aligned with timestamps (K-means:
+    /// 0..=100). Adapters may use it for aggregation without exposing it as a
+    /// Grafana result field.
+    #[serde(default)]
+    pub scores: Option<Vec<f64>>,
+    /// Optional point validity aligned with timestamps. Invalid is not normal.
+    #[serde(default)]
+    pub validity: Option<Vec<bool>>,
+    /// Optional model-level readiness information.
+    #[serde(default)]
+    pub diagnostics: Option<DetectionDiagnostics>,
     /// Upper bound of confidence interval (optional)
     pub upper_bound: Option<Vec<f64>>,
     /// Lower bound of confidence interval (optional)
@@ -92,9 +122,7 @@ pub enum SeriesCharacteristic {
     /// Series with a clear upward or downward trend
     Trending(TrendDirection),
     /// Series with detected seasonal patterns
-    Seasonal {
-        periods: Vec<usize>,
-    },
+    Seasonal { periods: Vec<usize> },
     /// Series with both seasonal patterns and a trend
     SeasonalWithTrend {
         periods: Vec<usize>,

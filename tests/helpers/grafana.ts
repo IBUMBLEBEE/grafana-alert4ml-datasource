@@ -10,7 +10,7 @@ export const GRAFANA_INTERNAL_URL = process.env.GRAFANA_INTERNAL_URL || 'http://
 export const E2E_API_TOKEN_PATH = path.join(process.cwd(), 'playwright/.auth/grafana-api-token.txt');
 export const ALERT4ML_DS_NAME = 'alert4ml-e2e';
 export const TESTDATA_DS_NAME = 'testdata-e2e';
-export const FUNNEL_DETECT_LABEL = 'Funnel (L1)';
+export const KMEANS_DETECT_LABEL = 'K-means';
 
 export function readE2EApiToken(): string {
   try {
@@ -143,6 +143,5 @@ export function expectQueryBodyHealthy(body: string) {
   expect(body).not.toContain('request failed:');
   expect(body).not.toContain('"status":500');
   expect(body).not.toContain('frame has no rows');
-  expect(body).not.toContain('funnel fit predict failed');
   expect(body).not.toContain('historyFrame has no rows');
 }

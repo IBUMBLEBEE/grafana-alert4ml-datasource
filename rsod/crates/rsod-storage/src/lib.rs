@@ -1,11 +1,11 @@
-pub mod model;
 pub mod db;
+pub mod model;
 
 pub use model::GlobalStorage;
 
 use std::sync::{Mutex, OnceLock};
 
-use crate::db::{DbBackend, init_sqlite, init_postgres};
+use crate::db::{init_postgres, init_sqlite, DbBackend};
 
 static INIT_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
@@ -34,10 +34,7 @@ pub fn init_db_with_config(trial_mode: bool, pg_dsn: &str) -> rsod_core::Result<
 /// History-cache durability should skip trial mode: it cannot survive restart
 /// and only adds sync I/O on the query path.
 pub fn is_trial_mode() -> bool {
-    STORAGE_CONFIG
-        .get()
-        .map(|c| c.trial_mode)
-        .unwrap_or(true)
+    STORAGE_CONFIG.get().map(|c| c.trial_mode).unwrap_or(true)
 }
 
 /// Initialize the database backend.
@@ -72,7 +69,9 @@ fn init_sqlite_backend() -> rsod_core::Result<()> {
 
     match backend {
         DbBackend::Sqlite(mutex) => {
-            let db = mutex.lock().map_err(|_| "Failed to lock SQLite database".to_string())?;
+            let db = mutex
+                .lock()
+                .map_err(|_| "Failed to lock SQLite database".to_string())?;
 
             db.execute(
                 "CREATE TABLE IF NOT EXISTS models (
@@ -102,7 +101,9 @@ fn init_sqlite_backend() -> rsod_core::Result<()> {
             .map_err(|e| format!("Failed to set journal mode: {}", e))?;
         }
         DbBackend::Postgres(_) => {
-            return Err("Expected SQLite backend but got PostgreSQL".to_string().into());
+            return Err("Expected SQLite backend but got PostgreSQL"
+                .to_string()
+                .into());
         }
     }
 
@@ -114,7 +115,9 @@ fn init_postgres_backend(dsn: &str) -> rsod_core::Result<()> {
 
     match backend {
         DbBackend::Postgres(mutex) => {
-            let mut client = mutex.lock().map_err(|_| "Failed to lock PostgreSQL client".to_string())?;
+            let mut client = mutex
+                .lock()
+                .map_err(|_| "Failed to lock PostgreSQL client".to_string())?;
 
             client
                 .batch_execute(
@@ -133,7 +136,9 @@ fn init_postgres_backend(dsn: &str) -> rsod_core::Result<()> {
                 .map_err(|e| format!("Failed to create tables in PostgreSQL: {}", e))?;
         }
         DbBackend::Sqlite(_) => {
-            return Err("Expected PostgreSQL backend but got SQLite".to_string().into());
+            return Err("Expected PostgreSQL backend but got SQLite"
+                .to_string()
+                .into());
         }
     }
 

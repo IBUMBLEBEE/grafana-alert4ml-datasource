@@ -1,18 +1,15 @@
-//! Frame splitting and funnel query helpers.
+//! Frame splitting and upstream query helpers.
 //!
-//! Port of the former Go backend (`pkg/plugin/tools.go`, `funnel_query.go`).
-//! Duration/period parsing has moved to `rsod-core` (`parse_duration_ms`,
-//! `parse_periods`) and the funnel trend mapping into the funnel engine.
+//! Port of the former Go backend (`pkg/plugin/tools.go`). Duration/period
+//! parsing has moved to `rsod-core` (`parse_duration_ms`, `parse_periods`).
 
 use chrono::{DateTime, Duration, Utc};
 use grafana_plugin_sdk::data::Frame;
 
 use crate::contract::HistoryTimeRange;
-use crate::frame_ops::{field_time_ns, filter_field_by_indices, frame_row_count, slice_field};
+use crate::frame_ops::{field_time_ns, filter_field_by_indices, slice_field};
 
-pub const DEFAULT_FUNNEL_MAX_DATA_POINTS: i64 = 1500;
-pub const FUNNEL_COLD_START_MIN_ROWS: usize = 20;
-pub const FUNNEL_COLD_START_HIST_RATIO: f64 = 0.7;
+pub const DEFAULT_MAX_DATA_POINTS: i64 = 1500;
 
 /// Apply the engine-declared default history lookback when the panel left
 /// `historyTimeRange` unset (`durationMs == 0`). `default_ms` comes from
@@ -41,8 +38,6 @@ pub fn get_recalculate_time_range(
 }
 
 /// `GetHistoryTimeRange`: absolute history window, ending at the panel start.
-/// Unused in the Rust port (the funnel body builder inlines the same
-/// computation, mirroring Go, where the helper is also only documentation).
 #[allow(dead_code)]
 pub fn get_history_time_range(
     current_from: DateTime<Utc>,
@@ -106,85 +101,6 @@ pub fn split_frame_by_time(
     Ok(frame_with_fields(frame, fields))
 }
 
-/// `splitFrameByIndex`: cut every field at `split_at`, preserving field
-/// names, labels and configs.
-pub fn split_frame_by_index(frame: &Frame, split_at: usize) -> rsod_core::Result<(Frame, Frame)> {
-    if frame.fields().is_empty() {
-        return Err("frame is nil or has no fields".to_string().into());
-    }
-    let n = frame_row_count(frame);
-    if split_at == 0 || split_at >= n {
-        return Err(format!("invalid split index {} for {} rows", split_at, n).into());
-    }
-    let mut history_fields = Vec::with_capacity(frame.fields().len());
-    let mut current_fields = Vec::with_capacity(frame.fields().len());
-    for f in frame.fields() {
-        history_fields.push(slice_field(f, 0, split_at)?);
-        current_fields.push(slice_field(f, split_at, n - split_at)?);
-    }
-    Ok((
-        frame_with_fields(frame, history_fields),
-        frame_with_fields(frame, current_fields),
-    ))
-}
-
-/// `ensureFunnelFrames`: guarantee non-empty history/current for funnel,
-/// handling Alerting cases where the time split lands entirely on one side.
-pub fn ensure_funnel_frames(
-    raw: &Frame,
-    history: &Frame,
-    current: &Frame,
-) -> rsod_core::Result<(Frame, Frame)> {
-    let hist_len = frame_row_count(history);
-    let cur_len = frame_row_count(current);
-    if hist_len > 0 && cur_len > 0 {
-        return Ok((clone_frame(history)?, clone_frame(current)?));
-    }
-    if hist_len == 0 && cur_len == 0 && frame_row_count(raw) > 0 {
-        return split_frame_for_funnel_cold_start(raw);
-    }
-    if hist_len == 0 && cur_len > 0 {
-        return split_frame_for_funnel_cold_start(current);
-    }
-    if hist_len > 0 && cur_len == 0 {
-        return split_history_tail_for_eval(history);
-    }
-    Err("funnel: no data in history or current frame"
-        .to_string()
-        .into())
-}
-
-/// `splitFrameForFunnelColdStart`: use the trailing ~70% of a single frame as
-/// the current window (fewer than 20 rows → midpoint split).
-pub fn split_frame_for_funnel_cold_start(frame: &Frame) -> rsod_core::Result<(Frame, Frame)> {
-    let n = frame_row_count(frame);
-    if n < 2 {
-        return Err(format!("funnel: need at least 2 points, got {}", n).into());
-    }
-    if n < FUNNEL_COLD_START_MIN_ROWS {
-        return split_frame_by_index(frame, n / 2);
-    }
-    let split_at = ((n as f64) * FUNNEL_COLD_START_HIST_RATIO).floor() as usize;
-    let split_at = split_at.clamp(1, n - 1);
-    split_frame_by_index(frame, split_at)
-}
-
-/// `splitHistoryTailForEval`: when the current range has no points (common in
-/// Alerting), evaluate on the tail of history instead.
-pub fn split_history_tail_for_eval(history: &Frame) -> rsod_core::Result<(Frame, Frame)> {
-    let n = frame_row_count(history);
-    if n < 2 {
-        return Err(format!(
-            "funnel: only {} point(s) before panel start; expand panel time range or check upstream data",
-            n
-        )
-        .into());
-    }
-    let split_at = ((n as f64) * FUNNEL_COLD_START_HIST_RATIO).floor() as usize;
-    let split_at = split_at.clamp(1, n - 1);
-    split_frame_by_index(history, split_at)
-}
-
 /// Resolve the interval used for upstream detection queries.
 ///
 /// Grafana's panel `$__interval` scales with the visible time range; when the
@@ -198,26 +114,17 @@ pub fn effective_detect_interval(panel_interval_ms: i64, detect_interval_ms: i64
     }
 }
 
-/// `effectiveFunnelHistoryInterval`: coarsen the panel interval so the
-/// history window stays within `maxDataPoints`.
-pub fn effective_funnel_history_interval(
+pub fn effective_detect_interval_with_default(
     panel_interval_ms: i64,
-    duration_ms: i64,
-    max_data_points: i64,
+    detect_interval_ms: i64,
+    default_interval_ms: i64,
 ) -> i64 {
-    let max_data_points = if max_data_points <= 0 {
-        DEFAULT_FUNNEL_MAX_DATA_POINTS
+    if detect_interval_ms > 0 {
+        detect_interval_ms
+    } else if default_interval_ms > 0 {
+        default_interval_ms
     } else {
-        max_data_points
-    };
-    if panel_interval_ms <= 0 || duration_ms == 0 {
-        return panel_interval_ms;
-    }
-    let coarse_ms = duration_ms / max_data_points;
-    if coarse_ms <= panel_interval_ms {
         panel_interval_ms
-    } else {
-        coarse_ms
     }
 }
 
@@ -349,44 +256,46 @@ pub fn max_data_points_for_range(
     let range_ms = (to - from).num_milliseconds().max(0);
     // Ceiling division so the last partial bucket still fits.
     let needed = (range_ms + interval_ms - 1) / interval_ms;
-    // Cap runaway lookbacks (e.g. 90d @ 5s) while still beating the panel budget.
-    const HARD_CAP: i64 = 50_000;
+    // The detection planner rejects requests above this cap. Do not silently
+    // lower fixed-resolution queries below it by forcing datasource coarsening.
+    const HARD_CAP: i64 = crate::detection_query_plan::MAX_RAW_POINTS_PER_QUERY;
     needed.max(panel_max_data_points).max(1).min(HARD_CAP)
 }
 
-/// `frameSeriesKey`: series identity for history/current frame matching —
-/// the frame name, or field-0 labels (Go's `Labels.String()`: sorted
-/// `k=v` pairs joined by commas).
+/// Stable identity for matching history/current frames. Includes the frame
+/// name, numeric value field and its sorted labels.
 pub fn frame_series_key(f: &Frame) -> String {
-    if !f.name.is_empty() {
-        return f.name.clone();
-    }
-    if let Some(field) = f.fields().first() {
+    let field_name = crate::frame_ops::value_field_name(f).unwrap_or_default();
+    if let Some(field) = f.fields().iter().find(|field| field.name == field_name) {
         let mut pairs: Vec<String> = field
             .labels
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
         pairs.sort();
-        return pairs.join(",");
+        return format!("{}|{}|{}", f.name, field_name, pairs.join(","));
     }
-    String::new()
+    format!("{}|{}|", f.name, field_name)
 }
 
-/// `matchHistoryFrame`: index-first, then series-key fallback.
+/// Match by stable series identity. Ambiguous identities are rejected.
 pub fn match_history_frame<'a>(
     history_frames: &'a [Frame],
     current: &Frame,
-    frame_idx: usize,
+    _frame_idx: usize,
 ) -> Option<&'a Frame> {
-    if let Some(h) = history_frames.get(frame_idx) {
-        return Some(h);
-    }
     if current.fields().is_empty() {
         return None;
     }
     let key = frame_series_key(current);
-    history_frames.iter().find(|h| frame_series_key(h) == key)
+    let mut matches = history_frames
+        .iter()
+        .filter(|history| frame_series_key(history) == key);
+    let matched = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(matched)
 }
 
 /// Clone a frame preserving name and metadata (SDK frames carry refId in the
@@ -468,7 +377,7 @@ fn implied_max_data_points(body: &crate::client::ProxyQueryBody) -> i64 {
         .first()
         .and_then(|q| q.get("maxDataPoints"))
         .and_then(|v| v.as_i64())
-        .unwrap_or(DEFAULT_FUNNEL_MAX_DATA_POINTS)
+        .unwrap_or(DEFAULT_MAX_DATA_POINTS)
 }
 
 #[cfg(test)]
@@ -476,23 +385,6 @@ mod tests {
     use super::*;
     use crate::contract::HistoryTimeRange;
     use chrono::TimeZone;
-
-    #[test]
-    fn funnel_interval() {
-        assert_eq!(
-            effective_funnel_history_interval(60_000, 604_800_000, 1500),
-            403_200
-        );
-        assert_eq!(
-            effective_funnel_history_interval(60_000, 3_600_000, 1500),
-            60_000
-        );
-        assert_eq!(
-            effective_funnel_history_interval(60_000, 604_800_000, 0),
-            403_200
-        );
-        assert_eq!(effective_funnel_history_interval(0, 604_800_000, 1500), 0);
-    }
 
     #[test]
     fn history_default_applies_when_unset() {
@@ -515,6 +407,18 @@ mod tests {
         assert_eq!(effective_detect_interval(300_000, 0), 300_000);
         assert_eq!(effective_detect_interval(300_000, 60_000), 60_000);
         assert_eq!(effective_detect_interval(15_000, -1), 15_000);
+    }
+
+    #[test]
+    fn detector_default_is_stable_across_panel_intervals() {
+        assert_eq!(
+            effective_detect_interval_with_default(300_000, 0, 60_000),
+            60_000
+        );
+        assert_eq!(
+            effective_detect_interval_with_default(15_000, 120_000, 60_000),
+            120_000
+        );
     }
 
     #[test]

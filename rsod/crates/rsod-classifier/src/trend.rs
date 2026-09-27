@@ -3,9 +3,9 @@
 /// Linear regression uses `anofox_forecast::features::trend::linear_trend`.
 /// Mann-Kendall is kept as a standalone implementation (not available in anofox-forecast).
 use crate::types::TrendAnalysis;
-use rsod_core::Result;
-use anofox_forecast::features::trend::linear_trend;
 use anofox_forecast::features::basic::mean;
+use anofox_forecast::features::trend::linear_trend;
+use rsod_core::Result;
 
 /// Linear regression for trend detection using anofox-forecast.
 pub fn detect_trend_linear(values: &[f64]) -> Result<TrendAnalysis> {
@@ -95,7 +95,13 @@ pub fn mann_kendall_test(values: &[f64]) -> Result<(f64, f64, i32)> {
     };
 
     let p_value = 2.0 * (1.0 - normal_cdf(z.abs()));
-    let trend_direction = if s > 0.0 { 1 } else if s < 0.0 { -1 } else { 0 };
+    let trend_direction = if s > 0.0 {
+        1
+    } else if s < 0.0 {
+        -1
+    } else {
+        0
+    };
 
     Ok((z, p_value, trend_direction))
 }
