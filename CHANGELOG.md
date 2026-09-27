@@ -1,4 +1,15 @@
 # Changelog
+# 0.5.1 (2026-09-27)
+
+### Features and enhancements
+
+- Add K-means ensemble detection with fixed-interval planning, deterministic replay, model persistence, Grafana visualization, and alert-signal integration.
+- Add Grafana unified-alerting lifecycle coverage for Normal, Alerting, NoData, Error, and recovery states.
+- Remove legacy detector implementations, UI options, dependencies, tests, images, and documentation so the supported algorithms are Dynamics, K-means, and Forecast.
+- Update architecture, migration, validation, capacity, and algorithm documentation.
+
+**Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/v0.5.0...v0.5.1
+
 # 0.5.0 (2026-08-16)
 
 ### Bug fixes
