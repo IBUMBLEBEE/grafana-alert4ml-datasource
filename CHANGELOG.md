@@ -2,14 +2,10 @@
 # 0.5.1 (2026-09-27)
 
 ### Features and enhancements
-
-- Add K-means ensemble detection with fixed-interval planning, deterministic replay, model persistence, Grafana visualization, and alert-signal integration.
-- Add Grafana unified-alerting lifecycle coverage for Normal, Alerting, NoData, Error, and recovery states.
-- Remove legacy detector implementations, UI options, dependencies, tests, images, and documentation so the supported algorithms are Dynamics, K-means, and Forecast.
-- Update architecture, migration, validation, capacity, and algorithm documentation.
-
+- Feat(kmeans): replace legacy anomaly detectors
+- Feat(alerting): add Grafana alert signal integration
+- Feat(docs): update README.md
 **Full Changelog**: https://github.com/IBUMBLEBEE/grafana-alert4ml-datasource/compare/v0.5.0...v0.5.1
-
 # 0.5.0 (2026-08-16)
 
 ### Bug fixes
@@ -40,9 +36,16 @@ Keep the same Infinity API and deterministic scenarios while switching
 to an axum service with a multi-stage musl Docker build.
 
 Co-authored-by: Cursor <cursoragent@cursor.com>
+- Feat: outlier lite path, Dynamics hour soft-blend, and mock Infinity harness
+
+Add MAD/IQR/EVT lite detection as the Outlier default, soften Dynamics
+bounds across adjacent hour buckets to cut boundary false positives, and
+harden Infinity/history proxying with a reproducible mock-metrics stack.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
 - Feat(rust): pluggable detection engines and unify on RsodError
 
-Extract dynamics/forecast/funnel behind an inventory-registered Detector API; backend dispatches by detectType and passes hyperParams JSON through. Converge workspace errors onto rsod-core::RsodError.
+Extract outlier/dynamics/forecast/funnel behind an inventory-registered Detector API; backend dispatches by detectType and passes hyperParams JSON through. Converge workspace errors onto rsod-core::RsodError.
 
 Co-authored-by: Cursor <cursoragent@cursor.com>
 - Feat(rust): unify result display names and support {{label}} seriesLabel
@@ -53,6 +56,8 @@ All detect types now render result field display names as
 - dynamics/funnel: frame named after the series instead of the hardcoded
   "Baseline", so multi-series panels keep distinct names and bounds
   (fillBelowTo) reference the same series-qualified name
+- outlier: display name now {refId}-{seriesName}-Anomaly (was
+  "{source.name} {refId}-Anomaly")
 - seriesLabel override supports Prometheus-legend-style {{label}}
   placeholders (e.g. {{__name__}}) resolved per-frame against the upstream
   value-field labels; unknown labels render empty
@@ -70,10 +75,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - Docs: update documents for architecture
 - Merge pull request #18 from IBUMBLEBEE/feat/grafana-plugin-sdk-rust
 
-chore(rust): bump forecaster/utils to 0.1.3
-- Chore(rust): bump forecaster/utils to 0.1.3
+chore(rust): bump rsod-outlier/forecaster/utils to 0.1.3
+- Chore(rust): bump rsod-outlier/forecaster/utils to 0.1.3
 
 Patch bump for the Go->Rust migration commit changes:
+- rsod-outlier: constant-series guard + epoch-millis result timestamps
 - rsod-forecaster: epoch-millis result timestamps
 - rsod-utils: new read_testdata_pairs test fixture helper
 
@@ -96,7 +102,9 @@ Complete the Go→Rust migration on this branch:
   protocol, /api/ds/query proxying, per-query detect orchestration)
 - Vendor grafana-plugin-sdk 0.5.0 with extensions for Grafana graph
   styles: Frame.meta.type (timeseries-wide) and FieldConfig.color
-- Fix DetectionResult timestamps to epoch millis for the forecaster
+- Fix DetectionResult timestamps to epoch millis — forecaster and
+  outlier emitted seconds, collapsing the panel axis into 1970 and
+  hiding the bounds band entirely
 - Add Series Label query option (frontend configurable display names)
   with auto fallback to frame name / field labels
 - Accept integer logIterations in forecast hyper params (fixes real
@@ -394,7 +402,7 @@ ffi
 
 Multi process arch
 - Update Makefile
-- Add baseline for grpc server
+- Add baseline and outlier for grpc server
 - V0.1.0 for multi process arch
 - Add rust grpc server
 - Add grpc sever/client
