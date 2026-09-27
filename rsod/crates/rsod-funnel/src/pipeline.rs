@@ -177,8 +177,6 @@ pub fn funnel_detect_with_metrics(
 
     let skip_ts = profile_skip_timestamps(current.timestamps, eval_start, &result.anomalies);
     update_profile_from_query(&mut profile, current, options, &skip_ts);
-
-    format_anomalies_for_display(&mut result.anomalies, current.values);
     metrics.total_elapsed_ms = total_start.elapsed().as_millis();
     Ok(FunnelRun { result, metrics })
 }
@@ -224,18 +222,6 @@ fn profile_slot_mismatch(profile: &SeasonalProfile, options: &FunnelOptions) -> 
         return false;
     }
     rsod_core::normalize_bucket_slot_secs(options.bucket_slot_secs) != profile.bucket_slot_secs
-}
-
-/// Convert internal 0/1 anomaly flags to Grafana display values (dynamics-compatible):
-/// anomalous points → raw metric value; normal → NaN (renders as null, no red dot).
-fn format_anomalies_for_display(anomalies: &mut [f64], raw_values: &[f64]) {
-    for (a, &v) in anomalies.iter_mut().zip(raw_values.iter()) {
-        if *a > 0.0 && v.is_finite() {
-            *a = v;
-        } else {
-            *a = f64::NAN;
-        }
-    }
 }
 
 /// Timestamps in the eval slice flagged as anomalies — excluded from persisted profile.
@@ -370,6 +356,7 @@ fn assemble_full_result(
     DetectionResult {
         timestamps: timestamps.iter().map(|&t| (t * 1000.0) as i64).collect(),
         values: baselines,
+        observed_values: values.to_vec(),
         anomalies,
         lower_bound: Some(lowers),
         upper_bound: Some(uppers),
@@ -781,8 +768,8 @@ mod tests {
 
         let det = funnel_detect(current, history, &opts).unwrap();
         assert_eq!(det.anomalies.len(), n);
-        assert!(det.anomalies[1].is_nan(), "prefix spike must not alert");
-        assert_eq!(det.anomalies[n - 1], 500.0, "tail spike must alert");
+        assert_eq!(det.anomalies[1], 0.0, "prefix spike must not alert");
+        assert_eq!(det.anomalies[n - 1], 1.0, "tail spike must alert");
     }
 
     /// eval_window_secs=0 preserves full-window detection (backward compatible).
@@ -810,7 +797,7 @@ mod tests {
 
         let det = funnel_detect(current, history, &opts).unwrap();
         assert_eq!(
-            det.anomalies[1], 500.0,
+            det.anomalies[1], 1.0,
             "full window should detect prefix spike"
         );
     }
@@ -843,7 +830,7 @@ mod tests {
         let eval_start = eval_window_start(&cur_ts, EVAL_SECS);
         for i in 0..eval_start {
             assert!(
-                det.anomalies[i].is_nan(),
+                det.anomalies[i] == 0.0,
                 "point {i} before eval tail must not alert"
             );
         }
@@ -860,10 +847,10 @@ mod tests {
         .unwrap();
 
         let tail_anom_full: usize = (eval_start..WINDOW)
-            .filter(|&i| det_full.anomalies[i].is_finite())
+            .filter(|&i| det_full.anomalies[i] > 0.0)
             .count();
         let tail_anom_eval: usize = (eval_start..WINDOW)
-            .filter(|&i| det.anomalies[i].is_finite())
+            .filter(|&i| det.anomalies[i] > 0.0)
             .count();
         assert_eq!(
             tail_anom_eval, tail_anom_full,
@@ -871,11 +858,11 @@ mod tests {
         );
 
         let prefix_anom_full: usize = (0..eval_start)
-            .filter(|&i| det_full.anomalies[i].is_finite())
+            .filter(|&i| det_full.anomalies[i] > 0.0)
             .count();
         if prefix_anom_full > 0 {
             let prefix_anom_eval: usize = (0..eval_start)
-                .filter(|&i| det.anomalies[i].is_finite())
+                .filter(|&i| det.anomalies[i] > 0.0)
                 .count();
             assert_eq!(
                 prefix_anom_eval, 0,
@@ -890,6 +877,7 @@ mod tests {
         let mut result = DetectionResult {
             timestamps: vec![1_700_000_000_000],
             values: vec![100.0],
+            observed_values: vec![100.0],
             anomalies: vec![1.0],
             lower_bound: Some(vec![90.0]),
             upper_bound: Some(vec![110.0]),
@@ -933,7 +921,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            det.anomalies[0].is_nan(),
+            det.anomalies[0] == 0.0,
             "Uncertain (inner–outer ring) must not plot when inside displayed outer band"
         );
         let lo = det.lower_bound.as_ref().unwrap()[0];
@@ -959,16 +947,6 @@ mod tests {
 
         let (alert, ..) = build_l1_eval_vectors(&verdicts, &bounds, &bounds, &baselines, true);
         assert_eq!(alert, vec![0.0, 1.0, 1.0], "alerting: Uncertain counts too");
-    }
-
-    #[test]
-    fn format_anomalies_for_display_maps_flags_to_values() {
-        let mut flags = vec![0.0, 1.0, 1.0];
-        let values = vec![50.0, 500.0, 60.0];
-        format_anomalies_for_display(&mut flags, &values);
-        assert!(flags[0].is_nan());
-        assert_eq!(flags[1], 500.0);
-        assert_eq!(flags[2], 60.0);
     }
 
     // ─── Step 3: alert output modes ─────────────────────────────────────────
@@ -1001,8 +979,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(det.anomalies[10].is_nan(), "earlier tail spike suppressed");
-        assert_eq!(det.anomalies[11], 500.0, "latest tail spike kept");
+        assert_eq!(det.anomalies[10], 0.0, "earlier tail spike suppressed");
+        assert_eq!(det.anomalies[11], 1.0, "latest tail spike kept");
     }
 
     #[test]
@@ -1029,11 +1007,11 @@ mod tests {
         let current = TimeSeriesInput::new(&ts, &vals);
 
         let det1 = funnel_detect(current.clone(), history.clone(), &opts).unwrap();
-        assert_eq!(det1.anomalies[n - 1], 500.0, "first eval should alert");
+        assert_eq!(det1.anomalies[n - 1], 1.0, "first eval should alert");
 
         let det2 = funnel_detect(current, history, &opts).unwrap();
         assert!(
-            det2.anomalies[n - 1].is_nan(),
+            det2.anomalies[n - 1] == 0.0,
             "second eval must not re-alert same timestamp"
         );
     }
@@ -1074,7 +1052,7 @@ mod tests {
 
             let eval_start = eval_window_start(&cur_ts, EVAL_SECS);
             for j in eval_start..WINDOW {
-                if det.anomalies[j].is_finite() {
+                if det.anomalies[j] > 0.0 {
                     let ts_ms = det.timestamps[j];
                     assert!(
                         !first_anomalies.iter().any(|(t, _)| *t == ts_ms),
@@ -1173,8 +1151,10 @@ mod tests {
         )
         .unwrap_or_else(|e| panic!("{} {layer}: {e}", f.name));
 
-        let preds = eval::funnel_display_to_binary(&run.result.anomalies);
-        (eval::OutlierMetrics::compute(&preds, &labels), run.metrics)
+        (
+            eval::OutlierMetrics::compute(&run.result.anomalies, &labels),
+            run.metrics,
+        )
     }
 
     fn all_fixtures() -> Vec<TestFixture> {

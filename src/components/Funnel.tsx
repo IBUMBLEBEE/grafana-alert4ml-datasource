@@ -1,6 +1,5 @@
 import React, { ChangeEvent, useMemo, useState } from 'react';
-import { Stack, InlineField, Input, Combobox, InlineSwitch, Collapse } from '@grafana/ui';
-import type { ComboboxOption } from '@grafana/ui';
+import { Stack, InlineField, Input, Combobox, InlineSwitch, Collapse, type ComboboxOption } from '@grafana/ui';
 import { SelectableValue } from '@grafana/data';
 import {
   AlertOutputMode,
@@ -25,7 +24,7 @@ const TREND_OPTIONS = [
   { label: 'None', value: 'none' },
 ];
 
-const SENSITIVITY_OPTIONS: ComboboxOption<FunnelSensitivityPreset>[] = [
+const SENSITIVITY_OPTIONS: Array<ComboboxOption<FunnelSensitivityPreset>> = [
   {
     label: FUNNEL_SENSITIVITY_PRESETS.strict.label,
     value: 'strict',
@@ -48,10 +47,14 @@ const SENSITIVITY_OPTIONS: ComboboxOption<FunnelSensitivityPreset>[] = [
   },
 ];
 
-const ALERT_OUTPUT_OPTIONS: ComboboxOption<AlertOutputMode>[] = [
+const ALERT_OUTPUT_OPTIONS: Array<ComboboxOption<AlertOutputMode>> = [
   { label: 'Full', value: 'full', description: 'Emit every detected anomaly' },
   { label: 'Latest only', value: 'latest_only', description: 'Only the newest anomaly in the eval slice' },
-  { label: 'Dedupe', value: 'dedupe', description: 'Suppress repeat alerts across evals (recommended for Alerting)' },
+  {
+    label: 'Dedupe (legacy)',
+    value: 'dedupe',
+    description: 'Statefully suppress repeat timestamps; prefer Grafana notification policies',
+  },
 ];
 
 function thresholdErrorStyle(hasError: boolean): React.CSSProperties | undefined {
@@ -62,20 +65,14 @@ export const Funnel: React.FC<FunnelProps> = ({ params, onParamsChange }) => {
   const currentTrend = params.trend || DEFAULT_FUNNEL_PARAMS.trend;
   const trendOption = TREND_OPTIONS.find((opt) => opt.value === currentTrend) || TREND_OPTIONS[0];
   const alertMode =
-    ALERT_OUTPUT_OPTIONS.find((opt) => opt.value === (params.alertOutputMode || 'full')) ||
-    ALERT_OUTPUT_OPTIONS[0];
+    ALERT_OUTPUT_OPTIONS.find((opt) => opt.value === (params.alertOutputMode || 'full')) || ALERT_OUTPUT_OPTIONS[0];
 
   const kOuter = params.kOuter ?? DEFAULT_FUNNEL_PARAMS.kOuter!;
   const kInner = params.kInner ?? DEFAULT_FUNNEL_PARAMS.kInner!;
-  const preset =
-    params.sensitivityPreset ?? inferFunnelSensitivityPreset(kOuter, kInner);
-  const sensitivityOption =
-    SENSITIVITY_OPTIONS.find((opt) => opt.value === preset) || SENSITIVITY_OPTIONS[1];
+  const preset = params.sensitivityPreset ?? inferFunnelSensitivityPreset(kOuter, kInner);
+  const sensitivityOption = SENSITIVITY_OPTIONS.find((opt) => opt.value === preset) || SENSITIVITY_OPTIONS[1];
 
-  const thresholdError = useMemo(
-    () => validateFunnelThresholds(kOuter, kInner),
-    [kOuter, kInner]
-  );
+  const thresholdError = useMemo(() => validateFunnelThresholds(kOuter, kInner), [kOuter, kInner]);
 
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(preset === 'custom');
 
@@ -136,7 +133,10 @@ export const Funnel: React.FC<FunnelProps> = ({ params, onParamsChange }) => {
           }}
         />
       </InlineField>
-      <InlineField label="Eval Window (sec)" tooltip="Only detect the trailing slice of current. Use 0 for full panel window; Alerting defaults to 600 (10min).">
+      <InlineField
+        label="Eval Window (sec)"
+        tooltip="Only detect the trailing slice of current. Use 0 for full panel window; Alerting defaults to 600 (10min)."
+      >
         <Input
           value={params.evalWindowSecs ?? DEFAULT_FUNNEL_PARAMS.evalWindowSecs}
           onChange={onUIntChange('evalWindowSecs')}
@@ -195,9 +195,7 @@ export const Funnel: React.FC<FunnelProps> = ({ params, onParamsChange }) => {
           style={thresholdErrorStyle(!!thresholdError)}
         />
       </InlineField>
-      {thresholdError && (
-        <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: -4 }}>{thresholdError}</div>
-      )}
+      {thresholdError && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: -4 }}>{thresholdError}</div>}
       {preset !== 'custom' && (
         <div style={{ fontSize: 12, color: 'var(--text-color-secondary)', marginTop: -4 }}>
           Normal band auto-set to {kInner}σ (inner band). Open Advanced to override.

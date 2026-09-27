@@ -72,7 +72,11 @@ pub struct DetectionResult {
     pub timestamps: Vec<i64>,
     /// Original or predicted values
     pub values: Vec<f64>,
-    /// Anomaly scores/flags: 0.0 = normal, 1.0 = anomaly
+    /// Observed metric values aligned with `timestamps`.
+    #[serde(default)]
+    pub observed_values: Vec<f64>,
+    /// Finite anomaly flags: 0.0 = normal, 1.0 = anomaly.
+    /// Display adapters, not detection engines, turn these into sparse points.
     pub anomalies: Vec<f64>,
     /// Upper bound of confidence interval (optional)
     pub upper_bound: Option<Vec<f64>>,

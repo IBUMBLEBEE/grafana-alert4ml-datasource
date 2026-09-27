@@ -14,7 +14,7 @@ use grafana_plugin_sdk::data::{
 use grafana_plugin_sdk::prelude::*;
 use serde_json::{json, Value};
 
-use crate::contract::constant;
+use crate::contract::{constant, RenderMode};
 use crate::frame_ops::field_time_ns;
 use rsod_core::{DetectionMethod, DetectionResult, BASELINE_VALUE_COL, PRED_COL};
 
@@ -53,17 +53,27 @@ pub fn detection_frame(det: &DetectionResult, value_col: &str) -> Frame {
         .as_ref()
         .map(|b| b.iter().map(|v| Some(*v)).collect())
         .unwrap_or_else(|| vec![None; n]);
+    let anomaly_points: Vec<Option<f64>> = (0..n)
+        .map(|idx| {
+            let is_anomaly = det
+                .anomalies
+                .get(idx)
+                .is_some_and(|flag| flag.is_finite() && *flag > 0.0);
+            let observed = det.observed_values.get(idx).copied();
+            if is_anomaly && observed.is_some_and(f64::is_finite) {
+                observed
+            } else {
+                None
+            }
+        })
+        .collect();
 
     Frame::new("")
         .with_field(times.into_field(constant::GF_FRAME_RESULT_NAME_TIME))
         .with_field(det.values.clone().into_field(value_col))
         .with_field(lower.into_opt_field(constant::GF_FRAME_RESULT_NAME_LOWER_BOUND))
         .with_field(upper.into_opt_field(constant::GF_FRAME_RESULT_NAME_UPPER_BOUND))
-        .with_field(
-            det.anomalies
-                .clone()
-                .into_field(constant::GF_FRAME_RESULT_NAME_ANOMALY),
-        )
+        .with_field(anomaly_points.into_opt_field(constant::GF_FRAME_RESULT_NAME_ANOMALY))
 }
 
 fn custom_config(pairs: &[(&str, Value)]) -> HashMap<String, Value> {
@@ -93,22 +103,27 @@ fn series_labels(frame: &Frame) -> Option<&BTreeMap<String, String>> {
         .map(|f| &f.labels)
 }
 
-/// Series label name for the `refID-label-column` display names.
+/// Series identity for the `refID-series-column` display names.
 ///
 /// Upstream datasources (Prometheus among them) often omit `schema.name` and
 /// carry the series identity in the value field's labels instead — without a
 /// fallback the display names degrade to `A--Pred`. Mirrors how Grafana names
-/// a frame from labels (`{__name__="up", instance="x"}`).
+/// a frame from labels (`{__name__="up", instance="x"}`). Unlabelled,
+/// unnamed frames fall back to the numeric value-field name so multiple
+/// upstream frames do not collapse into one Grafana Alerting label set.
 ///
 /// Call with the *upstream* frame (the one the detection ran on), not the
 /// rendered result frame — the result frame's fields carry no labels.
 pub fn series_label_name(frame: &Frame) -> String {
-    series_labels(frame)
-        .map(|labels| {
+    match series_labels(frame) {
+        Some(labels) => {
             let inner: Vec<String> = labels.iter().map(|(k, v)| format!("{k}=\"{v}\"")).collect();
             format!("{{{}}}", inner.join(", "))
-        })
-        .unwrap_or_default()
+        }
+        None => crate::frame_ops::value_field_name(frame)
+            .unwrap_or_default()
+            .to_string(),
+    }
 }
 
 /// Resolve Prometheus-legend-style `{{label}}` placeholders in a user-supplied
@@ -412,6 +427,64 @@ pub fn remove_non_anomaly_fields(frame: &mut Frame) -> rsod_core::Result<()> {
     Ok(())
 }
 
+/// Grafana Alerting adapter: emit exactly one finite 0/1 numeric series for
+/// each upstream series. Field labels, rather than display names, identify
+/// multidimensional alert instances.
+pub fn render_alert_signal(
+    source: &Frame,
+    det: &DetectionResult,
+    ref_id: &str,
+    series_name: &str,
+) -> rsod_core::Result<Frame> {
+    if det.timestamps.len() != det.anomalies.len() {
+        return Err(format!(
+            "alert signal length mismatch: {} timestamps, {} anomaly flags",
+            det.timestamps.len(),
+            det.anomalies.len()
+        )
+        .into());
+    }
+
+    let times: Vec<DateTime<Utc>> = det
+        .timestamps
+        .iter()
+        .map(|ms| DateTime::from_timestamp_millis(*ms).unwrap_or_default())
+        .collect();
+    let flags: Vec<f64> = det
+        .anomalies
+        .iter()
+        .map(|flag| {
+            if flag.is_finite() && *flag > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
+
+    let mut signal_field = flags.into_field(constant::GF_FRAME_RESULT_NAME_ANOMALY);
+    signal_field.labels = series_labels(source).cloned().unwrap_or_default();
+    if signal_field.labels.is_empty() {
+        let fallback = if series_name.trim().is_empty() {
+            ref_id.to_string()
+        } else {
+            series_name.to_string()
+        };
+        signal_field
+            .labels
+            .insert("alert4ml_series".to_string(), fallback);
+    }
+    let mut config = FieldConfig::default();
+    config.display_name = Some(result_display_name(ref_id, series_name, "AlertSignal"));
+    signal_field.config = Some(config);
+
+    let mut frame = Frame::new(series_name)
+        .with_field(times.into_field(constant::GF_FRAME_RESULT_NAME_TIME))
+        .with_field(signal_field);
+    frame.meta = Some(timeseries_wide_meta());
+    Ok(frame)
+}
+
 /// Unified render entry point: pick the frame layout/styling from the engine's
 /// [`DetectionMethod`] — the backend never branches on the detect type.
 pub fn render_detection(
@@ -420,8 +493,12 @@ pub fn render_detection(
     method: DetectionMethod,
     ref_id: &str,
     series_name: &str,
-    show_anomaly_points: bool,
+    mode: RenderMode,
 ) -> rsod_core::Result<Frame> {
+    if mode == RenderMode::AlertSignal {
+        return render_alert_signal(source, det, ref_id, series_name);
+    }
+
     match method {
         DetectionMethod::Outlier => {
             new_data_frame_from_result(source, ref_id, series_name, &det.anomalies)
@@ -429,7 +506,7 @@ pub fn render_detection(
         DetectionMethod::Baseline => {
             let mut out = detection_frame(det, BASELINE_VALUE_COL);
             render_frame_with_baseline(&mut out, ref_id, series_name);
-            if show_anomaly_points {
+            if mode == RenderMode::AnomalyPoints {
                 remove_non_anomaly_fields(&mut out)?;
             }
             Ok(out)
@@ -437,7 +514,7 @@ pub fn render_detection(
         DetectionMethod::Forecast => {
             let mut out = detection_frame(det, PRED_COL);
             render_frame_with_forecast(&mut out, ref_id, series_name);
-            if show_anomaly_points {
+            if mode == RenderMode::AnomalyPoints {
                 remove_non_anomaly_fields(&mut out)?;
             }
             Ok(out)
@@ -459,6 +536,7 @@ mod tests {
                 1_700_000_180_000,
             ],
             values: vec![10.0, 12.0, 11.0, 13.0],
+            observed_values: vec![10.0, 15.0, 11.0, 13.0],
             anomalies: vec![0.0, 1.0, 0.0, 0.0],
             upper_bound: Some(vec![12.5, 13.5, 12.5, 14.5]),
             lower_bound: Some(vec![8.5, 9.5, 8.5, 10.5]),
@@ -502,6 +580,13 @@ mod tests {
         );
         assert_eq!(lower_values[0].as_f64(), Some(8.5));
         assert_eq!(upper_values[3].as_f64(), Some(14.5));
+
+        // Detection engines expose 0/1 flags; only the visualization adapter
+        // converts them to sparse observed-value points.
+        let anomaly_values = values[4].as_array().expect("anomaly values");
+        assert!(anomaly_values[0].is_null());
+        assert_eq!(anomaly_values[1].as_f64(), Some(15.0));
+        assert!(anomaly_values[2].is_null());
 
         // Field configs: pred dashed, upper filled down to the lower name.
         let pred = &fields[1]["config"];
@@ -618,6 +703,45 @@ mod tests {
         assert_eq!(anomaly["color"]["fixedColor"], "red");
     }
 
+    #[test]
+    fn alert_signal_is_single_finite_series_with_upstream_labels() {
+        let times: Vec<DateTime<Utc>> = (0..4)
+            .map(|i| DateTime::from_timestamp(1_700_000_000 + i * 60, 0).unwrap())
+            .collect();
+        let mut value_field: Field = vec![10.0, -5.0, 11.0, 13.0].into_field("node_load1");
+        value_field.labels = [
+            ("__name__".to_string(), "node_load1".to_string()),
+            ("instance".to_string(), "node-a:9100".to_string()),
+            ("job".to_string(), "node".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let source = Frame::new("")
+            .with_field(times.into_field("Time"))
+            .with_field(value_field);
+        let det = sample_forecast_result();
+
+        let frame = render_alert_signal(&source, &det, "A", "node_load1")
+            .expect("alert signal must render");
+        let value = serde_json::to_value(&frame).expect("frame must serialize");
+        let fields = value["schema"]["fields"].as_array().expect("schema.fields");
+        assert_eq!(fields.len(), 2, "time plus exactly one numeric signal");
+        assert_eq!(fields[1]["name"], "Anomaly");
+        assert_eq!(fields[1]["labels"]["__name__"], "node_load1");
+        assert_eq!(fields[1]["labels"]["instance"], "node-a:9100");
+        assert_eq!(fields[1]["labels"]["job"], "node");
+        assert_eq!(fields[1]["config"]["displayName"], "A-node_load1-AlertSignal");
+        let flags = value["data"]["values"][1]
+            .as_array()
+            .expect("signal values");
+        assert_eq!(flags.iter().map(Value::as_f64).collect::<Vec<_>>(), vec![
+            Some(0.0),
+            Some(1.0),
+            Some(0.0),
+            Some(0.0),
+        ]);
+    }
+
     /// `{{label}}` placeholders in a seriesLabel override resolve against the
     /// upstream value field's labels (Prometheus-legend style); unknown labels
     /// and unterminated braces degrade to empty/literal.
@@ -657,6 +781,29 @@ mod tests {
         assert_eq!(
             interpolate_series_label("{{__name__}}", &plain),
             "{{__name__}}"
+        );
+    }
+
+    #[test]
+    fn alert_signal_gives_unlabelled_frames_a_stable_identity() {
+        let times = vec![DateTime::from_timestamp(1_700_000_000, 0).unwrap()];
+        let source = Frame::new("cpu")
+            .with_field(times.into_field("Time"))
+            .with_field(vec![10.0].into_field("value"));
+        let mut det = sample_forecast_result();
+        det.timestamps.truncate(1);
+        det.values.truncate(1);
+        det.observed_values.truncate(1);
+        det.anomalies.truncate(1);
+        det.lower_bound.as_mut().unwrap().truncate(1);
+        det.upper_bound.as_mut().unwrap().truncate(1);
+
+        let frame = render_alert_signal(&source, &det, "A", "cpu")
+            .expect("alert signal must render");
+        let value = serde_json::to_value(&frame).expect("frame must serialize");
+        assert_eq!(
+            value["schema"]["fields"][1]["labels"]["alert4ml_series"],
+            "cpu"
         );
     }
 

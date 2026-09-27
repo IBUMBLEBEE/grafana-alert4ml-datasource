@@ -2,15 +2,34 @@ import { DataQueryRequest, DataSourceInstanceSettings, ScopedVars, DataQueryResp
 import { Observable } from 'rxjs';
 import { getTemplateSrv, DataSourceWithBackend } from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
-import { Alert4MLQuery, Alert4MLDataSourceOptions, DEFAULT_ALERT4ML_QUERY } from './types';
+import {
+  Alert4MLQuery,
+  Alert4MLDataSourceOptions,
+  Alert4MLOutputMode,
+  DEFAULT_ALERT4ML_QUERY,
+  DEFAULT_FUNNEL_PARAMS,
+} from './types';
 
 export class DataSource extends DataSourceWithBackend<Alert4MLQuery, Alert4MLDataSourceOptions> {
   constructor(instanceSettings: DataSourceInstanceSettings<Alert4MLDataSourceOptions>) {
     super(instanceSettings);
   }
 
-  getDefaultQuery(_: CoreApp): Partial<Alert4MLQuery> {
-    return DEFAULT_ALERT4ML_QUERY;
+  getDefaultQuery(app: CoreApp): Partial<Alert4MLQuery> {
+    const isAlerting = app === CoreApp.UnifiedAlerting || app === CoreApp.CloudAlerting;
+    return {
+      ...DEFAULT_ALERT4ML_QUERY,
+      outputMode: isAlerting ? Alert4MLOutputMode.AlertSignal : Alert4MLOutputMode.Visualization,
+      // Return fresh nested values so editing one query cannot mutate the
+      // defaults subsequently used by another query.
+      hyperParams: {
+        ...DEFAULT_FUNNEL_PARAMS,
+        ...(isAlerting ? { evalWindowSecs: 600, alertOutputMode: 'full' as const } : {}),
+      },
+      targets: [],
+      historyTimeRange: { ...DEFAULT_ALERT4ML_QUERY.historyTimeRange },
+      uniqueKeys: { ...DEFAULT_ALERT4ML_QUERY.uniqueKeys },
+    };
   }
 
   // Apply template variables: replace template variables in query.targets before sending the request

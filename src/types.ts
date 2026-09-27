@@ -20,48 +20,79 @@ import { DataQuery } from '@grafana/schema';
 export const ALERT4ML_DATA_SOURCE_TYPE = 'ibumblebee-alert4ml-datasource';
 
 export enum Alert4MLUseCase {
-  Panel = "Panel",
-  Alert = "Alert",
+  Panel = 'Panel',
+  Alert = 'Alert',
 }
 
+/** Shape returned by the backend for this query. */
+export enum Alert4MLOutputMode {
+  Visualization = 'visualization',
+  AlertSignal = 'alert_signal',
+}
+
+export const OUTPUT_MODE_OPTIONS: Array<SelectableValue<Alert4MLOutputMode>> = [
+  {
+    label: 'Visualization',
+    value: Alert4MLOutputMode.Visualization,
+    description: 'Original series, baseline or prediction, bounds, and anomaly points',
+  },
+  {
+    label: 'Alert signal',
+    value: Alert4MLOutputMode.AlertSignal,
+    description: 'One finite 0/1 anomaly series per input series for Grafana Alerting',
+  },
+];
+
 export enum Alert4MLDetectType {
-  Outlier = "outlier",
-  Forecast = "forecast",
-  Funnel = "funnel",
+  Outlier = 'outlier',
+  Forecast = 'forecast',
+  Funnel = 'funnel',
 }
 
 export enum Alert4MLSupportDetect {
-  Baseline = "baseline",
-  MachineLearning = "machine_learning",
+  Baseline = 'baseline',
+  MachineLearning = 'machine_learning',
 }
 
 // Baseline sub-algorithm type, kept in sync with the old Go backend const.go
 export enum Alert4MLBaselineDetectType {
-  Dynamics = "dynamics",
+  Dynamics = 'dynamics',
 }
 
 export const SUPPORT_DETECT_OPTIONS: SupportDetectOption[] = [
   {
-    label: "Baseline",
+    label: 'Baseline',
     value: Alert4MLSupportDetect.Baseline,
-    description: "Dynamic baseline detection based on historical time patterns",
+    description: 'Dynamic baseline detection based on historical time patterns',
     detectTypes: [
-      { label: "Dynamics", value: Alert4MLBaselineDetectType.Dynamics, description: "Advanced dynamics baseline with seasonal comparison, saturation forecasting, and drift monitoring" },
+      {
+        label: 'Dynamics',
+        value: Alert4MLBaselineDetectType.Dynamics,
+        description:
+          'Advanced dynamics baseline with seasonal comparison, saturation forecasting, and drift monitoring',
+      },
     ],
   },
   {
-    label: "Machine Learning",
+    label: 'Machine Learning',
     value: Alert4MLSupportDetect.MachineLearning,
-    description: "Unsupervised ML-based anomaly detection",
+    description: 'Unsupervised ML-based anomaly detection',
     detectTypes: [
-      { label: "Funnel (L1)", value: Alert4MLDetectType.Funnel, description: "Seasonal L1 statistical filter for panels and Grafana Alerting (L2 ML escalation coming later)" },
-      { label: "Forecast (Gradient Boosting)", value: Alert4MLDetectType.Forecast, description: "PerpetualBooster time series forecasting with confidence intervals" },
+      {
+        label: 'Funnel (L1)',
+        value: Alert4MLDetectType.Funnel,
+        description: 'Seasonal L1 statistical filter for panels and Grafana Alerting (L2 ML escalation coming later)',
+      },
+      {
+        label: 'Forecast (Gradient Boosting)',
+        value: Alert4MLDetectType.Forecast,
+        description: 'PerpetualBooster time series forecasting with confidence intervals',
+      },
     ],
   },
 ];
 
-
-export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue<number>[] = [
+export const HISTORY_TIME_RANGE_OPTIONS: Array<SelectableValue<number>> = [
   { label: 'Last 15 minutes', value: 15 * 60 * 1000 },
   { label: 'Last 1 hour', value: 60 * 60 * 1000 },
   { label: 'Last 6 hours', value: 6 * 60 * 60 * 1000 },
@@ -73,7 +104,7 @@ export const HISTORY_TIME_RANGE_OPTIONS: SelectableValue<number>[] = [
 ];
 
 /** Fixed detect scrape step presets (ms). `0` = follow Grafana panel `$__interval`. */
-export const DETECT_INTERVAL_OPTIONS: SelectableValue<number>[] = [
+export const DETECT_INTERVAL_OPTIONS: Array<SelectableValue<number>> = [
   { label: 'Auto (panel)', value: 0, description: 'Follow Grafana $__interval (changes with zoom)' },
   { label: '15s', value: 15_000 },
   { label: '30s', value: 30_000 },
@@ -265,15 +296,13 @@ export const DEFAULT_RSOD_PARAMS: RsodParams = {
 };
 
 /** EIF knobs — only meaningful when `detectMode` is `full`. */
-export const DEFAULT_RSOD_FULL_ADVANCED: Pick<
-  RsodParams,
-  'nTrees' | 'sampleSize' | 'maxTreeDepth' | 'extensionLevel'
-> = {
-  nTrees: 100,
-  sampleSize: 256,
-  maxTreeDepth: null,
-  extensionLevel: 0,
-};
+export const DEFAULT_RSOD_FULL_ADVANCED: Pick<RsodParams, 'nTrees' | 'sampleSize' | 'maxTreeDepth' | 'extensionLevel'> =
+  {
+    nTrees: 100,
+    sampleSize: 256,
+    maxTreeDepth: null,
+    extensionLevel: 0,
+  };
 
 export const DEFAULT_DYNAMICS_PARAMS: DynamicsParams = {
   trend: 'weekly',
@@ -306,7 +335,10 @@ export interface Alert4MLQuery extends DataQuery {
    * across time-range zoom. Omit / 0 = use the panel interval.
    */
   detectIntervalMs?: number;
-  showAnomalyPoints: boolean;
+  /** Controls whether the query returns chart data or a Grafana Alerting signal. */
+  outputMode?: Alert4MLOutputMode;
+  /** @deprecated Kept on the wire so existing dashboards retain their old points-only view. */
+  showAnomalyPoints?: boolean;
   uniqueKeys: UniqueKeys;
   baseDsUid?: string;
   rawQuery?: Record<string, any>;
@@ -324,6 +356,7 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
   seriesRefId: 'A',
   supportDetect: Alert4MLSupportDetect.MachineLearning,
   detectType: Alert4MLDetectType.Funnel,
+  outputMode: Alert4MLOutputMode.Visualization,
   showAnomalyPoints: false,
   hyperParams: DEFAULT_FUNNEL_PARAMS,
   targets: [],
@@ -334,7 +367,6 @@ export const DEFAULT_ALERT4ML_QUERY: Alert4MLQuery = {
 export interface SupportDetectOption extends SelectableValue {
   detectTypes: SelectableValue[];
 }
-
 
 export interface DataPoint {
   Time: number;

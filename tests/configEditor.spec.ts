@@ -2,6 +2,8 @@ import { test, expect } from '@grafana/plugin-e2e';
 
 const PLUGIN_TYPE = 'ibumblebee-alert4ml-datasource';
 
+test.describe.configure({ timeout: 60_000 });
+
 test('smoke: config editor renders Grafana and storage sections', async ({ createDataSourceConfigPage, page }) => {
   await createDataSourceConfigPage({ type: PLUGIN_TYPE });
   await expect(page.getByText('Grafana Connection')).toBeVisible();

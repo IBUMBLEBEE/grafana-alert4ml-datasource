@@ -74,6 +74,7 @@ mod tests {
                 .map(|(i, _)| (1_700_000_000_i64 + i as i64 * 300) * 1000)
                 .collect(),
             values: vec![1.0; anomalies.len()],
+            observed_values: vec![1.0; anomalies.len()],
             anomalies: anomalies.to_vec(),
             lower_bound: None,
             upper_bound: None,
@@ -110,6 +111,7 @@ mod tests {
         let mut result = DetectionResult {
             timestamps: vec![ts_secs * 1000],
             values: vec![1.0],
+            observed_values: vec![1.0],
             anomalies: vec![1.0],
             lower_bound: None,
             upper_bound: None,

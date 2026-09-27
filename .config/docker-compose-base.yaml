@@ -11,7 +11,7 @@ services:
         development: ${DEVELOPMENT:-false}
         anonymous_auth_enabled: ${ANONYMOUS_AUTH_ENABLED:-true}
     ports:
-      - 3000:3000/tcp
+      - 3003:3000/tcp
       - 2345:2345/tcp # delve
     security_opt:
       - 'apparmor:unconfined'
@@ -30,6 +30,9 @@ services:
       GF_DATAPROXY_LOGGING: 1
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ibumblebee-alert4ml-datasource
       # plugin-e2e auth uses POST /login; requires basic auth enabled
-      GF_AUTH_BASIC_ENABLED: "true"
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_BASIC_ENABLED: 'true'
+      # Keep Grafana and @grafana/plugin-e2e on the same credential source.
+      # Existing Grafana databases still require a one-time CLI reset when
+      # their persisted admin password differs from these values.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}

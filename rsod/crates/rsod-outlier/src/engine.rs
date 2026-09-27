@@ -129,6 +129,7 @@ impl Detector for OutlierEngine {
                     .map(|&t| (t * 1000.0) as i64)
                     .collect(),
                 values: req.current.values.to_vec(),
+                observed_values: req.current.values.to_vec(),
                 anomalies: vec![0.0; req.current.values.len()],
                 upper_bound: None,
                 lower_bound: None,

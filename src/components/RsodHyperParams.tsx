@@ -3,7 +3,7 @@ import { Stack, InlineField, Input, TextArea, Button, Collapse, RadioButtonGroup
 import { DEFAULT_RSOD_FULL_ADVANCED, DEFAULT_RSOD_PARAMS, RsodParams } from '../types';
 
 // Keys managed by dedicated UI controls (not in the JSON editor)
-const DEDICATED_KEYS: (keyof RsodParams)[] = ['periods', 'modelName', 'detectMode'];
+const DEDICATED_KEYS: Array<keyof RsodParams> = ['periods', 'modelName', 'detectMode'];
 
 const DETECT_MODE_OPTIONS = [
   { label: 'Lite', value: 'lite' as const },
@@ -25,10 +25,7 @@ interface RsodHyperParamsProps {
   onParamsChange: (params: RsodParams) => void;
 }
 
-export const RsodHyperParams: React.FC<RsodHyperParamsProps> = ({
-  params,
-  onParamsChange,
-}) => {
+export const RsodHyperParams: React.FC<RsodHyperParamsProps> = ({ params, onParamsChange }) => {
   const detectMode = params.detectMode || DEFAULT_RSOD_PARAMS.detectMode || 'lite';
   const [jsonText, setJsonText] = useState(() => JSON.stringify(getAdvancedParams(params), null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -37,7 +34,7 @@ export const RsodHyperParams: React.FC<RsodHyperParamsProps> = ({
   useEffect(() => {
     setJsonText(JSON.stringify(getAdvancedParams(params), null, 2));
     setJsonError(null);
-  }, [params.modelName, params.detectMode]);
+  }, [params.modelName, params.detectMode]); // eslint-disable-line react-hooks/exhaustive-deps -- preserve in-progress JSON edits
 
   const onDetectModeChange = useCallback(
     (mode: 'lite' | 'full') => {
@@ -95,11 +92,7 @@ export const RsodHyperParams: React.FC<RsodHyperParamsProps> = ({
         label="Detection mode"
         tooltip="Lite (default): fast robust thresholds. Full: legacy EIF ensemble for hard cases."
       >
-        <RadioButtonGroup
-          options={DETECT_MODE_OPTIONS}
-          value={detectMode}
-          onChange={onDetectModeChange}
-        />
+        <RadioButtonGroup options={DETECT_MODE_OPTIONS} value={detectMode} onChange={onDetectModeChange} />
       </InlineField>
       <InlineField label="Periods" tooltip="Separated by commas. e.g. 1m, 15m, 1h, 24h, 7d, 30d">
         <Input
@@ -126,9 +119,7 @@ export const RsodHyperParams: React.FC<RsodHyperParamsProps> = ({
               invalid={!!jsonError}
               style={{ fontFamily: 'monospace', fontSize: 12 }}
             />
-            {jsonError && (
-              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{jsonError}</div>
-            )}
+            {jsonError && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 2 }}>{jsonError}</div>}
             <Button size="sm" variant="secondary" onClick={onResetDefaults} style={{ marginTop: 4 }}>
               Reset to Defaults
             </Button>

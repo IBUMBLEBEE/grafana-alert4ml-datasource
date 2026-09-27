@@ -1,15 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import {
-  InlineField,
-  Stack,
-  Combobox,
-  Collapse,
-  InlineSwitch,
-  Input,
-} from '@grafana/ui';
-import type { ComboboxOption } from '@grafana/ui';
+import { Alert, InlineField, Stack, Combobox, Collapse, Input, type ComboboxOption } from '@grafana/ui';
 import { QueryEditorProps, DataSourceApi, CoreApp } from '@grafana/data';
-import {getTemplateSrv, getDataSourceSrv} from '@grafana/runtime';
+import { getTemplateSrv, getDataSourceSrv } from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { DataSource } from '../datasource';
 import {
@@ -35,6 +27,8 @@ import {
   HistoryDuration,
   DETECT_INTERVAL_OPTIONS,
   HISTORY_TIME_RANGE_OPTIONS,
+  Alert4MLOutputMode,
+  OUTPUT_MODE_OPTIONS,
 } from '../types';
 import { RsodHyperParams } from './RsodHyperParams';
 import debounce from 'lodash/debounce';
@@ -46,9 +40,11 @@ type Props = QueryEditorProps<DataSource, Alert4MLQuery, Alert4MLDataSourceOptio
 
 function defaultFunnelParams(app?: CoreApp): FunnelParams {
   const params = { ...DEFAULT_FUNNEL_PARAMS };
-  if (app === CoreApp.UnifiedAlerting) {
+  if (app === CoreApp.UnifiedAlerting || app === CoreApp.CloudAlerting) {
     params.evalWindowSecs = 600;
-    params.alertOutputMode = 'dedupe';
+    // Grafana owns pending/firing state and notification deduplication. Keep
+    // detector output stateless so repeated evaluations remain 0/1 truth.
+    params.alertOutputMode = 'full';
   }
   return params;
 }
@@ -56,6 +52,7 @@ function defaultFunnelParams(app?: CoreApp): FunnelParams {
 // query is of type <Alert4MLQuery | AlertDataQuery>; branch on the query type to handle Alert4MLQuery vs AlertDataQuery
 export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app, datasource }: Props) {
   const [isHyperParamsOpen, setIsHyperParamsOpen] = useState<boolean>(false);
+  const isAlerting = app === CoreApp.UnifiedAlerting || app === CoreApp.CloudAlerting;
 
   // --- Base DataSource nested QueryEditor ---
   const baseDsUid = query.baseDsUid;
@@ -72,7 +69,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dataSourceOptions: ComboboxOption<string>[] = useMemo(() => {
+  const dataSourceOptions: Array<ComboboxOption<string>> = useMemo(() => {
     return getDataSourceSrv()
       .getList()
       .filter((ds) => ds.type !== ALERT4ML_DATA_SOURCE_TYPE)
@@ -82,36 +79,39 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       }));
   }, []);
 
-  const onBaseDsUidChange = useCallback((option: { label?: string; value: string } | null) => {
-    const newUid = option?.value;
-    const prevUid = query.baseDsUid;
+  const onBaseDsUidChange = useCallback(
+    (option: { label?: string; value: string } | null) => {
+      const newUid = option?.value;
+      const prevUid = query.baseDsUid;
 
-    // Switching to the same data source — nothing to do
-    if (newUid === prevUid) {
-      return;
-    }
+      // Switching to the same data source — nothing to do
+      if (newUid === prevUid) {
+        return;
+      }
 
-    // Save the current data source's rawQuery into the cache
-    if (prevUid && query.rawQuery) {
-      rawQueryCacheRef.current[prevUid] = query.rawQuery;
-    }
+      // Save the current data source's rawQuery into the cache
+      if (prevUid && query.rawQuery) {
+        rawQueryCacheRef.current[prevUid] = query.rawQuery;
+      }
 
-    if (!newUid) {
-      // Clear the data source
-      onChange({ ...query, baseDsUid: undefined, rawQuery: undefined, targets: [] });
+      if (!newUid) {
+        // Clear the data source
+        onChange({ ...query, baseDsUid: undefined, rawQuery: undefined, targets: [] });
+        onRunQuery();
+        return;
+      }
+
+      // Try to restore the target data source's rawQuery from the cache
+      const cachedRawQuery = rawQueryCacheRef.current[newUid];
+      if (cachedRawQuery) {
+        onChange({ ...query, baseDsUid: newUid, rawQuery: cachedRawQuery, targets: [cachedRawQuery as DataQuery] });
+      } else {
+        onChange({ ...query, baseDsUid: newUid, rawQuery: undefined, targets: [] });
+      }
       onRunQuery();
-      return;
-    }
-
-    // Try to restore the target data source's rawQuery from the cache
-    const cachedRawQuery = rawQueryCacheRef.current[newUid];
-    if (cachedRawQuery) {
-      onChange({ ...query, baseDsUid: newUid, rawQuery: cachedRawQuery, targets: [cachedRawQuery as DataQuery] });
-    } else {
-      onChange({ ...query, baseDsUid: newUid, rawQuery: undefined, targets: [] });
-    }
-    onRunQuery();
-  }, [query, onChange, onRunQuery]);
+    },
+    [query, onChange, onRunQuery]
+  );
 
   useEffect(() => {
     if (!baseDsUid) {
@@ -141,23 +141,26 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [baseDsUid]);
 
-  const onRawQueryChange = useCallback((rawQuery: DataQuery) => {
-    // Ensure datasource info is attached so Grafana /api/ds/query can route the query
-    const enrichedQuery = {
-      ...rawQuery,
-      datasource: baseDsInstance
-        ? { uid: baseDsInstance.uid, type: baseDsInstance.type }
-        : rawQuery.datasource,
-    };
-    // Keep the cache in sync
-    if (baseDsUid) {
-      rawQueryCacheRef.current[baseDsUid] = enrichedQuery;
-    }
-    onChange({ ...query, rawQuery: enrichedQuery, targets: [enrichedQuery] });
-  }, [query, onChange, baseDsInstance, baseDsUid]);
+  const onRawQueryChange = useCallback(
+    (rawQuery: DataQuery) => {
+      // Ensure datasource info is attached so Grafana /api/ds/query can route the query
+      const enrichedQuery = {
+        ...rawQuery,
+        datasource: baseDsInstance ? { uid: baseDsInstance.uid, type: baseDsInstance.type } : rawQuery.datasource,
+      };
+      // Keep the cache in sync
+      if (baseDsUid) {
+        rawQueryCacheRef.current[baseDsUid] = enrichedQuery;
+      }
+      onChange({ ...query, rawQuery: enrichedQuery, targets: [enrichedQuery] });
+    },
+    [query, onChange, baseDsInstance, baseDsUid]
+  );
 
   // --- End Base DataSource nested QueryEditor ---
 
@@ -186,52 +189,60 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   const {
     supportDetect = Alert4MLSupportDetect.MachineLearning,
     detectType = Alert4MLDetectType.Funnel,
-    showAnomalyPoints = false,
+    outputMode = Alert4MLOutputMode.Visualization,
     hyperParams = defaultFunnelParams(app),
     historyTimeRange = DEFAULT_TIME_RANGE,
   } = query;
-  
+
   // Track whether this is the first run with useRef
   const isInitialized = useRef(false);
   // Create a function that runs a debounced query
-  const runDebouncedQueryWithTempTargets = useCallback((updatedQuery: Partial<Alert4MLQuery>) => {
-    const currentTargets = updatedQuery.targets || query.targets || [];
-    // Ensure uniqueKeys has a value: prefer updatedQuery.uniqueKeys, then query.uniqueKeys, then the default
-    const fallbackUniqueKeys: UniqueKeys = {
-      dashboardUid: getTemplateSrv().replace("${__dashboard.uid}"),
-      panelId: data?.request?.panelId || 0,
-      seriesRefId: query.refId,
-    };
-    onChange({...query, ...updatedQuery, targets: currentTargets, uniqueKeys: updatedQuery.uniqueKeys || query.uniqueKeys || fallbackUniqueKeys});    
-    const debouncedQueryWithCleanup = debounce(() => {
-      onRunQuery();
-    }, 200);
-    
-    debouncedQueryWithCleanup();
-  }, [data, query]);
+  const runDebouncedQueryWithTempTargets = useCallback(
+    (updatedQuery: Partial<Alert4MLQuery>) => {
+      const currentTargets = updatedQuery.targets || query.targets || [];
+      // Ensure uniqueKeys has a value: prefer updatedQuery.uniqueKeys, then query.uniqueKeys, then the default
+      const fallbackUniqueKeys: UniqueKeys = {
+        dashboardUid: getTemplateSrv().replace('${__dashboard.uid}'),
+        panelId: data?.request?.panelId || 0,
+        seriesRefId: query.refId,
+      };
+      onChange({
+        ...query,
+        ...updatedQuery,
+        targets: currentTargets,
+        uniqueKeys: updatedQuery.uniqueKeys || query.uniqueKeys || fallbackUniqueKeys,
+      });
+      const debouncedQueryWithCleanup = debounce(() => {
+        onRunQuery();
+      }, 200);
 
+      debouncedQueryWithCleanup();
+    },
+    [data, onChange, onRunQuery, query]
+  );
 
   useEffect(() => {
     if (!isInitialized.current) {
       const newUniqueKeys: UniqueKeys = {
-        dashboardUid: getTemplateSrv().replace("${__dashboard.uid}"),
+        dashboardUid: getTemplateSrv().replace('${__dashboard.uid}'),
         panelId: data?.request?.panelId || 0,
         seriesRefId: query.refId,
       };
-      onChange({...query, 
+      onChange({
+        ...query,
         supportDetect: supportDetect || Alert4MLSupportDetect.MachineLearning,
         detectType: detectType || Alert4MLDetectType.Funnel,
         hyperParams: hyperParams || defaultFunnelParams(app),
         historyTimeRange: historyTimeRange,
         uniqueKeys: newUniqueKeys,
       });
-      runDebouncedQueryWithTempTargets({...query});
+      runDebouncedQueryWithTempTargets({ ...query });
       isInitialized.current = true;
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const supportDetectComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
-    return SUPPORT_DETECT_OPTIONS.map(opt => ({
+  const supportDetectComboboxOptions: Array<ComboboxOption<string>> = useMemo(() => {
+    return SUPPORT_DETECT_OPTIONS.map((opt) => ({
       label: opt.label ?? (opt.value as string),
       value: opt.value as string,
       description: opt.description,
@@ -239,30 +250,30 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
   }, []);
 
   // Get the default hyperParams for a given detectType
-  const getDefaultHyperParamsByDetectType = useCallback((detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams | FunnelParams => {
-    if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
-      return DEFAULT_DYNAMICS_PARAMS;
-    }
-    if (detectTypeValue === Alert4MLDetectType.Funnel) {
-      return defaultFunnelParams(app);
-    }
-    if (detectTypeValue === Alert4MLDetectType.Outlier) {
+  const getDefaultHyperParamsByDetectType = useCallback(
+    (detectTypeValue: string): RsodParams | DynamicsParams | ForecastParams | FunnelParams => {
+      if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics) {
+        return DEFAULT_DYNAMICS_PARAMS;
+      }
+      if (detectTypeValue === Alert4MLDetectType.Funnel) {
+        return defaultFunnelParams(app);
+      }
+      if (detectTypeValue === Alert4MLDetectType.Outlier) {
+        return DEFAULT_RSOD_PARAMS;
+      }
+      if (detectTypeValue === Alert4MLDetectType.Forecast) {
+        return DEFAULT_FORECAST_PARAMS;
+      }
       return DEFAULT_RSOD_PARAMS;
-    }
-    if (detectTypeValue === Alert4MLDetectType.Forecast) {
-      return DEFAULT_FORECAST_PARAMS;
-    }
-    return DEFAULT_RSOD_PARAMS;
-  }, [app]);
+    },
+    [app]
+  );
 
   const getDefaultHistoryByDetectType = useCallback((detectTypeValue: string): HistoryDuration => {
     if (detectTypeValue === Alert4MLDetectType.Funnel) {
       return DEFAULT_FUNNEL_HISTORY;
     }
-    if (
-      detectTypeValue === Alert4MLBaselineDetectType.Dynamics ||
-      detectTypeValue === Alert4MLDetectType.Forecast
-    ) {
+    if (detectTypeValue === Alert4MLBaselineDetectType.Dynamics || detectTypeValue === Alert4MLDetectType.Forecast) {
       return DEFAULT_BASELINE_HISTORY;
     }
     return DEFAULT_TIME_RANGE;
@@ -281,16 +292,19 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   }, [detectType, hyperParams, historyTimeRange, supportDetect]);
 
-  const resolveModelState = useCallback((detectTypeValue: string): CachedModelState => {
-    const cached = modelParamsCacheRef.current[detectTypeValue];
-    if (cached) {
-      return cached;
-    }
-    return {
-      hyperParams: getDefaultHyperParamsByDetectType(detectTypeValue),
-      historyTimeRange: getDefaultHistoryByDetectType(detectTypeValue),
-    };
-  }, [getDefaultHyperParamsByDetectType, getDefaultHistoryByDetectType]);
+  const resolveModelState = useCallback(
+    (detectTypeValue: string): CachedModelState => {
+      const cached = modelParamsCacheRef.current[detectTypeValue];
+      if (cached) {
+        return cached;
+      }
+      return {
+        hyperParams: getDefaultHyperParamsByDetectType(detectTypeValue),
+        historyTimeRange: getDefaultHistoryByDetectType(detectTypeValue),
+      };
+    },
+    [getDefaultHyperParamsByDetectType, getDefaultHistoryByDetectType]
+  );
 
   const onSupportDetectChange = (opt: ComboboxOption<string>) => {
     if (opt.value === supportDetect) {
@@ -298,8 +312,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
     rememberCurrentModelState();
 
-    const types =
-      SUPPORT_DETECT_OPTIONS.find((option) => option.value === opt.value)?.detectTypes || [];
+    const types = SUPPORT_DETECT_OPTIONS.find((option) => option.value === opt.value)?.detectTypes || [];
     const preferred = lastDetectTypeBySupportRef.current[opt.value];
     const newDetectType =
       (preferred && types.some((t) => t.value === preferred) ? preferred : undefined) ||
@@ -316,9 +329,9 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     });
   };
 
-  const detectTypeComboboxOptions: ComboboxOption<string>[] = useMemo(() => {
-    const types = SUPPORT_DETECT_OPTIONS.find(opt => opt.value === supportDetect)?.detectTypes || [];
-    return types.map(t => ({
+  const detectTypeComboboxOptions: Array<ComboboxOption<string>> = useMemo(() => {
+    const types = SUPPORT_DETECT_OPTIONS.find((opt) => opt.value === supportDetect)?.detectTypes || [];
+    return types.map((t) => ({
       label: t.label ?? (t.value as string),
       value: t.value as string,
       description: t.description,
@@ -349,10 +362,13 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     }
   };
 
-  const onShowAnomalyPointsChange = (checked: boolean) => {
-    if (typeof checked === 'boolean') {
-      runDebouncedQueryWithTempTargets({ showAnomalyPoints: checked });
-    }
+  const onOutputModeChange = (opt: ComboboxOption<Alert4MLOutputMode>) => {
+    runDebouncedQueryWithTempTargets({
+      outputMode: opt.value,
+      // Once a query uses the explicit output contract, do not also apply the
+      // legacy points-only switch persisted by older dashboard versions.
+      showAnomalyPoints: false,
+    });
   };
 
   const onSeriesLabelChange = (value: string) => {
@@ -366,7 +382,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     });
   };
 
-  const detectIntervalOptions: ComboboxOption<number>[] = useMemo(
+  const detectIntervalOptions: Array<ComboboxOption<number>> = useMemo(
     () =>
       DETECT_INTERVAL_OPTIONS.map((o) => ({
         label: o.label ?? String(o.value),
@@ -376,9 +392,19 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     []
   );
 
+  const outputModeOptions: Array<ComboboxOption<Alert4MLOutputMode>> = useMemo(
+    () =>
+      OUTPUT_MODE_OPTIONS.map((o) => ({
+        label: o.label ?? String(o.value),
+        value: o.value as Alert4MLOutputMode,
+        description: o.description,
+      })),
+    []
+  );
+
   const historyDurationMs = historyTimeRange?.durationMs ?? DEFAULT_TIME_RANGE.durationMs;
 
-  const historyTimeRangeOptions: ComboboxOption<number>[] = useMemo(() => {
+  const historyTimeRangeOptions: Array<ComboboxOption<number>> = useMemo(() => {
     const presets = HISTORY_TIME_RANGE_OPTIONS.map((o) => ({
       label: o.label ?? String(o.value),
       value: o.value as number,
@@ -392,8 +418,8 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
         hours >= 24
           ? `Custom (${(hours / 24).toFixed(hours % 24 === 0 ? 0 : 1)}d)`
           : hours >= 1
-            ? `Custom (${hours % 1 === 0 ? hours : hours.toFixed(1)}h)`
-            : `Custom (${Math.round(historyDurationMs / 60000)}m)`;
+          ? `Custom (${hours % 1 === 0 ? hours : hours.toFixed(1)}h)`
+          : `Custom (${Math.round(historyDurationMs / 60000)}m)`;
       presets.unshift({ label, value: historyDurationMs, description: 'Previously saved duration' });
     }
     return presets;
@@ -412,10 +438,11 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     runDebouncedQueryWithTempTargets({ historyTimeRange: next });
   };
 
-  const debouncedRunQuery = useCallback(
-    debounce(() => {
-      onRunQuery();
-    }, 500), // 500ms delay
+  const debouncedRunQuery = useMemo(
+    () =>
+      debounce(() => {
+        onRunQuery();
+      }, 500), // 500ms delay
     [onRunQuery]
   );
 
@@ -425,13 +452,26 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     };
   }, [debouncedRunQuery]);
 
+  const expressionConsumers = (
+    (queries ?? []) as Array<DataQuery & { expression?: string; model?: { expression?: string } }>
+  )
+    .filter((candidate) => (candidate.expression ?? candidate.model?.expression) === query.refId)
+    .map((candidate) => candidate.refId);
+  const isDiagnosticOutput = outputMode === Alert4MLOutputMode.Visualization;
+  const diagnosticFeedsExpression = isDiagnosticOutput && expressionConsumers.length > 0;
+
   return (
     <Stack direction="column" gap={1}>
       {/* ── Data Source Query ── */}
-      <fieldset style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}>
+      <fieldset
+        style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}
+      >
         <legend style={{ fontSize: 14, fontWeight: 500, padding: '0 6px', width: 'auto' }}>Data Source Query</legend>
         <Stack direction="column" gap={1}>
-          <InlineField label="Base DataSource" tooltip="Select the data source whose native query editor will be embedded">
+          <InlineField
+            label="Base DataSource"
+            tooltip="Select the data source whose native query editor will be embedded"
+          >
             <Combobox
               isClearable
               width={30}
@@ -449,17 +489,47 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
             />
           )}
           {baseDsUid && !NativeQueryEditor && !baseDsInstance && (
-            <div style={{ color: '#8e8e8e', fontSize: '12px' }}>
-              Loading base data source query editor...
-            </div>
+            <div style={{ color: '#8e8e8e', fontSize: '12px' }}>Loading base data source query editor...</div>
           )}
         </Stack>
       </fieldset>
 
       {/* ── Alert4ML Detection Settings ── */}
-      <fieldset style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}>
+      <fieldset
+        style={{ border: '1px solid rgba(204, 204, 220, 0.15)', borderRadius: 4, padding: '8px 12px', margin: 0 }}
+      >
         <legend style={{ fontSize: 14, fontWeight: 500, padding: '0 6px', width: 'auto' }}>Alert4ML Detection</legend>
         <Stack direction="column" gap={1}>
+          {isAlerting && (
+            <Alert
+              title={
+                diagnosticFeedsExpression
+                  ? `Visualization query ${query.refId} is connected to an alert expression`
+                  : isDiagnosticOutput
+                  ? `Query ${query.refId} is diagnostic only`
+                  : `Query ${query.refId} is condition-ready`
+              }
+              severity={diagnosticFeedsExpression ? 'error' : isDiagnosticOutput ? 'warning' : 'success'}
+              bottomSpacing={0}
+            >
+              {diagnosticFeedsExpression ? (
+                <>
+                  Expression {expressionConsumers.join(', ')} reads this multi-frame diagnostic output. Point it at a
+                  separate Alert signal query instead.
+                </>
+              ) : isDiagnosticOutput ? (
+                <>
+                  Keep this query out of Reduce and Threshold expressions. Use a separate Alert signal query for the
+                  condition, and remove this diagnostic query after debugging to avoid repeated detector work.
+                </>
+              ) : (
+                <>
+                  Use Reduce Last({query.refId}), then Threshold above 0.5. This output contains one finite 0/1 signal
+                  per labelled input series.
+                </>
+              )}
+            </Alert>
+          )}
           <Stack gap={1} wrap="wrap">
             <InlineField label="Support Detect" labelWidth={16}>
               <Combobox
@@ -469,11 +539,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
                 width={24}
               />
             </InlineField>
-            <InlineField
-              label="Detect Types"
-              labelWidth={14}
-              disabled={detectTypeComboboxOptions.length === 0}
-            >
+            <InlineField label="Detect Types" labelWidth={14} disabled={detectTypeComboboxOptions.length === 0}>
               <Combobox
                 options={detectTypeComboboxOptions}
                 onChange={(opt) => onDetectTypeChange(opt)}
@@ -483,7 +549,7 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
             </InlineField>
           </Stack>
 
-            <InlineField
+          <InlineField
             label="History TimeRange"
             labelWidth={20}
             tooltip="How far back before the panel start to fetch training/history data. Relative lookback only — the window always ends at the panel's from time."
@@ -509,11 +575,12 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
                 width={18}
               />
             </InlineField>
-            <InlineField label="Only Anomaly Points" labelWidth={18}>
-              <InlineSwitch
-                value={showAnomalyPoints || false}
-                onChange={(e) => e && onShowAnomalyPointsChange(e.currentTarget.checked)}
-              />
+            <InlineField
+              label="Output"
+              labelWidth={12}
+              tooltip="Visualization returns all chart series. Alert signal returns one labeled, finite 0/1 series per input series; use Reduce Last and Threshold above 0.5."
+            >
+              <Combobox width={22} options={outputModeOptions} value={outputMode} onChange={onOutputModeChange} />
             </InlineField>
             <InlineField
               label="Series Label"
@@ -565,6 +632,5 @@ export function QueryEditorv2({ query, onChange, onRunQuery, data, queries, app,
     </Stack>
   );
 }
-
 
 export default QueryEditorv2;

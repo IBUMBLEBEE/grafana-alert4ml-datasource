@@ -120,6 +120,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_cor
                 .map(|&x| (x * 1000.0) as i64)
                 .collect(),
             values: input.values.to_vec(),
+            observed_values: input.values.to_vec(),
             anomalies: vec![0.0; input.timestamps.len()],
             upper_bound: None,
             lower_bound: None,
@@ -145,6 +146,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_cor
         return Ok(DetectionResult {
             timestamps: time_cols,
             values: input.values.to_vec(),
+            observed_values: input.values.to_vec(),
             anomalies: lite_detect(input.values, &data_filled_f32, periods),
             upper_bound: None,
             lower_bound: None,
@@ -205,6 +207,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_cor
         return Ok(DetectionResult {
             timestamps: time_cols,
             values: input.values.to_vec(),
+            observed_values: input.values.to_vec(),
             anomalies: outlier_result,
             upper_bound: None,
             lower_bound: None,
@@ -215,6 +218,7 @@ pub fn outlier(input: TimeSeriesInput<'_>, options: &OutlierOptions) -> rsod_cor
         return Ok(DetectionResult {
             timestamps: time_cols,
             values: input.values.to_vec(),
+            observed_values: input.values.to_vec(),
             anomalies: result,
             upper_bound: None,
             lower_bound: None,

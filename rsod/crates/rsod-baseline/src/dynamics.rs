@@ -301,6 +301,7 @@ pub fn dynamics_detect(
         return Ok(DetectionResult {
             timestamps: vec![],
             values: vec![],
+            observed_values: vec![],
             anomalies: vec![],
             upper_bound: Some(vec![]),
             lower_bound: Some(vec![]),
@@ -322,7 +323,7 @@ pub fn dynamics_detect(
 
     // ── empty history → cold start (all NaN) ──
     if history.is_empty() {
-        return Ok(cold_start_result(&cur_ts_ms));
+        return Ok(cold_start_result(&cur_ts_ms, &cur_vals));
     }
 
     // ── history DataFrame ──
@@ -450,6 +451,7 @@ pub fn dynamics_detect(
     let n_rows = joined.height();
     let mut timestamps = Vec::with_capacity(n_rows);
     let mut values = Vec::with_capacity(n_rows);
+    let mut observed_values = Vec::with_capacity(n_rows);
     let mut anomalies = Vec::with_capacity(n_rows);
     let mut upper_bound = Vec::with_capacity(n_rows);
     let mut lower_bound = Vec::with_capacity(n_rows);
@@ -457,6 +459,8 @@ pub fn dynamics_detect(
     for i in 0..n_rows {
         let ts_ms = ts_col.get(i).unwrap_or(0);
         timestamps.push(ts_ms);
+        let cur = val_col.get(i).unwrap_or(f64::NAN);
+        observed_values.push(cur);
 
         let key = key_col.get(i).unwrap_or(0);
         let sec_in_hour = (ts_ms / 1000).rem_euclid(3600);
@@ -468,7 +472,7 @@ pub fn dynamics_detect(
                 values.push(f64::NAN);
                 upper_bound.push(f64::NAN);
                 lower_bound.push(f64::NAN);
-                anomalies.push(f64::NAN);
+                anomalies.push(0.0);
                 continue;
             }
         };
@@ -479,17 +483,17 @@ pub fn dynamics_detect(
         upper_bound.push(upper);
         lower_bound.push(lower);
 
-        let cur = val_col.get(i).unwrap_or(f64::NAN);
         if cur.is_finite() && (cur < lower || cur > upper) {
-            anomalies.push(cur);
+            anomalies.push(1.0);
         } else {
-            anomalies.push(f64::NAN);
+            anomalies.push(0.0);
         }
     }
 
     Ok(DetectionResult {
         timestamps,
         values,
+        observed_values,
         anomalies,
         upper_bound: Some(upper_bound),
         lower_bound: Some(lower_bound),
@@ -497,12 +501,13 @@ pub fn dynamics_detect(
 }
 
 /// Cold-start result when history is empty.
-fn cold_start_result(ts_ms: &[i64]) -> DetectionResult {
+fn cold_start_result(ts_ms: &[i64], observed_values: &[f64]) -> DetectionResult {
     let n = ts_ms.len();
     DetectionResult {
         timestamps: ts_ms.to_vec(),
         values: vec![f64::NAN; n],
-        anomalies: vec![f64::NAN; n],
+        observed_values: observed_values.to_vec(),
+        anomalies: vec![0.0; n],
         upper_bound: Some(vec![f64::NAN; n]),
         lower_bound: Some(vec![f64::NAN; n]),
     }
@@ -654,7 +659,7 @@ mod tests {
         let query_ts = ts_at(31, 12);
         let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![100.0] };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
-        assert!(r.anomalies[0].is_nan(), "expected NaN for normal point, got {}", r.anomalies[0]);
+        assert_eq!(r.anomalies[0], 0.0);
         assert!(r.upper_bound.as_ref().unwrap()[0].is_finite());
         assert!(r.lower_bound.as_ref().unwrap()[0].is_finite());
     }
@@ -671,7 +676,8 @@ mod tests {
         let query_ts = ts_at(31, 5);
         let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![999.0] };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
-        assert!((r.anomalies[0] - 999.0).abs() < 1e-9);
+        assert_eq!(r.anomalies[0], 1.0);
+        assert_eq!(r.observed_values[0], 999.0);
     }
 
     #[test]
@@ -698,7 +704,7 @@ mod tests {
             OwnedTimeSeries { timestamps: vec![next_mon], values: vec![10.0] }.as_input(),
             history.as_input(), &cfg,
         ).unwrap();
-        assert!(r.anomalies[0].is_nan());
+        assert_eq!(r.anomalies[0], 0.0);
         assert!((r.values[0] - 10.0).abs() < 1e-9);
 
         let next_tue = next_mon + 86_400.0;
@@ -835,7 +841,7 @@ mod tests {
         let current = OwnedTimeSeries { timestamps: vec![query_ts], values: vec![42.1] };
         let r = dynamics_detect(current.as_input(), history.as_input(), &cfg).unwrap();
         assert!(r.values[0].is_finite());
-        assert!(r.anomalies[0].is_nan());
+        assert_eq!(r.anomalies[0], 0.0);
     }
 
     // ── soft hour-boundary transition ──

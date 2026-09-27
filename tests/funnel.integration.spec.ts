@@ -5,6 +5,7 @@ import {
   expandHyperparameterSettings,
   expectQueryBodyHealthy,
   FUNNEL_DETECT_LABEL,
+  reopenNewPanelEditor,
   selectComboboxByLabel,
   setPanelDataSource,
   skipWithoutApiToken,
@@ -13,7 +14,7 @@ import {
 } from './helpers/grafana';
 
 test.describe('Funnel end-to-end', () => {
-  test.beforeEach(({ }, testInfo) => {
+  test.beforeEach(({}, testInfo) => {
     const skip = skipWithoutApiToken();
     if (skip) {
       testInfo.skip(true, skip);
@@ -26,21 +27,21 @@ test.describe('Funnel end-to-end', () => {
     page,
     request,
   }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(90_000);
     await createAlert4MLDataSource(createDataSource);
     await waitForDataSourceByName(request, 'alert4ml-e2e');
     await createTestDataSource(createDataSource);
     await waitForDataSourceByName(request, 'testdata-e2e');
 
+    // Both helpers replace same-name data sources. Reload before selecting them
+    // so Grafana does not resolve a UID cached before this test started.
+    await reopenNewPanelEditor(page);
     await setPanelDataSource(page, 'alert4ml-e2e');
     await panelEditPage.timeRange.set({ from: 'now-7d', to: 'now' });
 
-    await selectComboboxByLabel(
-      page,
-      'Base DataSource',
-      `${TESTDATA_DS_NAME} (grafana-testdata-datasource)`,
-    );
+    await selectComboboxByLabel(page, 'Base DataSource', `${TESTDATA_DS_NAME} (grafana-testdata-datasource)`);
     await expect(page.getByText('Scenario', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await selectComboboxByLabel(page, 'Scenario', 'Random Walk');
     await selectComboboxByLabel(page, 'Detect Types', FUNNEL_DETECT_LABEL);
     await expandHyperparameterSettings(page);
     await expect(page.getByText('Eval Window (sec)')).toBeVisible({ timeout: 15_000 });

@@ -97,6 +97,7 @@ fn outlier_with_history(
     Ok(DetectionResult {
         timestamps: full.timestamps[start..].to_vec(),
         values: full.values[start..].to_vec(),
+        observed_values: full.observed_values[start..].to_vec(),
         anomalies: full.anomalies[start..].to_vec(),
         lower_bound: full.lower_bound.as_ref().map(|b| b[start..].to_vec()),
         upper_bound: full.upper_bound.as_ref().map(|b| b[start..].to_vec()),
@@ -160,6 +161,7 @@ pub fn merge_l1_l2(
     DetectionResult {
         timestamps: timestamps.iter().map(|&t| (t * 1000.0) as i64).collect(),
         values: baseline,
+        observed_values: values.to_vec(),
         anomalies,
         lower_bound: Some(lower),
         upper_bound: Some(upper),

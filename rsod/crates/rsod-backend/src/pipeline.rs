@@ -16,7 +16,7 @@ use tracing::debug;
 
 use crate::client::{GrafanaClient, ProxyQueryBody};
 use crate::config::{PluginSettings, SecretPluginSettings};
-use crate::contract::{Alert4MLQueryJson, HistoryTimeRange};
+use crate::contract::{Alert4MLQueryJson, HistoryTimeRange, RenderMode};
 use crate::frame_ops::extract_timeseries;
 use crate::history_cache;
 use crate::render::render_detection;
@@ -119,12 +119,12 @@ pub async fn process_query(
         }
         let (new_frames, current_frames) =
             process_funnel_dual_query(client, &query, &query_json).await?;
-        let frames = if query_json.show_anomaly_points {
-            new_frames
-        } else {
+        let frames = if query_json.render_mode() == RenderMode::Visualization {
             let mut all = current_frames;
             all.extend(new_frames);
             all
+        } else {
+            new_frames
         };
         return checked_response(ref_id, frames);
     }
@@ -195,10 +195,10 @@ async fn process_regular_query(
             }
             new_frames.push(process_detect(query_json, &body, frame, &ref_id)?);
         }
-        if query_json.show_anomaly_points {
+        if query_json.render_mode() == RenderMode::Visualization {
+            frames_out.extend(data_response.frames);
             frames_out.extend(new_frames);
         } else {
-            frames_out.extend(data_response.frames);
             frames_out.extend(new_frames);
         }
     }
@@ -279,7 +279,7 @@ fn process_detect(
         method,
         ref_id,
         &series_name,
-        query_json.show_anomaly_points,
+        query_json.render_mode(),
     )
 }
 
@@ -371,7 +371,7 @@ async fn process_funnel_dual_query(
             method,
             &query.ref_id,
             &series_name,
-            query_json.show_anomaly_points,
+            query_json.render_mode(),
         )?);
     }
     // Rebuild the current frames (SDK frames do not implement Clone) — they
@@ -583,6 +583,7 @@ mod tests {
             }),
             targets: Vec::new(),
             show_anomaly_points: false,
+            output_mode: None,
             series_label: "custom-label".to_string(),
             history_time_range: htr,
             detect_interval_ms: 0,
@@ -712,5 +713,22 @@ mod tests {
         assert_eq!(series_display_name(&frame, "{{__name__}}"), "node_load1");
         // Without placeholders the override stays literal (existing behavior).
         assert_eq!(series_display_name(&frame, "custom"), "custom");
+    }
+
+    /// Grafana TestData and some JSON datasources return several unnamed,
+    /// unlabelled frames whose numeric field names are the only stable series
+    /// identity. They must not collapse into duplicate Alerting label sets.
+    #[test]
+    fn series_display_name_uses_value_field_for_unnamed_unlabelled_frames() {
+        let times: Vec<DateTime<Utc>> = vec![DateTime::from_timestamp(1_700_000_000, 0).unwrap()];
+        let first = grafana_plugin_sdk::data::Frame::new("")
+            .with_field(times.clone().into_field("time"))
+            .with_field(vec![1.0].into_field("X-series"));
+        let second = grafana_plugin_sdk::data::Frame::new("")
+            .with_field(times.into_field("time"))
+            .with_field(vec![2.0].into_field("X-series1"));
+
+        assert_eq!(series_display_name(&first, ""), "X-series");
+        assert_eq!(series_display_name(&second, ""), "X-series1");
     }
 }

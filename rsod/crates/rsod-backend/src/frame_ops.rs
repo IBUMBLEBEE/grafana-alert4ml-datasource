@@ -180,6 +180,15 @@ fn pick_value_field<'a>(frame: &'a Frame, time_field: &Field) -> Option<&'a Fiel
     })
 }
 
+/// Name of the numeric field consumed as this frame's value series.
+///
+/// Some upstream datasources provide neither a frame name nor labels. In that
+/// case this is the only per-frame identity available to Grafana Alerting.
+pub fn value_field_name(frame: &Frame) -> Option<&str> {
+    let time_field = pick_time_field(frame)?;
+    pick_value_field(frame, time_field).map(|field| field.name.as_str())
+}
+
 /// Build the (timestamps-seconds, values) inputs for the rsod algorithms.
 ///
 /// Null values are passed as `0.0` — this is exactly what the Go FFI layer

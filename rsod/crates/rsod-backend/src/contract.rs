@@ -7,6 +7,24 @@
 
 use serde::{Deserialize, Deserializer};
 
+/// Public output contract selected by the query editor.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputMode {
+    #[default]
+    Visualization,
+    AlertSignal,
+}
+
+/// Internal rendering choice. `AnomalyPoints` exists only to preserve saved
+/// dashboards that predate the explicit output mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderMode {
+    Visualization,
+    AlertSignal,
+    AnomalyPoints,
+}
+
 /// Detect-type constants (must match `pkg/constant` of the Go backend).
 pub mod constant {
     pub const DETECT_TYPE_OUTLIER: &str = "outlier";
@@ -41,6 +59,8 @@ pub struct Alert4MLQueryJson {
     pub targets: Vec<serde_json::Value>,
     #[serde(rename = "showAnomalyPoints", default)]
     pub show_anomaly_points: bool,
+    #[serde(rename = "outputMode", default)]
+    pub output_mode: Option<OutputMode>,
     // Optional override for the series label segment of the result field
     // display names (`A-{seriesLabel}-Pred`). Empty = auto (upstream frame
     // name, then the value field's labels).
@@ -56,6 +76,17 @@ pub struct Alert4MLQueryJson {
     pub detect_interval_ms: i64,
     #[serde(rename = "uniqueKeys", default)]
     pub unique_keys: UniqueKeys,
+}
+
+impl Alert4MLQueryJson {
+    pub fn render_mode(&self) -> RenderMode {
+        match self.output_mode {
+            Some(OutputMode::AlertSignal) => RenderMode::AlertSignal,
+            Some(OutputMode::Visualization) => RenderMode::Visualization,
+            None if self.show_anomaly_points => RenderMode::AnomalyPoints,
+            None => RenderMode::Visualization,
+        }
+    }
 }
 
 /// `historyTimeRange` — three legacy shapes must be tolerated because the
@@ -141,5 +172,29 @@ mod tests {
         });
         let q: Alert4MLQueryJson = serde_json::from_value(value).expect("must parse");
         assert_eq!(q.detect_interval_ms, 60_000);
+    }
+
+    #[test]
+    fn query_json_selects_explicit_alert_signal_and_preserves_legacy_points_mode() {
+        let alert: Alert4MLQueryJson = serde_json::from_value(serde_json::json!({
+            "detectType": "forecast",
+            "outputMode": "alert_signal",
+            "showAnomalyPoints": true
+        }))
+        .expect("must parse alert output mode");
+        assert_eq!(alert.render_mode(), RenderMode::AlertSignal);
+
+        let legacy: Alert4MLQueryJson = serde_json::from_value(serde_json::json!({
+            "detectType": "forecast",
+            "showAnomalyPoints": true
+        }))
+        .expect("must parse legacy query");
+        assert_eq!(legacy.render_mode(), RenderMode::AnomalyPoints);
+
+        let defaulted: Alert4MLQueryJson = serde_json::from_value(serde_json::json!({
+            "detectType": "forecast"
+        }))
+        .expect("must parse default query");
+        assert_eq!(defaulted.render_mode(), RenderMode::Visualization);
     }
 }

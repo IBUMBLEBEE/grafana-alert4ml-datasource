@@ -48,7 +48,7 @@ impl Default for FunnelHyperParams {
             persist_profile: Some(true),
             lookback_days: 90,
             eval_window_secs: None,
-            alert_output_mode: "dedupe".to_string(),
+            alert_output_mode: "full".to_string(),
             max_sparse_bucket_ratio: 0.3,
             transition_minutes: 15,
         }

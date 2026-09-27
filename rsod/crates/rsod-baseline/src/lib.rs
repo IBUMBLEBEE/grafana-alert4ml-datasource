@@ -147,13 +147,17 @@ fn dataframe_to_result(df: &DataFrame) -> rsod_core::Result<DetectionResult> {
         .map(|opt| opt.unwrap_or(f64::NAN))
         .collect();
 
-    let anomalies: Vec<f64> = df
+    let anomaly_values: Vec<f64> = df
         .column(ANOMALY_COL)
         .map_err(RsodError::other)?
         .f64()
         .map_err(RsodError::other)?
         .into_iter()
         .map(|opt| opt.unwrap_or(f64::NAN))
+        .collect();
+    let anomalies = anomaly_values
+        .iter()
+        .map(|value| if value.is_finite() { 1.0 } else { 0.0 })
         .collect();
 
     let lower_bound: Vec<f64> = df
@@ -177,6 +181,9 @@ fn dataframe_to_result(df: &DataFrame) -> rsod_core::Result<DetectionResult> {
     Ok(DetectionResult {
         timestamps,
         values,
+        // This legacy bridge only retains observed values for anomalous rows;
+        // that is sufficient for the visualization adapter's sparse red dots.
+        observed_values: anomaly_values,
         anomalies,
         upper_bound: Some(upper_bound),
         lower_bound: Some(lower_bound),

@@ -516,16 +516,17 @@ fn compute_anomaly(timestamps: &[f64], values: &[f64], pred: &[f64], residual_st
         upper.push(ub);
         lower.push(lb);
 
-        if values[i] < lb || values[i] > ub {
-            anomalies.push(values[i]); // anomalous: use original value
+        anomalies.push(if values[i].is_finite() && (values[i] < lb || values[i] > ub) {
+            1.0
         } else {
-            anomalies.push(f64::NAN); // normal: NaN (compatible with Golang math.NaN)
-        }
+            0.0
+        });
     }
 
     DetectionResult {
         timestamps: result_timestamps,
         values: result_values,
+        observed_values: values.to_vec(),
         anomalies,
         upper_bound: Some(upper),
         lower_bound: Some(lower),

@@ -47,21 +47,13 @@ pub struct Field {
 
 impl Field {
     pub(crate) fn to_arrow_field(&self) -> Result<ArrowField, serde_json::Error> {
-        let metadata = match (self.labels.is_empty(), self.config.as_ref()) {
-            (true, None) => Default::default(),
-            (false, None) => [("labels".to_string(), serde_json::to_string(&self.labels)?)]
-                .into_iter()
-                .collect(),
-            (false, Some(c)) => [("config".to_string(), serde_json::to_string(&c)?)]
-                .into_iter()
-                .collect(),
-            (true, Some(c)) => [
-                ("labels".to_string(), serde_json::to_string(&self.labels)?),
-                ("config".to_string(), serde_json::to_string(&c)?),
-            ]
-            .into_iter()
-            .collect(),
-        };
+        let mut metadata = BTreeMap::new();
+        if !self.labels.is_empty() {
+            metadata.insert("labels".to_string(), serde_json::to_string(&self.labels)?);
+        }
+        if let Some(config) = self.config.as_ref() {
+            metadata.insert("config".to_string(), serde_json::to_string(config)?);
+        }
         Ok(ArrowField {
             name: self.name.clone(),
             data_type: self.type_info.frame.into(),
@@ -955,6 +947,27 @@ mod tests {
         Date,
         Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap()
     );
+
+    #[test]
+    fn arrow_metadata_preserves_labels_and_config_together() {
+        let labels = BTreeMap::from([("instance".to_string(), "node-1".to_string())]);
+        let mut config = FieldConfig::default();
+        config.display_name_from_ds = Some("Anomaly".to_string());
+        let expected_config = serde_json::to_string(&config).unwrap();
+
+        let arrow_field = [0.0_f64, 1.0]
+            .into_field("Anomaly")
+            .with_labels(labels.clone())
+            .with_config(config)
+            .to_arrow_field()
+            .unwrap();
+
+        assert_eq!(
+            arrow_field.metadata.get("labels"),
+            Some(&serde_json::to_string(&labels).unwrap())
+        );
+        assert_eq!(arrow_field.metadata.get("config"), Some(&expected_config));
+    }
 
     #[test]
     fn set_values_from_iter_primitive() {
